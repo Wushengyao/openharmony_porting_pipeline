@@ -1,0 +1,22 @@
+task_identity:
+  task_name: OpenHarmony board/SoC porting knowledge extraction for Allwinner T113
+scenario_type:
+  - board_soc_arm_primary
+  - heterogeneous_aux_core
+primary_cpu_arch: arm32
+openharmony_runtime_core: arm
+riscv_role: auxiliary_core
+treat_riscv_as_primary_arch: false
+kernel_type: linux
+system_type: small_or_standard_unknown
+analysis_focus:
+  - product_board_vendor_soc
+  - kernel_driver_hdf
+  - wifi
+  - audio
+  - bootloader
+  - binary_prebuilt
+  - dirty_workspace
+scope_risks:
+  - exact system_type may require product config evidence
+  - RISC-V auxiliary firmware should not be treated as OpenHarmony primary arch porting

@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "stage": {
+      "type": "string",
+      "const": "07_final_auditor"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "blocked",
+        "partial"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "blocking_issue_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "non_blocking_issue_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "blocking_issues": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "non_blocking_issues": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "output_files_written": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "recommendation": {
+      "type": "string",
+      "enum": [
+        "accept",
+        "rerun_failed_stages",
+        "reject"
+      ]
+    }
+  },
+  "required": [
+    "stage",
+    "status",
+    "summary",
+    "blocking_issue_count",
+    "non_blocking_issue_count",
+    "blocking_issues",
+    "non_blocking_issues",
+    "output_files_written",
+    "recommendation"
+  ],
+  "additionalProperties": false
+}

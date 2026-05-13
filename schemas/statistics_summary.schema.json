@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "stage": {
+      "type": "string",
+      "const": "03_statistics_qc"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "blocked",
+        "partial"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "commit_records_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "file_change_records_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "binary_asset_records_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "dirty_file_records_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "repo_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "changed_repo_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "initial_import_commit_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "post_import_commit_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "blocking_issues": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "non_blocking_issues": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "output_files_written": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "next_stage_inputs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "stage",
+    "status",
+    "summary",
+    "commit_records_count",
+    "file_change_records_count",
+    "binary_asset_records_count",
+    "dirty_file_records_count",
+    "repo_count",
+    "changed_repo_count",
+    "initial_import_commit_count",
+    "post_import_commit_count",
+    "blocking_issues",
+    "non_blocking_issues",
+    "output_files_written",
+    "next_stage_inputs"
+  ],
+  "additionalProperties": false
+}

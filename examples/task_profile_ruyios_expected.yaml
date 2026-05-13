@@ -1,0 +1,16 @@
+task_identity:
+  task_name: RuyiOS/OpenHarmony RISC-V primary distribution porting knowledge extraction
+scenario_type:
+  - riscv_primary_distribution
+primary_cpu_arch: riscv64
+openharmony_runtime_core: riscv
+riscv_role: primary_runtime_core
+treat_riscv_as_primary_arch: true
+analysis_focus:
+  - riscv_arch
+  - product_board_vendor_soc
+  - kernel_driver_hdf
+  - build_system
+  - toolchain_prebuilts
+  - bootloader_opensbi_uboot
+  - third_party_arch_compat
