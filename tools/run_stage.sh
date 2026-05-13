@@ -5,6 +5,7 @@ if [[ $# -lt 2 ]]; then
   echo "usage: run_stage.sh <workspace_root> <stage> [out_dir]" >&2
   exit 2
 fi
+
 WORKSPACE_ROOT="$(cd "$1" && pwd)"
 STAGE="$2"
 OUT_DIR="${3:-${WORKSPACE_ROOT}/porting_knowledge_output}"
@@ -19,35 +20,22 @@ RUN_ID="$(date '+%Y%m%d_%H%M%S')"
 PIPELINE_LOG="${LOG_DIR}/run_stage_${STAGE}_${RUN_ID}.log"
 mkdir -p "${OUT_DIR}" "${LOG_DIR}" "${RESULT_DIR}"
 
-timestamp() {
-  date '+%Y-%m-%dT%H:%M:%S%z'
-}
-
-log_msg() {
-  local level="$1"
-  shift
-  printf '[%s] [%s] %s\n' "$(timestamp)" "${level}" "$*" | tee -a "${PIPELINE_LOG}"
-}
-
+timestamp() { date '+%Y-%m-%dT%H:%M:%S%z'; }
+log_msg() { local level="$1"; shift; printf '[%s] [%s] %s\n' "$(timestamp)" "${level}" "$*" | tee -a "${PIPELINE_LOG}"; }
 log_file_state() {
-  local label="$1"
-  local path="$2"
+  local label="$1" path="$2"
   if [[ -e "${path}" ]]; then
-    local size
-    size="$(wc -c < "${path}")"
-    log_msg "INFO" "${label}: ${path} (${size} bytes)"
+    log_msg INFO "${label}: ${path} ($(wc -c < "${path}") bytes)"
   else
-    log_msg "WARN" "${label}: ${path} (missing)"
+    log_msg WARN "${label}: ${path} (missing)"
   fi
 }
 
 summarize_result() {
   local result_path="$1"
   python3 - "${result_path}" <<'PY' | tee -a "${PIPELINE_LOG}"
-import json
-import sys
+import json, sys
 from pathlib import Path
-
 path = Path(sys.argv[1])
 if not path.exists():
     print(f"[result] missing: {path}")
@@ -57,21 +45,8 @@ try:
 except Exception as exc:
     print(f"[result] invalid json: {path}: {exc}")
     raise SystemExit(0)
-status = data.get("status", "unknown")
-stage = data.get("stage", path.stem)
-summary = data.get("summary", "")
-print(f"[result] stage={stage} status={status} summary={summary[:240]}")
-outputs = data.get("output_files_written") or []
-if outputs:
-    print(f"[result] output_files_written={len(outputs)}")
-for key in [
-    "commit_records_count",
-    "file_change_records_count",
-    "binary_asset_records_count",
-    "dirty_file_records_count",
-    "repo_count",
-    "changed_repo_count",
-]:
+print(f"[result] stage={data.get('stage', path.stem)} status={data.get('status', 'unknown')} summary={(data.get('summary') or '')[:240]}")
+for key in ["commit_records_count", "file_change_records_count", "binary_asset_records_count", "dirty_file_records_count", "repo_count", "changed_repo_count", "case_count", "case_candidate_count", "blocking_issue_count"]:
     if key in data:
         print(f"[result] {key}={data[key]}")
 PY
@@ -92,12 +67,8 @@ case "${STAGE}" in
 esac
 
 CODEX_PROXY_URL="${CODEX_PROXY_URL:-http://127.0.0.1:7890}"
-export http_proxy="${CODEX_PROXY_URL}"
-export https_proxy="${CODEX_PROXY_URL}"
-export all_proxy="${CODEX_PROXY_URL}"
-export HTTP_PROXY="${CODEX_PROXY_URL}"
-export HTTPS_PROXY="${CODEX_PROXY_URL}"
-export ALL_PROXY="${CODEX_PROXY_URL}"
+export http_proxy="${CODEX_PROXY_URL}" https_proxy="${CODEX_PROXY_URL}" all_proxy="${CODEX_PROXY_URL}"
+export HTTP_PROXY="${CODEX_PROXY_URL}" HTTPS_PROXY="${CODEX_PROXY_URL}" ALL_PROXY="${CODEX_PROXY_URL}"
 export no_proxy="${no_proxy:-localhost,127.0.0.1,::1}"
 export NO_PROXY="${NO_PROXY:-${no_proxy}}"
 export NODE_USE_ENV_PROXY=1
@@ -114,101 +85,48 @@ PENDING_RESULT="${RESULT_DIR}/${STAGE}.${RUN_ID}.pending.json"
 LOG="${LOG_DIR}/${STAGE}.ndjson"
 VALIDATION_LOG="${LOG_DIR}/${STAGE}.validation.log"
 
-log_msg "INFO" "Single-stage run_id=${RUN_ID}"
-log_msg "INFO" "workspace=${WORKSPACE_ROOT}"
-log_msg "INFO" "output_dir=${OUT_DIR}"
-log_msg "INFO" "stage=${STAGE}"
-log_msg "INFO" "prompt=${PROMPT}"
-log_msg "INFO" "schema=${SCHEMA}"
-log_msg "INFO" "codex=$(command -v codex)"
-log_msg "INFO" "codex_model=${CODEX_MODEL:-default}"
-log_msg "INFO" "extra_args=${CODEX_EXTRA_ARGS:-<none>}"
-log_msg "INFO" "proxy=${CODEX_PROXY_URL}"
-log_file_state "prompt" "${PROMPT}"
-log_file_state "schema" "${SCHEMA}"
+log_msg INFO "single-stage run_id=${RUN_ID}"
+log_msg INFO "workspace=${WORKSPACE_ROOT}"
+log_msg INFO "output_dir=${OUT_DIR}"
+log_msg INFO "stage=${STAGE}"
+log_msg INFO "prompt=${PROMPT}"
+log_msg INFO "schema=${SCHEMA}"
+log_msg INFO "codex=$(command -v codex || echo missing)"
+log_msg INFO "codex_model=${CODEX_MODEL:-default}"
+log_msg INFO "extra_args=${CODEX_EXTRA_ARGS:-<none>}"
+log_msg INFO "proxy=${CODEX_PROXY_URL}"
+log_msg INFO "deterministic flags: stats=${DETERMINISTIC_STATISTICS_QC:-1} semantic=${DETERMINISTIC_SEMANTIC_ANALYZER:-0} case=${DETERMINISTIC_CASE_KB:-0} skill=${DETERMINISTIC_SKILL_GENERATOR:-0} audit=${DETERMINISTIC_FINAL_AUDIT:-0}"
+log_file_state prompt "${PROMPT}"
+log_file_state schema "${SCHEMA}"
 rm -f "${PENDING_RESULT}"
 
 START_EPOCH="$(date +%s)"
+run_python_stage() {
+  local label="$1" script="$2"
+  log_msg INFO "${STAGE}: using deterministic ${script}"
+  if python3 "${TOOLS_DIR}/${script}" --out "${OUT_DIR}" --stage-result "${PENDING_RESULT}" > "${LOG}" 2>&1; then
+    END_EPOCH="$(date +%s)"
+    log_msg INFO "${STAGE}: deterministic ${label} completed in $((END_EPOCH - START_EPOCH))s"
+  else
+    RC=$?
+    END_EPOCH="$(date +%s)"
+    log_msg ERROR "${STAGE}: deterministic ${label} failed with exit_code=${RC} after $((END_EPOCH - START_EPOCH))s"
+    log_file_state "stage log" "${LOG}"
+    tail -n 120 "${LOG}" | tee -a "${PIPELINE_LOG}" || true
+    exit "${RC}"
+  fi
+}
+
 if [[ "${STAGE}" == "03_statistics_qc" && "${DETERMINISTIC_STATISTICS_QC:-1}" != "0" ]]; then
-  log_msg "INFO" "${STAGE}: using deterministic aggregate_stats.py"
-  if python3 "${TOOLS_DIR}/aggregate_stats.py" \
-    --out "${OUT_DIR}" \
-    --stage-result "${PENDING_RESULT}" > "${LOG}" 2>&1; then
-    END_EPOCH="$(date +%s)"
-    log_msg "INFO" "${STAGE}: deterministic aggregation completed in $((END_EPOCH - START_EPOCH))s"
-  else
-    RC=$?
-    END_EPOCH="$(date +%s)"
-    log_msg "ERROR" "${STAGE}: deterministic aggregation failed with exit_code=${RC} after $((END_EPOCH - START_EPOCH))s"
-    log_file_state "aggregation log" "${LOG}"
-    log_msg "ERROR" "${STAGE}: last 80 lines from ${LOG}"
-    tail -n 80 "${LOG}" | tee -a "${PIPELINE_LOG}" || true
-    exit "${RC}"
-  fi
-elif [[ "${STAGE}" == "04_semantic_analyzer" && "${DETERMINISTIC_SEMANTIC_ANALYZER:-1}" != "0" ]]; then
-  log_msg "INFO" "${STAGE}: using deterministic generate_semantic_analysis.py"
-  if python3 "${TOOLS_DIR}/generate_semantic_analysis.py" \
-    --out "${OUT_DIR}" \
-    --stage-result "${PENDING_RESULT}" > "${LOG}" 2>&1; then
-    END_EPOCH="$(date +%s)"
-    log_msg "INFO" "${STAGE}: deterministic semantic analysis completed in $((END_EPOCH - START_EPOCH))s"
-  else
-    RC=$?
-    END_EPOCH="$(date +%s)"
-    log_msg "ERROR" "${STAGE}: deterministic semantic analysis failed with exit_code=${RC} after $((END_EPOCH - START_EPOCH))s"
-    log_file_state "semantic log" "${LOG}"
-    log_msg "ERROR" "${STAGE}: last 80 lines from ${LOG}"
-    tail -n 80 "${LOG}" | tee -a "${PIPELINE_LOG}" || true
-    exit "${RC}"
-  fi
-elif [[ "${STAGE}" == "05_case_kb_builder" && "${DETERMINISTIC_CASE_KB:-1}" != "0" ]]; then
-  log_msg "INFO" "${STAGE}: using deterministic generate_case_kb.py"
-  if python3 "${TOOLS_DIR}/generate_case_kb.py" \
-    --out "${OUT_DIR}" \
-    --stage-result "${PENDING_RESULT}" > "${LOG}" 2>&1; then
-    END_EPOCH="$(date +%s)"
-    log_msg "INFO" "${STAGE}: deterministic case KB completed in $((END_EPOCH - START_EPOCH))s"
-  else
-    RC=$?
-    END_EPOCH="$(date +%s)"
-    log_msg "ERROR" "${STAGE}: deterministic case KB failed with exit_code=${RC} after $((END_EPOCH - START_EPOCH))s"
-    log_file_state "case KB log" "${LOG}"
-    log_msg "ERROR" "${STAGE}: last 80 lines from ${LOG}"
-    tail -n 80 "${LOG}" | tee -a "${PIPELINE_LOG}" || true
-    exit "${RC}"
-  fi
-elif [[ "${STAGE}" == "06_skill_generator" && "${DETERMINISTIC_SKILL_GENERATOR:-1}" != "0" ]]; then
-  log_msg "INFO" "${STAGE}: using deterministic generate_skill_output.py"
-  if python3 "${TOOLS_DIR}/generate_skill_output.py" \
-    --out "${OUT_DIR}" \
-    --stage-result "${PENDING_RESULT}" > "${LOG}" 2>&1; then
-    END_EPOCH="$(date +%s)"
-    log_msg "INFO" "${STAGE}: deterministic Skill output completed in $((END_EPOCH - START_EPOCH))s"
-  else
-    RC=$?
-    END_EPOCH="$(date +%s)"
-    log_msg "ERROR" "${STAGE}: deterministic Skill output failed with exit_code=${RC} after $((END_EPOCH - START_EPOCH))s"
-    log_file_state "Skill output log" "${LOG}"
-    log_msg "ERROR" "${STAGE}: last 80 lines from ${LOG}"
-    tail -n 80 "${LOG}" | tee -a "${PIPELINE_LOG}" || true
-    exit "${RC}"
-  fi
-elif [[ "${STAGE}" == "07_final_auditor" && "${DETERMINISTIC_FINAL_AUDIT:-1}" != "0" ]]; then
-  log_msg "INFO" "${STAGE}: using deterministic run_final_audit.py"
-  if python3 "${TOOLS_DIR}/run_final_audit.py" \
-    --out "${OUT_DIR}" \
-    --stage-result "${PENDING_RESULT}" > "${LOG}" 2>&1; then
-    END_EPOCH="$(date +%s)"
-    log_msg "INFO" "${STAGE}: deterministic final audit completed in $((END_EPOCH - START_EPOCH))s"
-  else
-    RC=$?
-    END_EPOCH="$(date +%s)"
-    log_msg "ERROR" "${STAGE}: deterministic final audit failed with exit_code=${RC} after $((END_EPOCH - START_EPOCH))s"
-    log_file_state "final audit log" "${LOG}"
-    log_msg "ERROR" "${STAGE}: last 80 lines from ${LOG}"
-    tail -n 80 "${LOG}" | tee -a "${PIPELINE_LOG}" || true
-    exit "${RC}"
-  fi
+  run_python_stage "statistics aggregation" "aggregate_stats.py"
+elif [[ "${STAGE}" == "04_semantic_analyzer" && "${DETERMINISTIC_SEMANTIC_ANALYZER:-0}" != "0" ]]; then
+  run_python_stage "semantic analysis" "generate_semantic_analysis.py"
+elif [[ "${STAGE}" == "05_case_kb_builder" && "${DETERMINISTIC_CASE_KB:-0}" != "0" ]]; then
+  run_python_stage "case KB" "generate_case_kb.py"
+elif [[ "${STAGE}" == "06_skill_generator" && "${DETERMINISTIC_SKILL_GENERATOR:-0}" != "0" ]]; then
+  run_python_stage "Skill output" "generate_skill_output.py"
+elif [[ "${STAGE}" == "07_final_auditor" && "${DETERMINISTIC_FINAL_AUDIT:-0}" != "0" ]]; then
+  run_python_stage "final audit" "run_final_audit.py"
 elif codex exec \
   "${CODEX_BASE_ARGS[@]}" \
   "${EXTRA_ARGS[@]}" \
@@ -216,30 +134,28 @@ elif codex exec \
   --output-schema "${SCHEMA}" \
   - < "${PROMPT}" > "${LOG}" 2>&1; then
   END_EPOCH="$(date +%s)"
-  log_msg "INFO" "${STAGE}: codex exec completed in $((END_EPOCH - START_EPOCH))s"
+  log_msg INFO "${STAGE}: codex exec completed in $((END_EPOCH - START_EPOCH))s"
 else
   RC=$?
   END_EPOCH="$(date +%s)"
-  log_msg "ERROR" "${STAGE}: codex exec failed with exit_code=${RC} after $((END_EPOCH - START_EPOCH))s"
+  log_msg ERROR "${STAGE}: codex exec failed with exit_code=${RC} after $((END_EPOCH - START_EPOCH))s"
   log_file_state "ndjson log" "${LOG}"
   log_file_state "pending result" "${PENDING_RESULT}"
-  log_msg "ERROR" "${STAGE}: last 80 lines from ${LOG}"
-  tail -n 80 "${LOG}" | tee -a "${PIPELINE_LOG}" || true
+  tail -n 120 "${LOG}" | tee -a "${PIPELINE_LOG}" || true
   exit "${RC}"
 fi
 
 log_file_state "ndjson log" "${LOG}"
 log_file_state "pending result" "${PENDING_RESULT}"
 summarize_result "${PENDING_RESULT}"
-log_msg "INFO" "${STAGE}: validation_log=${VALIDATION_LOG}"
+log_msg INFO "${STAGE}: validation_log=${VALIDATION_LOG}"
 if python3 "${TOOLS_DIR}/validate_stage.py" --workspace "${WORKSPACE_ROOT}" --out "${OUT_DIR}" --stage "${STAGE}" --stage-result "${PENDING_RESULT}" 2>&1 | tee "${VALIDATION_LOG}"; then
   mv "${PENDING_RESULT}" "${RESULT}"
   log_file_state "promoted result" "${RESULT}"
-  log_msg "INFO" "${STAGE}: validation passed"
+  log_msg INFO "${STAGE}: validation passed"
 else
   RC=$?
-  log_msg "ERROR" "${STAGE}: validation failed with exit_code=${RC}"
-  log_msg "ERROR" "${STAGE}: last 80 lines from ${VALIDATION_LOG}"
-  tail -n 80 "${VALIDATION_LOG}" | tee -a "${PIPELINE_LOG}" || true
+  log_msg ERROR "${STAGE}: validation failed with exit_code=${RC}"
+  tail -n 120 "${VALIDATION_LOG}" | tee -a "${PIPELINE_LOG}" || true
   exit "${RC}"
 fi

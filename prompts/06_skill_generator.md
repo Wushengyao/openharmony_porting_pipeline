@@ -2,15 +2,7 @@
 
 Use skill: `openharmony_porting_06_skill_generator`.
 
-
-This is a fresh isolated Codex session.
-Do not assume previous chat context.
-Do not resume or rely on prior conversations.
-Read only the input files listed in this prompt, plus source files only when the stage explicitly requires shell/git inspection.
-Do not read archived failed runs or previous final reports unless explicitly listed.
-Write only the required output files.
-At the end, return a JSON object conforming to the provided output schema.
-
+This is a fresh isolated Codex session. Do not assume previous chat context. Do not resume or rely on prior conversations. Read only the input files listed here. Do not read archived failed runs or previous final reports unless explicitly listed. Write only the required output files. At the end, return a JSON object conforming to `stage_result.schema.json`.
 
 ## Input files
 
@@ -32,9 +24,29 @@ At the end, return a JSON object conforming to the provided output schema.
 
 ## Required content
 
-The generated Skill must include applicability, non-applicability, inputs, outputs, steps, tool commands, classification taxonomy, evidence rules, case generation rules, failure handling, quality gates, examples, and anti-examples.
+The generated Skill must include:
 
-It must distinguish ARM-primary board/SoC, RISC-V-primary distribution, and heterogeneous auxiliary-core scenarios.
+- applicability;
+- non-applicability;
+- inputs;
+- outputs;
+- execution workflow;
+- tool commands;
+- classification taxonomy;
+- evidence rules;
+- case generation rules;
+- failure handling;
+- quality gates;
+- examples;
+- anti-examples.
+
+It must distinguish ARM-primary board/SoC, RISC-V-primary distribution, and heterogeneous auxiliary-core scenarios. It must explicitly say that T113-style ARM-primary projects should not be reclassified as RISC-V-primary because auxiliary firmware exists.
+
+## Supporting file minimums
+
+- `agent_runbook.md` must be actionable and include start procedure, evidence handling, validation commands and failure handling.
+- `next_porting_task_template.md` must include target definition, inputs, scenario classification, stage plan, risk table and daily record format.
+- `quality_checklist.md` must include scope, raw records, statistics, semantic analysis, cases, Skill output and audit checks.
 
 ## Final JSON
 

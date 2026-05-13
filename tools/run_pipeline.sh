@@ -104,6 +104,7 @@ log_msg "INFO" "codex=$(command -v codex)"
 log_msg "INFO" "codex_model=${CODEX_MODEL:-default}"
 log_msg "INFO" "extra_args=${CODEX_EXTRA_ARGS:-<none>}"
 log_msg "INFO" "proxy=${CODEX_PROXY_URL}"
+log_msg "INFO" "deterministic flags: stats=${DETERMINISTIC_STATISTICS_QC:-1} semantic=${DETERMINISTIC_SEMANTIC_ANALYZER:-0} case=${DETERMINISTIC_CASE_KB:-0} skill=${DETERMINISTIC_SKILL_GENERATOR:-0} audit=${DETERMINISTIC_FINAL_AUDIT:-0}"
 
 run_stage() {
   local stage="$1"
@@ -146,7 +147,7 @@ run_stage() {
       tail -n 80 "${log}" | tee -a "${PIPELINE_LOG}" || true
       return "${rc}"
     fi
-  elif [[ "${stage}" == "04_semantic_analyzer" && "${DETERMINISTIC_SEMANTIC_ANALYZER:-1}" != "0" ]]; then
+  elif [[ "${stage}" == "04_semantic_analyzer" && "${DETERMINISTIC_SEMANTIC_ANALYZER:-0}" != "0" ]]; then
     log_msg "INFO" "${stage}: using deterministic generate_semantic_analysis.py"
     if python3 "${TOOLS_DIR}/generate_semantic_analysis.py" \
       --out "${OUT_DIR}" \
@@ -164,7 +165,7 @@ run_stage() {
       tail -n 80 "${log}" | tee -a "${PIPELINE_LOG}" || true
       return "${rc}"
     fi
-  elif [[ "${stage}" == "05_case_kb_builder" && "${DETERMINISTIC_CASE_KB:-1}" != "0" ]]; then
+  elif [[ "${stage}" == "05_case_kb_builder" && "${DETERMINISTIC_CASE_KB:-0}" != "0" ]]; then
     log_msg "INFO" "${stage}: using deterministic generate_case_kb.py"
     if python3 "${TOOLS_DIR}/generate_case_kb.py" \
       --out "${OUT_DIR}" \
@@ -182,7 +183,7 @@ run_stage() {
       tail -n 80 "${log}" | tee -a "${PIPELINE_LOG}" || true
       return "${rc}"
     fi
-  elif [[ "${stage}" == "06_skill_generator" && "${DETERMINISTIC_SKILL_GENERATOR:-1}" != "0" ]]; then
+  elif [[ "${stage}" == "06_skill_generator" && "${DETERMINISTIC_SKILL_GENERATOR:-0}" != "0" ]]; then
     log_msg "INFO" "${stage}: using deterministic generate_skill_output.py"
     if python3 "${TOOLS_DIR}/generate_skill_output.py" \
       --out "${OUT_DIR}" \
@@ -200,7 +201,7 @@ run_stage() {
       tail -n 80 "${log}" | tee -a "${PIPELINE_LOG}" || true
       return "${rc}"
     fi
-  elif [[ "${stage}" == "07_final_auditor" && "${DETERMINISTIC_FINAL_AUDIT:-1}" != "0" ]]; then
+  elif [[ "${stage}" == "07_final_auditor" && "${DETERMINISTIC_FINAL_AUDIT:-0}" != "0" ]]; then
     log_msg "INFO" "${stage}: using deterministic run_final_audit.py"
     if python3 "${TOOLS_DIR}/run_final_audit.py" \
       --out "${OUT_DIR}" \

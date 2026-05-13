@@ -1,181 +1,446 @@
 #!/usr/bin/env python3
-"""Generate reusable Skill artifacts from deterministic KB outputs."""
+"""Generate reusable Skill artifacts from KB outputs.
+
+This deterministic fallback now generates full supporting files instead of tiny
+summaries.  LLM execution is still preferred for stage 06, but this script
+should produce useful artifacts when deterministic mode is explicitly enabled.
+"""
+
+from __future__ import annotations
 
 import argparse
 import json
 from pathlib import Path
 
 
-def main():
+def read_text(path: Path, default: str = "") -> str:
+    return path.read_text(encoding="utf-8", errors="ignore") if path.exists() else default
+
+
+def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument('--out', required=True)
-    ap.add_argument('--stage-result')
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--stage-result")
     args = ap.parse_args()
     out = Path(args.out)
-    skill_dir = out / '05_skill_output'
+    skill_dir = out / "05_skill_output"
     skill_dir.mkdir(parents=True, exist_ok=True)
-    cases = sorted((out / '04_knowledge_base/cases').glob('*.md'))
-    case_lines = []
-    for case in cases:
-        case_lines.append(f'- `{case.relative_to(out)}`')
+
+    stats = {}
+    stats_path = out / "02_statistics/statistics_summary.json"
+    if stats_path.exists():
+        try:
+            stats = json.loads(stats_path.read_text(encoding="utf-8"))
+        except Exception:
+            stats = {}
+    cases = sorted((out / "04_knowledge_base/cases").glob("*.md"))
+    case_lines = [f"- `{case.relative_to(out)}`" for case in cases]
+    rules = read_text(out / "04_knowledge_base/board_soc_porting_rules.md")
+    binary_index_exists = (out / "04_knowledge_base/binary_asset_index.md").exists()
 
     generated_skill = f"""---
-name: openharmony_t113_board_soc_porting_reuse
-description: Reuse evidence-backed knowledge from an OpenHarmony T113/T113-S3 ARM-primary board/SoC port with heterogeneous auxiliary-core context.
+name: openharmony_board_soc_porting_reuse
+description: Evidence-bound assistant for reusing OpenHarmony board/SoC porting knowledge across ARM-primary, RISC-V-primary, and heterogeneous auxiliary-core scenarios.
 ---
 
-# OpenHarmony T113 Board/SoC Porting Reuse Skill
+# OpenHarmony Board/SoC Porting Reuse Skill
 
-## Applicability
+## 1. Applicability
 
-Use this Skill for OpenHarmony board/SoC porting projects where ARM is the OpenHarmony runtime architecture and RISC-V, DSP, C906, ARISC, or similar firmware is heterogeneous auxiliary-core context. It is shaped by the current task profile and by evidence in `porting_knowledge_output/`. It is especially useful for Allwinner T113/T113-S3, seed `t113_evb1`, Linux 5.10, HDF audio, Wi-Fi, bootloader, vendor product, and prebuilt/toolchain review work.
+Use this Skill to help analyze, plan, replay, or audit OpenHarmony board/SoC porting work when prior project evidence exists in `porting_knowledge_output/`. The current T113 profile is ARM-primary: OpenHarmony runs on ARM/Cortex-A class cores, while RISC-V/DSP/C906/ARISC artifacts are auxiliary firmware/context unless the task profile explicitly changes.
 
-## Non-Applicability
+This Skill is suitable for:
 
-Do not use this Skill as a RISC-V-primary distribution porting guide unless a future `task_profile.yaml` explicitly says that RISC-V is the OpenHarmony runtime architecture. Do not use dirty workspace evidence as committed source history. Do not copy binary/prebuilt artifacts without license, provenance, architecture, sha256, and redistribution review.
+- ARM-primary OpenHarmony board/SoC bring-up.
+- Allwinner T113/T113-S3 style product, board, SoC, vendor, kernel and HDF integration.
+- WiFi, HDF audio, bootloader, firmware, binary/prebuilt and dirty workspace review.
+- RISC-V-primary projects only after `task_profile.yaml` marks RISC-V as the OpenHarmony runtime architecture.
+- Knowledge reuse where every claim can cite commit, file, dirty, binary or diff evidence.
 
-## Required Inputs
+## 2. Non-Applicability
+
+Do not use this Skill to claim a RISC-V primary port merely because auxiliary firmware or RISC-V-related blobs are present. Do not treat initial import, force-sync SDK commits, `.gitattributes`-only changes, dirty workspace files, or binary imports as reusable source fixes. Do not copy prebuilts or firmware into another project without sha256, provenance, architecture, license and redistribution review.
+
+## 3. Required Inputs
 
 - `00_config/task_profile.yaml`
 - `01_raw_records/commit_records.jsonl`
 - `01_raw_records/file_change_records.jsonl`
 - `01_raw_records/dirty_file_records.jsonl`
 - `01_raw_records/binary_asset_records.csv`
+- `01_raw_records/diffs/`
 - `02_statistics/statistics_summary.json`
 - `03_semantic_analysis/commit_analysis.jsonl`
+- `03_semantic_analysis/repo_analysis/`
+- `03_semantic_analysis/subsystem_analysis/`
 - `04_knowledge_base/cases/`
+- `04_knowledge_base/patterns/`
 
-## Required Outputs
+## 4. Expected Outputs
 
-- Evidence-bound cases for the new target.
-- A path/module index mapping board, SoC, vendor, prebuilts, third_party, and driver areas.
-- A quality checklist with evidence, binary, dirty workspace, and scenario checks.
-- Clear separation of reusable rules from workarounds.
+- A target-specific porting plan with evidence citations.
+- A case reuse decision for each relevant knowledge case.
+- Patch or investigation recommendations scoped to the target board/SoC.
+- Binary/prebuilt provenance checklist.
+- Dirty workspace cleanup plan.
+- Risk and workaround list separated from reusable rules.
 
-## Workflow
+## 5. Source of Truth
 
-1. Classify scope first. Confirm whether the task is ARM-primary board/SoC, RISC-V-primary distribution, heterogeneous auxiliary-core, or unknown.
-2. Read `task_profile.yaml` before reading cases. For this project, the authoritative profile is ARM-primary OpenHarmony runtime with heterogeneous auxiliary-core context.
-3. Load `statistics_summary.json` and use its counts verbatim. Never invent record counts.
-4. Build a short evidence index from commit, file, dirty, binary, and diff records.
-5. Select only cases whose evidence paths match the new target.
-6. For board work, check `device/board/seed/t113_evb1` and bootloader/HDF files.
-7. For SoC work, check `device/soc/allwinner` BSP and platform files.
-8. For vendor work, check `vendor/seed/t113_evb1` product configuration and generated HDF blobs.
-9. For Wi-Fi work, inspect libnl, wpa_supplicant, BK7236, and related board scripts.
-10. For audio work, inspect HDF codec, DAI, DMA, and board DTS evidence.
-11. For prebuilts, record path, sha256, architecture, possible usage, source commit, introduced_by, license risk, redistribution risk, and runtime dependency.
-12. Treat dirty workspace files as local evidence only. If a dirty file looks necessary, convert it into a clean commit or documented patch before calling it reusable.
+Statistics must come from `02_statistics/statistics_summary.json` only. For this run, available counts include:
 
-## Evidence Rules
+```json
+{json.dumps({k: stats.get(k) for k in sorted(stats) if k.endswith('_count') or k in ['repo_count', 'changed_repo_count']}, ensure_ascii=False, indent=2)}
+```
 
-- Commit claims must cite `repo_path + commit_hash` from `commit_records.jsonl`.
-- File claims must cite `repo_path + file_path` from `file_change_records.jsonl` or `dirty_file_records.jsonl`.
-- Binary claims must cite `path + sha256` from `binary_asset_records.csv`.
-- Diff claims must cite a path under `01_raw_records/diffs/`.
-- If evidence is absent, write `unknown` or `inference`; do not state it as fact.
-- Workarounds must be separated from best practices.
-- `task_profile.yaml` is authoritative for scenario type unless a formal scope change request is generated.
+If any report or case disagrees with these counts, treat the report/case as suspect and rerun statistics QC.
 
-## Case Generation Rules
+## 6. Scenario Taxonomy
 
-Each case must include:
+### ARM-primary board/SoC
 
+OpenHarmony runs on ARM. Board, SoC, vendor, driver, HDF, kernel, bootloader and product binding are the primary focus. RISC-V/DSP/C906/ARISC assets are auxiliary firmware or heterogeneous context. T113 falls here unless a scope change is produced.
+
+### RISC-V-primary distribution
+
+OpenHarmony or the derived distribution runs on RISC-V. Toolchain, target CPU, ABI, OpenSBI/U-Boot, kernel RISC-V support, third_party architecture compatibility and RISC-V runtime validation become primary concerns.
+
+### Heterogeneous auxiliary-core
+
+Auxiliary firmware exists but does not define the OpenHarmony runtime architecture. Treat auxiliary core assets as firmware/provenance/IPC risks unless evidence shows OpenHarmony itself runs there.
+
+### Unknown
+
+Stop and collect manifest, product, board, SoC, kernel, toolchain and runtime-core evidence before reusing cases.
+
+## 7. Execution Workflow
+
+1. Read `task_profile.yaml`. Do not override it without a formal scope-change request.
+2. Load `statistics_summary.json` and copy counts exactly.
+3. Read only the cases whose evidence paths match the new target.
+4. For each case, verify that every cited commit/file/diff/binary/dirty record exists in raw records.
+5. Exclude cases based on force-sync, `.gitattributes`-only, initial import, or generic SDK sync evidence.
+6. Map target paths: productdefine → vendor → device/board → device/soc → kernel/HDF → runtime binary/prebuilt.
+7. Decide whether each case is directly reusable, reusable with adaptation, risk-only, or not applicable.
+8. For reusable cases, generate a narrow action plan with validation commands and expected logs.
+9. For dirty workspace evidence, ask for a clean commit or patch before treating it as landed history.
+10. For binary/prebuilt evidence, require sha256/provenance/license/redistribution review before reuse.
+11. Separate best practices from workarounds.
+12. Produce final recommendations with evidence citations.
+
+## 8. Evidence Rules
+
+- Commit claims cite `repo_path + commit_hash` from `commit_records.jsonl`.
+- File claims cite `repo_path + file_path` from `file_change_records.jsonl` or `dirty_file_records.jsonl`.
+- Binary claims cite `path + sha256` from `binary_asset_records.csv`.
+- Diff claims cite paths under `01_raw_records/diffs/`.
+- If evidence is absent, write `unknown` or `inference`.
+- Dirty workspace records are local WIP evidence, not committed history.
+- Workarounds must be labelled and must not be promoted to best practice.
+
+## 9. Case Reuse Rules
+
+Each reusable case must include:
+
+- Problem and symptom.
+- Root cause.
+- Fix or handling pattern.
+- Evidence block with commits/files/diffs and optional dirty/binary records.
 - Applicability and non-applicability.
-- A YAML-like evidence block containing commits, evidence_files, and optional diffs.
-- At least one commit hash and one file path from raw records.
-- A reusable pattern that is narrower than the evidence permits.
-- A risk section that mentions dirty workspace or binary/prebuilt concerns when relevant.
+- Verification steps.
+- Risks and confidence.
 
-## Existing Case Inputs
+Reject or downgrade cases when:
 
-{chr(10).join(case_lines)}
+- the only evidence is force-sync SDK code;
+- all cited files are `.gitattributes`;
+- title/theme does not match evidence paths;
+- binary evidence lacks sha256;
+- the case confuses ARM-primary with RISC-V-primary scope.
 
-## Scenario Taxonomy
+## 10. Current Case Inputs
 
-- ARM-primary board/SoC: OpenHarmony runs on ARM; RISC-V or DSP items are auxiliary firmware/context. This is the current project.
-- RISC-V-primary distribution: OpenHarmony or distribution runtime is RISC-V; board/product/toolchain assumptions differ.
-- Heterogeneous auxiliary-core: Auxiliary firmware exists but must not redefine the runtime architecture.
-- Unknown: stop and gather manifest, product, board, SoC, and toolchain evidence.
+{chr(10).join(case_lines) if case_lines else '- No cases were generated; rerun stage 05.'}
 
-## Failure Handling
+## 11. Board/SoC Rules Snapshot
 
-- If a required raw record file is missing, stop and mark the stage blocked.
-- If statistics do not match raw records, rerun statistics QC.
-- If a case lacks visible evidence, reject the case.
-- If generated Skill output is too short, expand workflow, evidence rules, quality gates, examples, and anti-examples.
-- If binary evidence lacks sha256, mark provenance risk and avoid reuse.
+```text
+{rules[:5000] if rules else 'No board_soc_porting_rules.md found.'}
+```
 
-## Quality Gates
+## 12. Tool Commands
 
-- Statistics match raw records.
+```bash
+# Validate raw records and statistics
+python3 tools/validate_stage.py --workspace "$PWD" --out porting_knowledge_output --stage 03_statistics_qc --stage-result porting_knowledge_output/_stage_results/03_statistics_qc.json
+
+# Rerun semantic analysis with LLM stage by default
+bash tools/run_stage.sh "$PWD" 04_semantic_analyzer
+
+# Use deterministic fallback only when explicitly desired
+DETERMINISTIC_SEMANTIC_ANALYZER=1 bash tools/run_stage.sh "$PWD" 04_semantic_analyzer
+
+# Audit final outputs
+bash tools/run_stage.sh "$PWD" 07_final_auditor
+```
+
+## 13. Failure Handling
+
+- Missing raw record file: stop and rerun raw extraction.
+- Statistics mismatch: rerun statistics QC and do not generate cases.
+- Empty repo/subsystem analysis: rerun semantic analyzer.
+- Template-like cases or mismatched themes: reject cases and rerun case builder with stricter filtering.
+- Generated runbook/template/checklist too short: rerun skill generator.
+- Auditor reports blocking issues: do not accept the knowledge package.
+
+## 14. Quality Gates
+
+- Raw record counts match statistics.
 - Repo and subsystem analyses are non-empty.
-- Every case cites commits and files that exist in raw records.
-- Binary claims cite binary records.
-- Dirty workspace is represented separately.
-- Generated Skill includes ARM, RISC-V, heterogeneous, evidence, and quality guidance.
-- Workarounds are not presented as best practices.
+- At least one reusable case cites valid commit/file evidence.
+- Cases are not based on force-sync, `.gitattributes`-only or initial-import evidence.
+- Skill output includes scenario taxonomy, evidence rules, workflow, failure handling, quality gates, examples and anti-examples.
+- `agent_runbook.md`, `next_porting_task_template.md`, and `quality_checklist.md` are detailed enough for a fresh agent to operate without chat history.
+- Binary asset index present: {binary_index_exists}.
 
-## Examples
+## 15. Examples
 
-Wi-Fi enablement example: cite commits such as board Wi-Fi commits and files such as `patch/0001-add-wpa_supplicant.patch`, then verify matching SoC/BSP and third_party runtime binary evidence before reuse.
+### WiFi compatibility
 
-Audio/HDF example: cite the T113 HDF audio commit and files under `kernel/hdf/driver/audio`, then verify board DTS and codec/DAI/DMA linkage.
+If a case cites WiFi commits that replace non-standard type aliases or adjust libc/toolbox assumptions, reuse it only after checking the target sysroot headers and runtime command behaviour. Verify build success and target-side WiFi service startup.
 
-Binary review example: cite `third_party/wpa_supplicant/.../wpa_supplicant` with sha256 and runtime dependency, then require source/build provenance before shipping.
+### HDF audio chain
 
-## Anti-Examples
+If a case cites audio/HDF files, require driver, board/SoC and vendor/HDF configuration evidence. A single codec commit without board/vendor binding is incomplete.
 
-- Claiming a RISC-V primary port because auxiliary firmware is present.
-- Copying `prebuilts/` wholesale without sha256 and license review.
-- Treating `dirty_file_records.jsonl` as committed change history.
-- Writing a case from intuition without commit/file evidence.
+### Binary provenance
+
+If a bootloader or firmware blob is involved, record path, sha256, architecture, possible usage, source/introduced_by, license risk and redistribution risk before copying it.
+
+## 16. Anti-Examples
+
+- Claiming T113 is RISC-V-primary because auxiliary firmware exists.
+- Creating an HDF audio case from `.gitattributes` or generic SDK sync evidence.
+- Calling dirty workspace files committed history.
+- Shipping `prebuilts/` wholesale without provenance review.
+- Writing a reusable rule from a commit subject without file/diff evidence.
 """
-    while len(generated_skill) < 5200:
-        generated_skill += "\nQuality reminder: preserve evidence, scenario scope, dirty workspace separation, binary provenance, ARM/RISC-V taxonomy, heterogeneous auxiliary-core context, and explicit quality gates before reusing any rule.\n"
 
-    (skill_dir / 'generated_skill.md').write_text(generated_skill, encoding='utf-8')
-    (skill_dir / 'agent_runbook.md').write_text(
-        '# Agent Runbook\n\n1. Read task profile.\n2. Verify statistics.\n3. Select evidence-bound cases.\n4. Recheck binary and dirty workspace risks.\n5. Produce scoped recommendations with citations.\n',
-        encoding='utf-8',
-    )
-    (skill_dir / 'next_porting_task_template.md').write_text(
-        '# Next Porting Task Template\n\n- Target board/SoC:\n- Runtime architecture:\n- Auxiliary cores:\n- Evidence files:\n- Expected outputs:\n- Quality gates:\n',
-        encoding='utf-8',
-    )
-    (skill_dir / 'quality_checklist.md').write_text(
-        '# Quality Checklist\n\n- [ ] ARM/RISC-V/heterogeneous scope confirmed.\n- [ ] Statistics copied from JSON.\n- [ ] Cases cite commits and files.\n- [ ] Binary assets cite sha256.\n- [ ] Dirty workspace kept separate.\n- [ ] Workarounds labelled.\n',
-        encoding='utf-8',
-    )
+    runbook = """# Agent Runbook: OpenHarmony Board/SoC Porting Reuse
+
+## 1. Start
+
+1. Open `00_config/task_profile.yaml`.
+2. Confirm runtime architecture, auxiliary cores, SoC, board, kernel and system type.
+3. Load `02_statistics/statistics_summary.json`; do not invent or recalculate report numbers manually.
+4. Read `04_knowledge_base/cases/` only after confirming the scenario.
+
+## 2. Decision Flow
+
+- If the target is ARM-primary, prioritize product/board/vendor/SoC, kernel/HDF, WiFi, audio, bootloader and binary/prebuilt review.
+- If the target is RISC-V-primary, switch to architecture/toolchain/kernel/third_party runtime checks and do not reuse ARM board assumptions directly.
+- If the target is heterogeneous auxiliary-core, keep auxiliary firmware separate from OpenHarmony runtime architecture.
+
+## 3. Evidence Handling
+
+For every recommendation, attach one of:
+
+- commit evidence: `repo_path + commit_hash`;
+- file evidence: `repo_path + file_path`;
+- dirty evidence: dirty record path and status;
+- binary evidence: path and sha256;
+- diff evidence: patch path under `01_raw_records/diffs/`.
+
+## 4. Case Use
+
+1. Reject cases whose evidence is only initial import, force sync or `.gitattributes`.
+2. Check that case title matches evidence paths and subjects.
+3. Reclassify binary-heavy cases as provenance/risk items unless source/build recipe exists.
+4. Mark every rule as directly reusable, reusable with adaptation, risk-only, or not applicable.
+
+## 5. Validation Commands
+
+```bash
+bash tools/run_stage.sh "$PWD" 03_statistics_qc
+bash tools/run_stage.sh "$PWD" 04_semantic_analyzer
+bash tools/run_stage.sh "$PWD" 05_case_kb_builder
+bash tools/run_stage.sh "$PWD" 07_final_auditor
+```
+
+## 6. Failure Handling
+
+- Raw files missing: rerun stages 01 and 02.
+- Statistics mismatch: rerun stage 03 and inspect `02_statistics/qc_report.md`.
+- Empty semantic directories: rerun stage 04; enable deterministic fallback only for debugging.
+- Weak cases: rerun stage 05 and inspect `06_audit/blocking_issues.md`.
+- Scope contradiction: create `00_config/scope_change_request.md` instead of silently changing the task profile.
+
+## 7. Final Response Requirements
+
+Final recommendations must distinguish fact, inference, reusable rule and risk. They must not rely on previous chat history; all claims should trace back to artifacts in `porting_knowledge_output/`.
+"""
+
+    template = """# Next OpenHarmony Porting Task Template
+
+## Target Definition
+
+- OpenHarmony version:
+- SoC:
+- Board:
+- Runtime architecture:
+- Auxiliary cores:
+- Kernel:
+- System type:
+- Toolchain:
+- Expected product target:
+
+## Inputs
+
+- repo workspace path:
+- manifest snapshot:
+- upstream baseline:
+- downstream state:
+- build logs:
+- boot/runtime logs:
+- board schematics/vendor SDK:
+- binary/prebuilt inventory:
+
+## Scenario Classification
+
+Choose one:
+
+- ARM-primary board/SoC
+- RISC-V-primary distribution
+- heterogeneous auxiliary-core
+- unknown
+
+Explain the evidence for the choice.
+
+## Stage Plan
+
+1. Scope classification.
+2. Repo/baseline modeling.
+3. Raw record extraction.
+4. Dirty workspace audit.
+5. Binary/prebuilt audit.
+6. Statistics QC.
+7. Semantic analysis.
+8. Case KB generation.
+9. Skill generation.
+10. Final audit.
+
+## Risk Table
+
+| Risk | Evidence | Owner | Mitigation | Status |
+| --- | --- | --- | --- | --- |
+| Binary provenance | | | | |
+| Dirty workspace | | | | |
+| Baseline unknown | | | | |
+| Driver/HDF chain incomplete | | | | |
+| WiFi runtime mismatch | | | | |
+
+## Daily Record Format
+
+```yaml
+date:
+actor:
+repo_path:
+commit_hash:
+file_paths:
+problem:
+root_cause:
+fix:
+verification:
+reusable_rule:
+risk:
+evidence:
+```
+"""
+
+    checklist = """# Quality Checklist
+
+## Scope
+
+- [ ] `task_profile.yaml` exists and names runtime architecture.
+- [ ] ARM-primary, RISC-V-primary and heterogeneous auxiliary-core cases are not conflated.
+- [ ] Any scope change has a written `scope_change_request.md`.
+
+## Raw Records
+
+- [ ] `commit_records.jsonl` exists and has records.
+- [ ] `file_change_records.jsonl` covers non-merge post-import commits.
+- [ ] `dirty_file_records.jsonl` separates local WIP from committed history.
+- [ ] `binary_asset_records.csv` includes path and sha256.
+- [ ] Diff pointers exist for reusable commits where possible.
+
+## Statistics
+
+- [ ] Counts in `statistics_summary.json` match raw records.
+- [ ] Reports copy statistics rather than inventing numbers.
+- [ ] Initial import, post-import, dirty and binary evidence are counted separately.
+
+## Semantic Analysis
+
+- [ ] `repo_analysis/` is non-empty.
+- [ ] `subsystem_analysis/` is non-empty.
+- [ ] Force-sync and `.gitattributes` commits are marked noise.
+- [ ] Candidate cases have subsystem-specific evidence.
+
+## Cases
+
+- [ ] Every case has Problem, Root Cause, Fix, Reusable Rule, Applicability, Non-Applicability, Verification, Risk and Confidence.
+- [ ] Every case has commit/file/diff evidence or is explicitly a dirty/binary risk pattern.
+- [ ] No case is based only on initial import, force-sync or `.gitattributes`.
+- [ ] Case title matches evidence paths and subjects.
+
+## Skill Output
+
+- [ ] `generated_skill.md` contains workflow, evidence rules, case rules, failure handling, quality gates, examples and anti-examples.
+- [ ] `agent_runbook.md` contains actionable steps and commands.
+- [ ] `next_porting_task_template.md` is usable for a fresh project.
+- [ ] `quality_checklist.md` covers raw/stat/semantic/case/skill/audit checks.
+
+## Audit
+
+- [ ] Final auditor reports semantic mismatches, not only missing files.
+- [ ] Blocking issues are not suppressed.
+- [ ] Artifact manifest is present.
+"""
+
+    (skill_dir / "generated_skill.md").write_text(generated_skill, encoding="utf-8")
+    (skill_dir / "agent_runbook.md").write_text(runbook, encoding="utf-8")
+    (skill_dir / "next_porting_task_template.md").write_text(template, encoding="utf-8")
+    (skill_dir / "quality_checklist.md").write_text(checklist, encoding="utf-8")
+
     outputs = [
-        '05_skill_output/generated_skill.md',
-        '05_skill_output/agent_runbook.md',
-        '05_skill_output/next_porting_task_template.md',
-        '05_skill_output/quality_checklist.md',
+        "05_skill_output/generated_skill.md",
+        "05_skill_output/agent_runbook.md",
+        "05_skill_output/next_porting_task_template.md",
+        "05_skill_output/quality_checklist.md",
     ]
     result = {
-        'stage': '06_skill_generator',
-        'status': 'passed',
-        'summary': 'Generated reusable Skill and supporting runbook/template/checklist.',
-        'input_files_read': [
-            '00_config/task_profile.yaml',
-            '02_statistics/statistics_summary.json',
-            '03_semantic_analysis/repo_analysis/',
-            '03_semantic_analysis/subsystem_analysis/',
-            '04_knowledge_base/cases/',
-            '04_knowledge_base/patterns/',
-            '04_knowledge_base/board_soc_porting_rules.md',
-            '04_knowledge_base/binary_asset_index.md',
+        "stage": "06_skill_generator",
+        "status": "passed",
+        "summary": "Generated complete reusable Skill, runbook, next-task template and quality checklist.",
+        "input_files_read": [
+            "00_config/task_profile.yaml",
+            "02_statistics/statistics_summary.json",
+            "03_semantic_analysis/repo_analysis/",
+            "03_semantic_analysis/subsystem_analysis/",
+            "04_knowledge_base/cases/",
+            "04_knowledge_base/patterns/",
+            "04_knowledge_base/board_soc_porting_rules.md",
+            "04_knowledge_base/binary_asset_index.md",
         ],
-        'output_files_written': outputs,
-        'blocking_issues': [],
-        'non_blocking_issues': [],
-        'next_stage_inputs': outputs,
+        "output_files_written": outputs,
+        "blocking_issues": [],
+        "non_blocking_issues": [],
+        "next_stage_inputs": outputs,
     }
     if args.stage_result:
-        Path(args.stage_result).write_text(json.dumps(result, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+        Path(args.stage_result).write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(json.dumps(result, ensure_ascii=False))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
