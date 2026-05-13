@@ -23,9 +23,9 @@ CASE_ORDER = [
     "wifi_type_api_compat",
     "wifi_runtime_integration",
     "hdf_audio_chain",
-    "product_board_soc_binding",
-    "boot_firmware_board_config",
-    "kernel_driver_adaptation",
+    "soc_uapi_include_integration",
+    "reboot_efex_runtime_support",
+    "cedar_ve_driver_uapi_fix",
     "build_integration",
 ]
 
@@ -54,29 +54,29 @@ CASE_DEFS = {
         "fix": "Review and replay HDF audio changes as a chain: driver implementation, board/kernel/HDF files, SoC enablement, vendor hdf_config, and generated artifacts. Regenerate binary HDF configuration from source where possible.",
         "rule": "Never classify an audio/HDF bring-up as complete from one repo. Require driver + board + SoC + vendor configuration evidence before reusing the case.",
     },
-    "product_board_soc_binding": {
-        "id": "T113-PRODUCT-BOARD-SOC-BINDING",
-        "title": "Product, board, vendor and SoC binding",
-        "problem": "OpenHarmony board/SoC ports fail or drift when product names, vendor configuration, board directories, SoC BSP paths, and build targets do not form a consistent binding graph.",
-        "root_cause": "Board ports often start from imported SDK directories and then require explicit OpenHarmony product/vendor definitions, bundle/product metadata, kernel/dtb references, and build inclusion rules.",
-        "fix": "Normalize product/vendor/board/SoC naming, verify the product definition points to the intended board and SoC, and keep generated/binary config separate from source configuration.",
-        "rule": "Before debugging drivers, verify product → vendor → board → SoC → kernel/HDF binding with evidence from productdefine, device/board, device/soc and vendor paths.",
+    "soc_uapi_include_integration": {
+        "id": "T113-SOC-UAPI-INCLUDE-INTEGRATION",
+        "title": "SoC BSP UAPI include path integration",
+        "problem": "SoC common libraries can silently include a stale private copy of kernel UAPI headers instead of the BSP-provided UAPI path, causing ABI drift between userspace wrappers and the kernel driver interface.",
+        "root_cause": "The `libawion` evidence only shows a SoC/common BUILD.gn and cedar VE UAPI include-path adjustment; it does not prove full product/vendor/board binding.",
+        "fix": "Prefer the authoritative `device/soc/allwinner/bsp/include/uapi` header path for SoC userspace wrappers, remove duplicate local UAPI headers when the diff does so, and verify the affected library still builds against the target BSP.",
+        "rule": "Classify this evidence as SoC BSP/UAPI integration unless productdefine, vendor and device/board records are also cited.",
     },
-    "boot_firmware_board_config": {
-        "id": "T113-BOOT-FIRMWARE-BOARD-CONFIG",
-        "title": "Bootloader, firmware and board configuration provenance",
-        "problem": "Bootloader, SPL, ARISC/DSP firmware, FEX/DTS and board binary assets are necessary for board bring-up but can be confused with OpenHarmony source fixes.",
-        "root_cause": "Vendor SDKs often introduce binary boot/firmware assets and generated board configuration without source provenance. These assets affect boot/runtime behaviour but are not directly explainable from source diffs.",
-        "fix": "Track boot/firmware assets by path, sha256, architecture, introduced_by and runtime usage. Prefer source/regeneration recipes when available and keep redistribution/license review explicit.",
-        "rule": "For each new board, create a boot/firmware provenance table before copying vendor binaries into another port.",
+    "reboot_efex_runtime_support": {
+        "id": "T113-REBOOT-EFEX-RUNTIME-SUPPORT",
+        "title": "Toybox reboot efex runtime command support",
+        "problem": "Board recovery workflows may require a userspace reboot command path that can request Allwinner EFEX/FEL-style recovery mode, but this is runtime command support rather than bootloader provenance.",
+        "root_cause": "The cited evidence is limited to `third_party/toybox/toys/other/reboot.c` and commit subject `toybox:reboot support efex`; no bootloader binaries, ARISC/DSP firmware, FEX, DTS or environment blobs are cited.",
+        "fix": "Treat the patch as a toybox/runtime command adaptation. Validate accepted reboot arguments and target serial behaviour separately from bootloader or firmware binary provenance review.",
+        "rule": "Do not label reboot/efex toybox evidence as a complete boot/firmware case unless bootloader, firmware and board configuration assets are also present in the evidence block.",
     },
-    "kernel_driver_adaptation": {
-        "id": "T113-KERNEL-DRIVER-ADAPTATION",
-        "title": "Kernel and driver adaptation evidence chain",
-        "problem": "Kernel/driver updates can be hidden in baseline-unknown repositories, initial imports, or dirty workspace files, making it easy to overstate what was actually committed.",
-        "root_cause": "Large BSP trees and driver directories often contain mixed source changes, generated files, build outputs, and local untracked work.",
-        "fix": "Separate committed driver changes from dirty workspace evidence; tie each reusable rule to file/diff records and mark baseline-unknown driver content as risk until verified.",
-        "rule": "For driver work, evidence must distinguish committed source patches from untracked/generated/build-output files.",
+    "cedar_ve_driver_uapi_fix": {
+        "id": "T113-CEDAR-VE-DRIVER-UAPI-FIX",
+        "title": "Cedar VE kernel driver and UAPI fix",
+        "problem": "Cedar VE driver changes affect the kernel/userspace video-engine contract and should not be mixed with unrelated dirty HDF audio object files or generated build outputs.",
+        "root_cause": "The committed evidence is a bounded BSP source patch under `drivers/ve/cedar-ve` plus `include/uapi/linux/cedar_ve_uapi.h`; dirty HDF audio `.o/.cmd` files are separate generated workspace risk.",
+        "fix": "Review and replay the committed Cedar VE source/UAPI patch as one kernel/BSP driver case, then handle HDF audio generated artifacts through dirty/binary cleanup rather than this reusable fix.",
+        "rule": "Keep Cedar VE driver/UAPI fixes evidence-bound to committed BSP source files; classify generated HDF audio objects and `.cmd` files as dirty workspace risk.",
     },
     "build_integration": {
         "id": "T113-BUILD-INTEGRATION",
@@ -168,6 +168,9 @@ def collect_related_dirty(theme: str, dirty_files: list[dict[str, Any]], limit: 
         "product_board_soc_binding": ["product", "vendor/", "device/board", "device/soc", "config.json"],
         "boot_firmware_board_config": ["boot", "brandy", "u-boot", "spl", "arisc", "dsp", "fex", "dts"],
         "kernel_driver_adaptation": ["kernel", "driver", "drivers/", ".ko"],
+        "soc_uapi_include_integration": ["libawion", "uapi", "cedar_ve_uapi", "device/soc/allwinner/common"],
+        "reboot_efex_runtime_support": ["toybox", "reboot", "efex"],
+        "cedar_ve_driver_uapi_fix": ["cedar-ve", "cedar_ve", "ve_plat", "device/soc/allwinner/bsp"],
         "build_integration": ["build.gn", "bundle.json", "productdefine", "config.gni"],
     }.get(theme, [])
     result = []
@@ -188,6 +191,9 @@ def collect_related_binary(theme: str, binary_rows: list[dict[str, str]], limit:
         "product_board_soc_binding": ["vendor/", "device/board", "device/soc"],
         "boot_firmware_board_config": ["boot", "brandy", "u-boot", "spl", "arisc", "dsp", "fex", ".bin"],
         "kernel_driver_adaptation": ["kernel", "driver", ".ko"],
+        "soc_uapi_include_integration": ["libawion", "uapi", "cedar_ve_uapi", "device/soc/allwinner/common"],
+        "reboot_efex_runtime_support": ["toybox", "reboot", "efex"],
+        "cedar_ve_driver_uapi_fix": ["cedar-ve", "cedar_ve", "ve_plat", "device/soc/allwinner/bsp"],
         "build_integration": ["build", "prebuilt", "toolchain"],
     }.get(theme, [])
     result = []
@@ -198,6 +204,10 @@ def collect_related_binary(theme: str, binary_rows: list[dict[str, str]], limit:
             if len(result) >= limit:
                 break
     return result
+
+
+def dirty_status(item: dict[str, Any]) -> str:
+    return str(item.get("xy_status") or item.get("change_type") or item.get("change_status") or "unknown")
 
 
 def case_markdown(idx: int, theme: str, rows: list[dict[str, Any]], dirty: list[dict[str, Any]], binaries: list[dict[str, str]]) -> str:
@@ -249,13 +259,15 @@ def case_markdown(idx: int, theme: str, rows: list[dict[str, Any]], dirty: list[
                 f"    - repo_path: {item.get('repo_path')}",
                 f"      file_path: {item.get('path') or item.get('file_path')}",
                 f"      evidence_id: {item.get('evidence_id')}",
-                f"      status: {item.get('dirty_status')}",
+                f"      xy_status: {dirty_status(item)}",
+                f"      change_type: {item.get('change_type') or 'unknown'}",
             ])
     if binaries:
         lines.append("  binary_assets:")
         for item in binaries[:8]:
             lines.extend([
                 f"    - path: {item.get('path') or item.get('file_path')}",
+                f"      asset_kind: {item.get('asset_kind') or 'unknown'}",
                 f"      sha256: {item.get('sha256')}",
                 f"      possible_usage: {item.get('possible_usage')}",
                 f"      runtime_dependency: {item.get('runtime_dependency')}",
@@ -350,7 +362,7 @@ def write_patterns(kb: Path, dirty_files: list[dict[str, Any]], binary_rows: lis
         "## Representative Dirty Evidence",
     ]
     for item in dirty_examples:
-        dirty_lines.append(f"- `{item.get('repo_path')}/{item.get('path') or item.get('file_path')}` status={item.get('dirty_status')} class={item.get('dirty_content_class') or item.get('classification')}")
+        dirty_lines.append(f"- `{item.get('repo_path')}/{item.get('path') or item.get('file_path')}` xy_status={dirty_status(item)} change_type={item.get('change_type') or 'unknown'} class={item.get('dirty_content_class') or item.get('classification')}")
     (patterns_dir / "dirty_workspace_governance_pattern.md").write_text("\n".join(dirty_lines) + "\n", encoding="utf-8")
 
     binary_examples = binary_rows[:25]
@@ -362,8 +374,38 @@ def write_patterns(kb: Path, dirty_files: list[dict[str, Any]], binary_rows: lis
         "## Representative Binary Evidence",
     ]
     for item in binary_examples:
-        bin_lines.append(f"- `{item.get('path') or item.get('file_path')}` sha256={item.get('sha256')} usage={item.get('possible_usage')} runtime={item.get('runtime_dependency')}")
+        bin_lines.append(f"- `{item.get('path') or item.get('file_path')}` kind={item.get('asset_kind') or 'unknown'} sha256={item.get('sha256')} usage={item.get('possible_usage')} runtime={item.get('runtime_dependency')}")
     (patterns_dir / "binary_prebuilt_provenance_pattern.md").write_text("\n".join(bin_lines) + "\n", encoding="utf-8")
+
+    hdf_dirty = [
+        item for item in dirty_files
+        if any(token in f"{item.get('repo_path','')} {item.get('path','')} {item.get('file_path','')}".lower() for token in ["hdf", "audio", "codec", "dai", "dma"])
+        and str(item.get("dirty_content_class") or "") in {"generated", "binary", "build_output", "unknown"}
+    ]
+    hdf_binary = [
+        item for item in binary_rows
+        if any(token in f"{item.get('path','')} {item.get('file_path','')}".lower() for token in ["hdf", "audio", "codec", "dai", "dma"])
+        and str(item.get("asset_kind") or "") in {"generated_build_metadata", "object_file", "static_library", "generated_config", "unknown"}
+    ]
+    hdf_lines = [
+        "# HDF Audio Generated Build Artifact Risk",
+        "",
+        "Generated HDF audio `.o`, `.a`, `.cmd`, HCB or untracked build outputs are dirty/binary risk evidence, not committed source adaptation by themselves.",
+        "",
+        "## Dirty Evidence Samples",
+    ]
+    for item in hdf_dirty[:30]:
+        hdf_lines.append(f"- `{item.get('repo_path')}/{item.get('path') or item.get('file_path')}` xy_status={dirty_status(item)} class={item.get('dirty_content_class') or 'unknown'}")
+    hdf_lines.extend(["", "## Binary / Generated Samples"])
+    for item in hdf_binary[:30]:
+        hdf_lines.append(f"- `{item.get('path') or item.get('file_path')}` kind={item.get('asset_kind') or 'unknown'} usage={item.get('possible_usage') or 'unknown'} sha256={item.get('sha256') or 'missing'}")
+    hdf_lines.extend([
+        "",
+        "## Reuse Rule",
+        "",
+        "Before reusing HDF audio evidence, require source HCS/HDF/driver commits or regeneration recipes. Treat generated objects and `.cmd` metadata as cleanup/provenance work.",
+    ])
+    (patterns_dir / "hdf_audio_generated_build_artifact_risk.md").write_text("\n".join(hdf_lines) + "\n", encoding="utf-8")
 
     noise_lines = [
         "# Rejected / Noise Evidence Pattern",
@@ -459,8 +501,10 @@ def main() -> None:
             "4. WiFi cases must show source/config evidence and, if runtime binaries are involved, binary provenance evidence.",
             "5. HDF audio cases must show a chain across driver, board/SoC and vendor/HDF configuration; one isolated commit is not enough to claim full bring-up.",
             "6. Product/board/SoC cases must verify productdefine/vendor/device/SoC binding before debugging subsystem behaviour.",
-            "7. Binary/prebuilt evidence must include path and sha256; reusable rules must say whether the item is source-generated, vendor-provided or unknown.",
-            "8. Dirty workspace evidence is not committed history. Convert it to clean commits or document it as WIP risk.",
+            "7. SoC UAPI include-path fixes are not full product/board/SoC binding unless productdefine, vendor and board evidence is cited.",
+            "8. Reboot/EFEX command support is runtime userspace behaviour; do not promote it to bootloader/firmware provenance without binary/config evidence.",
+            "9. Binary/prebuilt evidence must include path, asset_kind and sha256; `.gitattributes` is metadata and `.cmd` is generated build metadata.",
+            "10. Dirty workspace evidence is not committed history. Preserve `xy_status` and `change_type`, then convert WIP to clean commits or document it as risk.",
             "",
         ]),
         encoding="utf-8",

@@ -168,10 +168,10 @@ Stop and collect manifest, product, board, SoC, kernel, toolchain and runtime-co
 
 - Commit claims cite `repo_path + commit_hash` from `commit_records.jsonl`.
 - File claims cite `repo_path + file_path` from `file_change_records.jsonl` or `dirty_file_records.jsonl`.
-- Binary claims cite `path + sha256` from `binary_asset_records.csv`.
+- Binary claims cite `path + asset_kind + sha256` from `binary_asset_records.csv`.
 - Diff claims cite paths under `01_raw_records/diffs/`.
 - If evidence is absent, write `unknown` or `inference`.
-- Dirty workspace records are local WIP evidence, not committed history.
+- Dirty workspace records are local WIP evidence, not committed history; preserve `xy_status` and `change_type`.
 - Workarounds must be labelled and must not be promoted to best practice.
 
 ## 10. Case Reuse Rules
@@ -192,6 +192,7 @@ Reject or downgrade cases when:
 - all cited files are `.gitattributes`;
 - title/theme does not match evidence paths;
 - binary evidence lacks sha256;
+- `.gitattributes` is used as binary/firmware evidence or `.cmd` is treated as an object/static library;
 - the case confuses ARM-primary with RISC-V-primary scope.
 
 ## 11. Current Case Inputs
@@ -284,15 +285,15 @@ For every recommendation, attach one of:
 
 - commit evidence: `repo_path + commit_hash`;
 - file evidence: `repo_path + file_path`;
-- dirty evidence: dirty record path and status;
-- binary evidence: path and sha256;
+- dirty evidence: dirty record path, `xy_status` and `change_type`;
+- binary evidence: path, `asset_kind` and sha256;
 - diff evidence: patch path under `01_raw_records/diffs/`.
 
 ## 4. Case Use
 
 1. Reject cases whose evidence is only initial import, force sync or `.gitattributes`.
 2. Check that case title matches evidence paths and subjects.
-3. Reclassify binary-heavy cases as provenance/risk items unless source/build recipe exists.
+3. Reclassify binary-heavy cases as provenance/risk items unless source/build recipe exists; `.gitattributes` is metadata and `.cmd` is generated build metadata.
 4. Mark every rule as directly reusable, reusable with adaptation, risk-only, or not applicable.
 
 ## 5. Validation Commands
@@ -415,8 +416,8 @@ evidence:
 
 - [ ] `commit_records.jsonl` exists and has records.
 - [ ] `file_change_records.jsonl` covers non-merge post-import commits.
-- [ ] `dirty_file_records.jsonl` separates local WIP from committed history.
-- [ ] `binary_asset_records.csv` includes path and sha256.
+- [ ] `dirty_file_records.jsonl` separates local WIP from committed history and preserves `xy_status` / `change_type`.
+- [ ] `binary_asset_records.csv` includes path, asset_kind and sha256.
 - [ ] Diff pointers exist for reusable commits where possible.
 
 ## Statistics
@@ -438,6 +439,7 @@ evidence:
 - [ ] Every case has commit/file/diff evidence or is explicitly a dirty/binary risk pattern.
 - [ ] No case is based only on initial import, force-sync or `.gitattributes`.
 - [ ] Case title matches evidence paths and subjects.
+- [ ] SoC UAPI, reboot/EFEX and Cedar VE cases are not mislabeled as full product binding, bootloader provenance or generic driver chains without matching evidence.
 
 ## Skill Output
 
@@ -450,6 +452,7 @@ evidence:
 
 - [ ] Final auditor reports semantic mismatches, not only missing files.
 - [ ] Blocking issues are not suppressed.
+- [ ] Non-blocking binary provenance, deterministic fallback and historical pending-stage issues are carried into the final recommendation.
 - [ ] Artifact manifest is present.
 """
 

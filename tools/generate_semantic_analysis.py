@@ -12,6 +12,7 @@ import argparse
 import csv
 import json
 import re
+import shutil
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Iterable
@@ -41,6 +42,12 @@ def read_csv(path: Path) -> list[dict[str, str]]:
 
 def safe_name(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "__", (value or "").strip("/")) or "root"
+
+
+def recreate_generated_dir(path: Path) -> None:
+    if path.exists():
+        shutil.rmtree(path)
+    path.mkdir(parents=True, exist_ok=True)
 
 
 def int_value(value: Any) -> int:
@@ -85,6 +92,12 @@ def infer_theme(subject: Any, paths: list[str], origin_type: str | None = None) 
         return "sync_noise", noise
 
     text = " ".join([subj, *paths]).lower()
+    if "libawion" in text and ("uapi" in text or "cedar_ve_uapi" in text):
+        return "soc_uapi_include_integration", None
+    if "toybox" in text and "reboot" in text and "efex" in text:
+        return "reboot_efex_runtime_support", None
+    if "cedar-ve" in text or "cedar_ve" in text:
+        return "cedar_ve_driver_uapi_fix", None
     rules: list[tuple[str, list[str]]] = [
         ("wifi_type_api_compat", ["u8", "u16", "u32", "pthread_setname", "pthread_setname_np", "ps -e", "wifimanager", "wirelesscommon"]),
         ("wifi_runtime_integration", ["wifi", "wpa", "supplicant", "bk7236", "dhcpcd", "libnl", "netlink"]),
@@ -121,6 +134,9 @@ def candidate_score(theme: str, row: dict[str, Any], files: list[dict[str, Any]]
         "product_board_soc_binding",
         "boot_firmware_board_config",
         "kernel_driver_adaptation",
+        "soc_uapi_include_integration",
+        "reboot_efex_runtime_support",
+        "cedar_ve_driver_uapi_fix",
     }:
         score += 15
         reasons.append(f"theme {theme} is high-value for board/SoC porting")
@@ -164,6 +180,10 @@ def binary_repo_for_path(path: str) -> str:
     return parts[0]
 
 
+def dirty_status(row: dict[str, Any]) -> str:
+    return str(row.get("xy_status") or row.get("change_type") or row.get("change_status") or "unknown")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
@@ -174,9 +194,10 @@ def main() -> None:
     repo_dir = sem_dir / "repo_analysis"
     subsystem_dir = sem_dir / "subsystem_analysis"
     llm_dir = sem_dir / "_llm_inputs"
-    repo_dir.mkdir(parents=True, exist_ok=True)
-    subsystem_dir.mkdir(parents=True, exist_ok=True)
-    llm_dir.mkdir(parents=True, exist_ok=True)
+    sem_dir.mkdir(parents=True, exist_ok=True)
+    recreate_generated_dir(repo_dir)
+    recreate_generated_dir(subsystem_dir)
+    recreate_generated_dir(llm_dir)
 
     commits = read_jsonl(out / "01_raw_records/commit_records.jsonl")
     files = read_jsonl(out / "01_raw_records/file_change_records.jsonl")
@@ -355,13 +376,13 @@ def main() -> None:
             lines.extend(["", "## Dirty Workspace Evidence"])
             for row in first_items(repo_dirty, 16):
                 lines.append(
-                    f"- {row.get('evidence_id')} `{row.get('path') or row.get('file_path')}` status={row.get('dirty_status')} class={row.get('dirty_content_class') or row.get('classification')}"
+                    f"- {row.get('evidence_id')} `{row.get('path') or row.get('file_path')}` xy_status={dirty_status(row)} change_type={row.get('change_type') or 'unknown'} class={row.get('dirty_content_class') or row.get('classification')}"
                 )
         if repo_binary:
             lines.extend(["", "## Binary/Prebuilt Evidence"])
             for row in first_items(repo_binary, 12):
                 lines.append(
-                    f"- `{row.get('path') or row.get('file_path')}` sha256={row.get('sha256')} arch={row.get('architecture')} runtime={row.get('runtime_dependency')}"
+                    f"- `{row.get('path') or row.get('file_path')}` kind={row.get('asset_kind') or 'unknown'} sha256={row.get('sha256')} arch={row.get('architecture')} runtime={row.get('runtime_dependency')}"
                 )
         lines.extend([
             "",
@@ -403,7 +424,7 @@ def main() -> None:
         if binary:
             lines.extend(["", "## Binary/Prebuilt Evidence"])
             for row in first_items(binary, 12):
-                lines.append(f"- `{row.get('path') or row.get('file_path')}` sha256={row.get('sha256')} usage={row.get('possible_usage')}")
+                lines.append(f"- `{row.get('path') or row.get('file_path')}` kind={row.get('asset_kind') or 'unknown'} sha256={row.get('sha256')} usage={row.get('possible_usage')}")
         lines.append("")
         (subsystem_dir / f"{safe_name(classification)}.md").write_text("\n".join(lines), encoding="utf-8")
 

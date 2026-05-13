@@ -58,11 +58,25 @@ def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="ignore") if path.exists() else ""
 
 
+def read_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8", errors="ignore"))
+    except Exception:
+        return {}
+
+
 def extract_case_evidence(text: str) -> tuple[list[str], list[str], list[str]]:
     commits = re.findall(r"commit_hash:\s*([^\n\r]+)", text)
     files = re.findall(r"file_path:\s*([^\n\r]+)", text)
     bins = re.findall(r"sha256:\s*([^\n\r]+)", text)
     return [x.strip() for x in commits], [x.strip() for x in files], [x.strip() for x in bins]
+
+
+def append_once(items: list[str], item: str) -> None:
+    if item not in items:
+        items.append(item)
 
 
 def all_gitattributes(paths: list[str]) -> bool:
@@ -84,6 +98,49 @@ def evidence_matches_theme(case_name: str, text: str, evidence_files: list[str])
             if not any(n in combined for n in evidence_needles):
                 return False, f"title/theme {title_needles} has no matching evidence needles {evidence_needles}"
     return True, ""
+
+
+def deterministic_stage_logs(out: Path) -> list[str]:
+    log_dir = out / "_codex_stage_logs"
+    if not log_dir.exists():
+        return []
+    findings: list[str] = []
+    expected = {
+        "04_semantic_analyzer": "generate_semantic_analysis.py",
+        "05_case_kb_builder": "generate_case_kb.py",
+        "06_skill_generator": "generate_skill_output.py",
+        "07_final_auditor": "run_final_audit.py",
+    }
+    for stage, script in expected.items():
+        for log in sorted(log_dir.glob(f"run_stage_{stage}_*.log"), reverse=True):
+            text = read_text(log)
+            if f"using deterministic {script}" in text:
+                findings.append(f"{stage} used deterministic fallback `{script}` ({log.name})")
+                break
+    return findings
+
+
+def collect_stage_non_blocking(out: Path) -> list[str]:
+    result_dir = out / "_stage_results"
+    findings: list[str] = []
+    if not result_dir.exists():
+        return findings
+    for path in sorted(result_dir.glob("*.json")):
+        if ".pending." in path.name:
+            continue
+        data = read_json(path)
+        stage = data.get("stage") or path.stem
+        if stage == "07_final_auditor":
+            continue
+        for item in data.get("non_blocking_issues") or []:
+            findings.append(f"{stage}: {item}")
+    for path in sorted(result_dir.glob("*.pending.json")):
+        data = read_json(path)
+        stage = data.get("stage") or path.stem
+        status = data.get("status")
+        if status and status != "passed":
+            findings.append(f"historical pending result retained: {path.name} status={status}")
+    return findings
 
 
 def main() -> None:
@@ -221,6 +278,8 @@ def main() -> None:
         ok, reason = evidence_matches_theme(case.name, text, files)
         if not ok:
             blocking.append(f"case title/evidence mismatch: {case.name}: {reason}")
+        if "status: none" in lower:
+            non_blocking.append(f"case contains unresolved dirty status None: {case.name}")
 
     # Binary record schema sanity.
     binary_path = out / "01_raw_records/binary_asset_records.csv"
@@ -230,12 +289,51 @@ def main() -> None:
             headers = set(reader.fieldnames or [])
             if "sha256" not in headers:
                 blocking.append("binary_asset_records.csv missing sha256 column")
+            if "asset_kind" not in headers:
+                non_blocking.append("binary_asset_records.csv missing asset_kind column; binary classification is too coarse")
             if not ({"path", "file_path"} & headers):
                 blocking.append("binary_asset_records.csv missing path/file_path column")
             if "repo_path" not in headers:
                 non_blocking.append("binary_asset_records.csv has no explicit repo_path; repo derivation will be heuristic")
             if "evidence_id" not in headers:
                 non_blocking.append("binary_asset_records.csv has no explicit evidence_id; binary case validation is weaker")
+            rows = list(reader)
+        missing_hash = [row for row in rows if not row.get("sha256")]
+        review_rows = [
+            row for row in rows
+            if str(row.get("license_risk") or "").endswith("requires_review")
+            or str(row.get("redistribution_risk") or "").endswith("requires_review")
+        ]
+        main_kinds = {"firmware_blob", "generated_config", "kernel_module", "object_file", "shared_library", "static_library"}
+        main_rows = [row for row in rows if row.get("asset_kind") in main_kinds]
+        unknown_arch_main = [row for row in main_rows if (row.get("architecture") or "unknown") == "unknown"]
+        gitattributes_boot = [
+            row for row in rows
+            if Path(row.get("path") or row.get("file_path") or "").name == ".gitattributes"
+            and row.get("possible_usage") == "boot_or_firmware"
+        ]
+        cmd_static = [
+            row for row in rows
+            if Path(row.get("path") or row.get("file_path") or "").suffix.lower() == ".cmd"
+            and row.get("possible_usage") == "build_output_or_static_link"
+        ]
+        if missing_hash:
+            append_once(non_blocking, f"binary_asset_records.csv has {len(missing_hash)} records missing sha256; directory/prebuilt placeholders require bounded inventory")
+        if review_rows:
+            append_once(non_blocking, f"binary_asset_records.csv has {len(review_rows)} records requiring license/redistribution provenance review")
+        if unknown_arch_main:
+            append_once(non_blocking, f"{len(unknown_arch_main)} main binary/build artifact records still have architecture=unknown")
+        if gitattributes_boot:
+            blocking.append(f"{len(gitattributes_boot)} .gitattributes rows are still classified as boot_or_firmware")
+        if cmd_static:
+            non_blocking.append(f"{len(cmd_static)} .cmd rows are still classified as build_output_or_static_link instead of generated_build_metadata")
+
+    for item in collect_stage_non_blocking(out):
+        append_once(non_blocking, item)
+    for item in deterministic_stage_logs(out):
+        append_once(non_blocking, item)
+    if "status: None" in read_text(out / "03_semantic_analysis/dirty_workspace_analysis.md"):
+        append_once(non_blocking, "dirty workspace report contains status: None")
 
     files_manifest = []
     hash_max_bytes = 50 * 1024 * 1024
@@ -269,13 +367,20 @@ def main() -> None:
         "- Statistics checked against raw records.",
         "- Cases checked for visible evidence, section completeness, sync/noise leakage, and title/evidence consistency.",
         "- Generated Skill support files checked for minimum content and required sections.",
+        "- Non-blocking issues include propagated stage warnings, deterministic fallback disclosure, and binary/dirty evidence quality risks.",
         "",
         "## Blocking Issues",
     ]
     report_lines.extend([f"- {item}" for item in blocking] if blocking else ["- None"])
     report_lines.extend(["", "## Non-Blocking Issues"])
     report_lines.extend([f"- {item}" for item in non_blocking] if non_blocking else ["- None"])
-    report_lines.extend(["", "## Recommendation", "accept" if not blocking else "rerun_failed_stages", ""])
+    if blocking:
+        recommendation = "rerun_failed_stages"
+    elif non_blocking:
+        recommendation = "conditional_accept_with_non_blocking_issues"
+    else:
+        recommendation = "accept"
+    report_lines.extend(["", "## Recommendation", recommendation, ""])
     (audit_dir / "final_audit_report.md").write_text("\n".join(report_lines), encoding="utf-8")
     (audit_dir / "blocking_issues.md").write_text(
         "# Blocking Issues\n\n" + ("\n".join(f"- {item}" for item in blocking) if blocking else "- None") + "\n",
@@ -299,7 +404,7 @@ def main() -> None:
             "06_audit/non_blocking_issues.md",
             "06_audit/artifact_manifest.json",
         ],
-        "recommendation": "rerun_failed_stages" if blocking else "accept",
+        "recommendation": recommendation,
     }
     if args.stage_result:
         Path(args.stage_result).write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
