@@ -95,7 +95,7 @@ log_msg INFO "codex=$(command -v codex || echo missing)"
 log_msg INFO "codex_model=${CODEX_MODEL:-default}"
 log_msg INFO "extra_args=${CODEX_EXTRA_ARGS:-<none>}"
 log_msg INFO "proxy=${CODEX_PROXY_URL}"
-log_msg INFO "deterministic flags: stats=${DETERMINISTIC_STATISTICS_QC:-1} semantic=${DETERMINISTIC_SEMANTIC_ANALYZER:-0} case=${DETERMINISTIC_CASE_KB:-0} skill=${DETERMINISTIC_SKILL_GENERATOR:-0} audit=${DETERMINISTIC_FINAL_AUDIT:-0}"
+log_msg INFO "deterministic flags: raw=${DETERMINISTIC_RAW_RECORD_EXTRACTOR:-1} dirty=${DETERMINISTIC_DIRTY_WORKSPACE_ANALYZER:-1} binary=${DETERMINISTIC_BINARY_ASSET_AUDITOR:-1} stats=${DETERMINISTIC_STATISTICS_QC:-1} semantic=${DETERMINISTIC_SEMANTIC_ANALYZER:-0} case=${DETERMINISTIC_CASE_KB:-0} skill=${DETERMINISTIC_SKILL_GENERATOR:-0} audit=${DETERMINISTIC_FINAL_AUDIT:-0}"
 log_file_state prompt "${PROMPT}"
 log_file_state schema "${SCHEMA}"
 rm -f "${PENDING_RESULT}"
@@ -117,7 +117,13 @@ run_python_stage() {
   fi
 }
 
-if [[ "${STAGE}" == "03_statistics_qc" && "${DETERMINISTIC_STATISTICS_QC:-1}" != "0" ]]; then
+if [[ "${STAGE}" == "02_raw_record_extractor" && "${DETERMINISTIC_RAW_RECORD_EXTRACTOR:-1}" != "0" ]]; then
+  run_python_stage "raw record extraction" "extract_raw_records.py"
+elif [[ "${STAGE}" == "aux_dirty_workspace" && "${DETERMINISTIC_DIRTY_WORKSPACE_ANALYZER:-1}" != "0" ]]; then
+  run_python_stage "dirty workspace analysis" "analyze_dirty_workspace.py"
+elif [[ "${STAGE}" == "aux_binary_asset_auditor" && "${DETERMINISTIC_BINARY_ASSET_AUDITOR:-1}" != "0" ]]; then
+  run_python_stage "binary asset audit" "audit_binary_assets.py"
+elif [[ "${STAGE}" == "03_statistics_qc" && "${DETERMINISTIC_STATISTICS_QC:-1}" != "0" ]]; then
   run_python_stage "statistics aggregation" "aggregate_stats.py"
 elif [[ "${STAGE}" == "04_semantic_analyzer" && "${DETERMINISTIC_SEMANTIC_ANALYZER:-0}" != "0" ]]; then
   run_python_stage "semantic analysis" "generate_semantic_analysis.py"

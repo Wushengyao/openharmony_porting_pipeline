@@ -104,7 +104,7 @@ log_msg "INFO" "codex=$(command -v codex)"
 log_msg "INFO" "codex_model=${CODEX_MODEL:-default}"
 log_msg "INFO" "extra_args=${CODEX_EXTRA_ARGS:-<none>}"
 log_msg "INFO" "proxy=${CODEX_PROXY_URL}"
-log_msg "INFO" "deterministic flags: stats=${DETERMINISTIC_STATISTICS_QC:-1} semantic=${DETERMINISTIC_SEMANTIC_ANALYZER:-0} case=${DETERMINISTIC_CASE_KB:-0} skill=${DETERMINISTIC_SKILL_GENERATOR:-0} audit=${DETERMINISTIC_FINAL_AUDIT:-0}"
+log_msg "INFO" "deterministic flags: raw=${DETERMINISTIC_RAW_RECORD_EXTRACTOR:-1} dirty=${DETERMINISTIC_DIRTY_WORKSPACE_ANALYZER:-1} binary=${DETERMINISTIC_BINARY_ASSET_AUDITOR:-1} stats=${DETERMINISTIC_STATISTICS_QC:-1} semantic=${DETERMINISTIC_SEMANTIC_ANALYZER:-0} case=${DETERMINISTIC_CASE_KB:-0} skill=${DETERMINISTIC_SKILL_GENERATOR:-0} audit=${DETERMINISTIC_FINAL_AUDIT:-0}"
 
 run_stage() {
   local stage="$1"
@@ -129,7 +129,61 @@ run_stage() {
   log_file_state "${stage}: schema" "${schema}"
   rm -f "${pending_result}"
 
-  if [[ "${stage}" == "03_statistics_qc" && "${DETERMINISTIC_STATISTICS_QC:-1}" != "0" ]]; then
+  if [[ "${stage}" == "02_raw_record_extractor" && "${DETERMINISTIC_RAW_RECORD_EXTRACTOR:-1}" != "0" ]]; then
+    log_msg "INFO" "${stage}: using deterministic extract_raw_records.py"
+    if python3 "${TOOLS_DIR}/extract_raw_records.py" \
+      --out "${OUT_DIR}" \
+      --stage-result "${pending_result}" > "${log}" 2>&1; then
+      end_epoch="$(date +%s)"
+      elapsed="$((end_epoch - start_epoch))"
+      log_msg "INFO" "${stage}: deterministic raw extraction completed in ${elapsed}s"
+    else
+      local rc=$?
+      end_epoch="$(date +%s)"
+      elapsed="$((end_epoch - start_epoch))"
+      log_msg "ERROR" "${stage}: deterministic raw extraction failed with exit_code=${rc} after ${elapsed}s"
+      log_file_state "${stage}: raw extraction log" "${log}"
+      log_msg "ERROR" "${stage}: last 80 lines from ${log}"
+      tail -n 80 "${log}" | tee -a "${PIPELINE_LOG}" || true
+      return "${rc}"
+    fi
+  elif [[ "${stage}" == "aux_dirty_workspace" && "${DETERMINISTIC_DIRTY_WORKSPACE_ANALYZER:-1}" != "0" ]]; then
+    log_msg "INFO" "${stage}: using deterministic analyze_dirty_workspace.py"
+    if python3 "${TOOLS_DIR}/analyze_dirty_workspace.py" \
+      --out "${OUT_DIR}" \
+      --stage-result "${pending_result}" > "${log}" 2>&1; then
+      end_epoch="$(date +%s)"
+      elapsed="$((end_epoch - start_epoch))"
+      log_msg "INFO" "${stage}: deterministic dirty workspace analysis completed in ${elapsed}s"
+    else
+      local rc=$?
+      end_epoch="$(date +%s)"
+      elapsed="$((end_epoch - start_epoch))"
+      log_msg "ERROR" "${stage}: deterministic dirty workspace analysis failed with exit_code=${rc} after ${elapsed}s"
+      log_file_state "${stage}: dirty workspace log" "${log}"
+      log_msg "ERROR" "${stage}: last 80 lines from ${log}"
+      tail -n 80 "${log}" | tee -a "${PIPELINE_LOG}" || true
+      return "${rc}"
+    fi
+  elif [[ "${stage}" == "aux_binary_asset_auditor" && "${DETERMINISTIC_BINARY_ASSET_AUDITOR:-1}" != "0" ]]; then
+    log_msg "INFO" "${stage}: using deterministic audit_binary_assets.py"
+    if python3 "${TOOLS_DIR}/audit_binary_assets.py" \
+      --out "${OUT_DIR}" \
+      --stage-result "${pending_result}" > "${log}" 2>&1; then
+      end_epoch="$(date +%s)"
+      elapsed="$((end_epoch - start_epoch))"
+      log_msg "INFO" "${stage}: deterministic binary asset audit completed in ${elapsed}s"
+    else
+      local rc=$?
+      end_epoch="$(date +%s)"
+      elapsed="$((end_epoch - start_epoch))"
+      log_msg "ERROR" "${stage}: deterministic binary asset audit failed with exit_code=${rc} after ${elapsed}s"
+      log_file_state "${stage}: binary asset audit log" "${log}"
+      log_msg "ERROR" "${stage}: last 80 lines from ${log}"
+      tail -n 80 "${log}" | tee -a "${PIPELINE_LOG}" || true
+      return "${rc}"
+    fi
+  elif [[ "${stage}" == "03_statistics_qc" && "${DETERMINISTIC_STATISTICS_QC:-1}" != "0" ]]; then
     log_msg "INFO" "${stage}: using deterministic aggregate_stats.py"
     if python3 "${TOOLS_DIR}/aggregate_stats.py" \
       --out "${OUT_DIR}" \

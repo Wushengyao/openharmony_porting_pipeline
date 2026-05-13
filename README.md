@@ -43,7 +43,12 @@ The default output directory is:
 
 The data-heavy stages are deterministic by default where repeatability is more important than prose quality:
 
+- `02_raw_record_extractor`: `tools/extract_raw_records.py`
+- `aux_dirty_workspace`: `tools/analyze_dirty_workspace.py`
+- `aux_binary_asset_auditor`: `tools/audit_binary_assets.py`
 - `03_statistics_qc`: `tools/aggregate_stats.py`
+
+These stages intentionally keep untracked directories bounded instead of recursively expanding SDK/prebuilt trees.
 
 The semantic stages now default to Codex/LLM execution because prior T113 runs showed deterministic templates were structurally complete but semantically shallow:
 
@@ -64,6 +69,9 @@ DETERMINISTIC_FINAL_AUDIT=1 bash tools/run_stage.sh /path/to/ohos 07_final_audit
 Force model execution for statistics if needed:
 
 ```bash
+DETERMINISTIC_RAW_RECORD_EXTRACTOR=0 bash tools/run_stage.sh /path/to/ohos 02_raw_record_extractor
+DETERMINISTIC_DIRTY_WORKSPACE_ANALYZER=0 bash tools/run_stage.sh /path/to/ohos aux_dirty_workspace
+DETERMINISTIC_BINARY_ASSET_AUDITOR=0 bash tools/run_stage.sh /path/to/ohos aux_binary_asset_auditor
 DETERMINISTIC_STATISTICS_QC=0 bash tools/run_stage.sh /path/to/ohos 03_statistics_qc
 ```
 
