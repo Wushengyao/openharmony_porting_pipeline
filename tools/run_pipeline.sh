@@ -9,7 +9,7 @@ while [[ $# -gt 0 ]]; do
     --mode)
       PIPELINE_MODE="${2:-}"
       if [[ -z "${PIPELINE_MODE}" ]]; then
-        echo "--mode requires auto or collab" >&2
+        echo "--mode 需要指定 auto 或 collab" >&2
         exit 2
       fi
       shift 2
@@ -23,7 +23,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -h|--help)
-      echo "usage: run_pipeline.sh [--mode auto|collab] [workspace_root] [out_dir]" >&2
+      echo "用法：run_pipeline.sh [--mode auto|collab] [workspace_root] [out_dir]" >&2
       exit 0
       ;;
     *)
@@ -34,7 +34,7 @@ while [[ $# -gt 0 ]]; do
 done
 case "${PIPELINE_MODE}" in
   auto|collab|human|interactive) ;;
-  *) echo "unknown PIPELINE_MODE/--mode: ${PIPELINE_MODE}" >&2; exit 2;;
+  *) echo "未知的 PIPELINE_MODE/--mode：${PIPELINE_MODE}" >&2; exit 2;;
 esac
 if [[ "${PIPELINE_MODE}" == "human" || "${PIPELINE_MODE}" == "interactive" ]]; then
   PIPELINE_MODE="collab"
@@ -357,6 +357,11 @@ run_stage() {
     --stage-result "${pending_result}" 2>&1 | tee "${validation_log}"; then
     mv "${pending_result}" "${result}"
     log_file_state "${stage}: promoted result" "${result}"
+    if python3 "${TOOLS_DIR}/render_chinese_summary.py" --out "${OUT_DIR}" --stage "${stage}" --stage-result "${result}" 2>&1 | tee -a "${PIPELINE_LOG}"; then
+      log_file_state "${stage}: Chinese summary" "${RESULT_DIR}/${stage}.zh.md"
+    else
+      log_msg "WARN" "${stage}: Chinese summary rendering failed"
+    fi
     log_msg "INFO" "${stage}: validation passed"
   else
     local rc=$?
@@ -378,4 +383,13 @@ run_stage "05_case_kb_builder" "${PROMPTS_DIR}/05_case_kb_builder.md" "${SCHEMAS
 run_stage "06_skill_generator" "${PROMPTS_DIR}/06_skill_generator.md" "${SCHEMAS_DIR}/stage_result.schema.json"
 run_stage "07_final_auditor" "${PROMPTS_DIR}/07_final_auditor.md" "${SCHEMAS_DIR}/audit_result.schema.json"
 
+if python3 "${TOOLS_DIR}/render_chinese_summary.py" --out "${OUT_DIR}" --overall 2>&1 | tee -a "${PIPELINE_LOG}"; then
+  log_file_state "overall Chinese summary" "${OUT_DIR}/06_audit/pipeline_summary.zh.md"
+  log_file_state "stage Chinese overview" "${OUT_DIR}/06_audit/stage_results.zh.md"
+else
+  log_msg "WARN" "overall Chinese summary rendering failed"
+fi
+
 echo "Pipeline finished. Output: ${OUT_DIR}"
+echo "流水线已完成。输出目录：${OUT_DIR}"
+echo "中文总体摘要：${OUT_DIR}/06_audit/pipeline_summary.zh.md"

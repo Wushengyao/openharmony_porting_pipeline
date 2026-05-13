@@ -80,6 +80,20 @@ If `00_config/operator_context.md` or `.json` exists, read it before planning or
 
 If the user does not know an answer, preserve `unknown`. If operator context conflicts with manifests, commits, diffs, or raw records, record the conflict and prefer verifiable evidence.
 
+### Interaction Language
+
+When asking the user for collaboration context or follow-up clarification, use Chinese by default. Unknown or uncertain answers are acceptable and should be represented as `unknown` rather than blocking execution.
+
+### Chinese Result Views
+
+Use the Chinese summaries when presenting high-level progress or review results to a human:
+
+- `_stage_results/<stage>.zh.md`
+- `06_audit/stage_results.zh.md`
+- `06_audit/pipeline_summary.zh.md`
+
+The Chinese Markdown files are human-facing views. JSON stage results and statistics files remain the machine-readable source of truth.
+
 ## 4. Required Inputs
 
 - `00_config/task_profile.yaml`
@@ -148,6 +162,7 @@ Stop and collect manifest, product, board, SoC, kernel, toolchain and runtime-co
 11. For binary/prebuilt evidence, require sha256/provenance/license/redistribution review before reuse.
 12. Separate best practices from workarounds.
 13. Produce final recommendations with evidence citations.
+14. When presenting progress or final status to users, include the Chinese stage/overall summary paths when they exist.
 
 ## 9. Evidence Rules
 
@@ -289,7 +304,16 @@ bash tools/run_stage.sh "$PWD" 05_case_kb_builder
 bash tools/run_stage.sh "$PWD" 07_final_auditor
 ```
 
-## 6. Failure Handling
+## 6. Chinese Result Review
+
+After a full run, inspect:
+
+```bash
+sed -n '1,120p' porting_knowledge_output/06_audit/pipeline_summary.zh.md
+sed -n '1,120p' porting_knowledge_output/06_audit/stage_results.zh.md
+```
+
+## 7. Failure Handling
 
 - Raw files missing: rerun stages 01 and 02.
 - Statistics mismatch: rerun stage 03 and inspect `02_statistics/qc_report.md`.

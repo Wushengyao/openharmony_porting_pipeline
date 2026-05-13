@@ -33,6 +33,7 @@ The generated Skill must include:
 - outputs;
 - execution workflow;
 - all-auto and human-collaboration operating modes;
+- Chinese user interaction and Chinese result-summary views;
 - tool commands;
 - classification taxonomy;
 - evidence rules;

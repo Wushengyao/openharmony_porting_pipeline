@@ -93,8 +93,8 @@ def ask_collaboration_questions() -> tuple[list[dict[str, str]], bool]:
         ], False
 
     answers: list[dict[str, str]] = []
-    writer.write("\nOpenHarmony porting pipeline human collaboration mode.\n")
-    writer.write("Please answer briefly. Press Enter for unknown.\n\n")
+    writer.write("\nOpenHarmony 移植知识流水线：人机协作模式。\n")
+    writer.write("请用中文简要回答；不知道或暂时无法确定时直接回车即可。\n\n")
     writer.flush()
     for idx, item in enumerate(QUESTIONS, start=1):
         writer.write(f"[{idx}/{len(QUESTIONS)}] {item['question']}\n> ")
@@ -110,7 +110,7 @@ def ask_collaboration_questions() -> tuple[list[dict[str, str]], bool]:
                 "source": source,
             }
         )
-    writer.write("\nHuman collaboration context captured.\n\n")
+    writer.write("\n已记录人机协作上下文。\n\n")
     writer.flush()
     return answers, True
 
@@ -143,15 +143,15 @@ def write_outputs(out: Path, data: dict[str, object]) -> None:
     )
 
     lines = [
-        "# Operator Context",
+        "# 操作者补充上下文",
         "",
-        f"- mode: `{data['mode']}`",
-        f"- prompted: `{str(data['prompted']).lower()}`",
-        f"- generated_at: `{data['generated_at']}`",
+        f"- 运行模式：`{data['mode']}`",
+        f"- 是否完成提问：`{str(data['prompted']).lower()}`",
+        f"- 生成时间：`{data['generated_at']}`",
         "",
-        "These answers are user-supplied hints. They are not repository evidence. If they conflict with manifests, commits, diffs, or raw records, later stages must record the conflict and prefer verifiable evidence.",
+        "这些回答是用户补充提示，不是仓库证据。如果它们与 manifest、提交、diff 或原始记录冲突，后续阶段必须记录冲突，并优先采用可验证证据。",
         "",
-        "## Answers",
+        "## 回答",
         "",
     ]
     for item in data["answers"]:  # type: ignore[index]
@@ -159,8 +159,8 @@ def write_outputs(out: Path, data: dict[str, object]) -> None:
             [
                 f"### {item['id']}",
                 "",
-                f"- stage_hint: `{item['stage_hint']}`",
-                f"- source: `{item['source']}`",
+                f"- 关联阶段：`{item['stage_hint']}`",
+                f"- 来源：`{item['source']}`",
                 "",
                 item["answer"],
                 "",

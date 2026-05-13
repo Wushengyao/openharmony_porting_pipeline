@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -lt 2 ]]; then
-  echo "usage: run_stage.sh <workspace_root> <stage> [out_dir]" >&2
+  echo "用法：run_stage.sh <workspace_root> <stage> [out_dir]" >&2
   exit 2
 fi
 
@@ -63,7 +63,7 @@ case "${STAGE}" in
   05_case_kb_builder) PROMPT="${PROMPTS_DIR}/05_case_kb_builder.md"; SCHEMA="${SCHEMAS_DIR}/stage_result.schema.json";;
   06_skill_generator) PROMPT="${PROMPTS_DIR}/06_skill_generator.md"; SCHEMA="${SCHEMAS_DIR}/stage_result.schema.json";;
   07_final_auditor) PROMPT="${PROMPTS_DIR}/07_final_auditor.md"; SCHEMA="${SCHEMAS_DIR}/audit_result.schema.json";;
-  *) echo "unknown stage: ${STAGE}" >&2; exit 2;;
+  *) echo "未知阶段：${STAGE}" >&2; exit 2;;
 esac
 
 CODEX_PROXY_URL="${CODEX_PROXY_URL:-http://127.0.0.1:7890}"
@@ -160,6 +160,11 @@ log_msg INFO "${STAGE}: validation_log=${VALIDATION_LOG}"
 if python3 "${TOOLS_DIR}/validate_stage.py" --workspace "${WORKSPACE_ROOT}" --out "${OUT_DIR}" --stage "${STAGE}" --stage-result "${PENDING_RESULT}" 2>&1 | tee "${VALIDATION_LOG}"; then
   mv "${PENDING_RESULT}" "${RESULT}"
   log_file_state "promoted result" "${RESULT}"
+  if python3 "${TOOLS_DIR}/render_chinese_summary.py" --out "${OUT_DIR}" --stage "${STAGE}" --stage-result "${RESULT}" 2>&1 | tee -a "${PIPELINE_LOG}"; then
+    log_file_state "stage Chinese summary" "${RESULT_DIR}/${STAGE}.zh.md"
+  else
+    log_msg WARN "${STAGE}: Chinese summary rendering failed"
+  fi
   log_msg INFO "${STAGE}: validation passed"
 else
   RC=$?

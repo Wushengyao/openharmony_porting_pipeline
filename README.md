@@ -68,6 +68,25 @@ porting_knowledge_output/00_config/operator_context.yaml
 
 Operator context is a hint, not repository evidence. If it conflicts with git/repo evidence, later stages should record the conflict and prefer verifiable evidence.
 
+User-facing collaboration prompts are Chinese. Unknown answers are accepted and represented as `unknown`.
+
+## Chinese Result Views
+
+Each successful stage writes a Chinese stage summary:
+
+```text
+porting_knowledge_output/_stage_results/<stage>.zh.md
+```
+
+After a full pipeline run, the overall Chinese summaries are:
+
+```text
+porting_knowledge_output/06_audit/pipeline_summary.zh.md
+porting_knowledge_output/06_audit/stage_results.zh.md
+```
+
+The Chinese summaries are for human review. The JSON stage results and statistics files remain the machine-readable source of truth.
+
 ## Deterministic and LLM Stages
 
 The data-heavy stages are deterministic by default where repeatability is more important than prose quality:
