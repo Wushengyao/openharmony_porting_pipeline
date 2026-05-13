@@ -47,12 +47,12 @@ description: Evidence-bound assistant for reusing OpenHarmony board/SoC porting 
 
 ## 1. Applicability
 
-Use this Skill to help analyze, plan, replay, or audit OpenHarmony board/SoC porting work when prior project evidence exists in `porting_knowledge_output/`. The current T113 profile is ARM-primary: OpenHarmony runs on ARM/Cortex-A class cores, while RISC-V/DSP/C906/ARISC artifacts are auxiliary firmware/context unless the task profile explicitly changes.
+Use this Skill to help analyze, plan, replay, or audit OpenHarmony board/SoC porting work when prior project evidence exists in `porting_knowledge_output/`. This Skill is not T113-only: concrete board, SoC, product, runtime architecture, and auxiliary-core details must come from `task_profile.yaml`, raw records, evidence-backed cases, and optional operator context.
 
 This Skill is suitable for:
 
 - ARM-primary OpenHarmony board/SoC bring-up.
-- Allwinner T113/T113-S3 style product, board, SoC, vendor, kernel and HDF integration.
+- Product, board, SoC, vendor, kernel, driver, boot, firmware and HDF integration across supported OpenHarmony board/SoC scenarios.
 - WiFi, HDF audio, bootloader, firmware, binary/prebuilt and dirty workspace review.
 - RISC-V-primary projects only after `task_profile.yaml` marks RISC-V as the OpenHarmony runtime architecture.
 - Knowledge reuse where every claim can cite commit, file, dirty, binary or diff evidence.
@@ -61,9 +61,29 @@ This Skill is suitable for:
 
 Do not use this Skill to claim a RISC-V primary port merely because auxiliary firmware or RISC-V-related blobs are present. Do not treat initial import, force-sync SDK commits, `.gitattributes`-only changes, dirty workspace files, or binary imports as reusable source fixes. Do not copy prebuilts or firmware into another project without sha256, provenance, architecture, license and redistribution review.
 
-## 3. Required Inputs
+## 3. Operating Modes
+
+### All-Auto Mode
+
+Run from existing artifacts without asking the user for extra information. Unknown project background, baseline boundaries, porting commit ranges, dirty workspace intent, and binary provenance must remain `unknown` unless evidence exists.
+
+### Human-Collaboration Mode
+
+If `00_config/operator_context.md` or `.json` exists, read it before planning or reusing cases. Treat it as user-supplied hints, not repository evidence. It may clarify:
+
+- current project background;
+- before/after porting boundaries;
+- known porting and non-porting commits;
+- dirty workspace policy;
+- binary/prebuilt provenance;
+- knowledge priorities for the final Skill.
+
+If the user does not know an answer, preserve `unknown`. If operator context conflicts with manifests, commits, diffs, or raw records, record the conflict and prefer verifiable evidence.
+
+## 4. Required Inputs
 
 - `00_config/task_profile.yaml`
+- `00_config/operator_context.md` or `.json` if present
 - `01_raw_records/commit_records.jsonl`
 - `01_raw_records/file_change_records.jsonl`
 - `01_raw_records/dirty_file_records.jsonl`
@@ -76,7 +96,7 @@ Do not use this Skill to claim a RISC-V primary port merely because auxiliary fi
 - `04_knowledge_base/cases/`
 - `04_knowledge_base/patterns/`
 
-## 4. Expected Outputs
+## 5. Expected Outputs
 
 - A target-specific porting plan with evidence citations.
 - A case reuse decision for each relevant knowledge case.
@@ -85,7 +105,7 @@ Do not use this Skill to claim a RISC-V primary port merely because auxiliary fi
 - Dirty workspace cleanup plan.
 - Risk and workaround list separated from reusable rules.
 
-## 5. Source of Truth
+## 6. Source of Truth
 
 Statistics must come from `02_statistics/statistics_summary.json` only. For this run, available counts include:
 
@@ -95,11 +115,11 @@ Statistics must come from `02_statistics/statistics_summary.json` only. For this
 
 If any report or case disagrees with these counts, treat the report/case as suspect and rerun statistics QC.
 
-## 6. Scenario Taxonomy
+## 7. Scenario Taxonomy
 
 ### ARM-primary board/SoC
 
-OpenHarmony runs on ARM. Board, SoC, vendor, driver, HDF, kernel, bootloader and product binding are the primary focus. RISC-V/DSP/C906/ARISC assets are auxiliary firmware or heterogeneous context. T113 falls here unless a scope change is produced.
+OpenHarmony runs on ARM. Board, SoC, vendor, driver, HDF, kernel, bootloader and product binding are the primary focus. RISC-V/DSP/C906/ARISC assets are auxiliary firmware or heterogeneous context. T113-style projects fall here only when the task profile and evidence show ARM-primary runtime.
 
 ### RISC-V-primary distribution
 
@@ -113,22 +133,23 @@ Auxiliary firmware exists but does not define the OpenHarmony runtime architectu
 
 Stop and collect manifest, product, board, SoC, kernel, toolchain and runtime-core evidence before reusing cases.
 
-## 7. Execution Workflow
+## 8. Execution Workflow
 
 1. Read `task_profile.yaml`. Do not override it without a formal scope-change request.
-2. Load `statistics_summary.json` and copy counts exactly.
-3. Read only the cases whose evidence paths match the new target.
-4. For each case, verify that every cited commit/file/diff/binary/dirty record exists in raw records.
-5. Exclude cases based on force-sync, `.gitattributes`-only, initial import, or generic SDK sync evidence.
-6. Map target paths: productdefine → vendor → device/board → device/soc → kernel/HDF → runtime binary/prebuilt.
-7. Decide whether each case is directly reusable, reusable with adaptation, risk-only, or not applicable.
-8. For reusable cases, generate a narrow action plan with validation commands and expected logs.
-9. For dirty workspace evidence, ask for a clean commit or patch before treating it as landed history.
-10. For binary/prebuilt evidence, require sha256/provenance/license/redistribution review before reuse.
-11. Separate best practices from workarounds.
-12. Produce final recommendations with evidence citations.
+2. Read `operator_context` if present; preserve unknowns and conflicts explicitly.
+3. Load `statistics_summary.json` and copy counts exactly.
+4. Read only the cases whose evidence paths match the new target.
+5. For each case, verify that every cited commit/file/diff/binary/dirty record exists in raw records.
+6. Exclude cases based on force-sync, `.gitattributes`-only, initial import, or generic SDK sync evidence.
+7. Map target paths: productdefine → vendor → device/board → device/soc → kernel/HDF → runtime binary/prebuilt.
+8. Decide whether each case is directly reusable, reusable with adaptation, risk-only, or not applicable.
+9. For reusable cases, generate a narrow action plan with validation commands and expected logs.
+10. For dirty workspace evidence, ask for a clean commit or patch before treating it as landed history.
+11. For binary/prebuilt evidence, require sha256/provenance/license/redistribution review before reuse.
+12. Separate best practices from workarounds.
+13. Produce final recommendations with evidence citations.
 
-## 8. Evidence Rules
+## 9. Evidence Rules
 
 - Commit claims cite `repo_path + commit_hash` from `commit_records.jsonl`.
 - File claims cite `repo_path + file_path` from `file_change_records.jsonl` or `dirty_file_records.jsonl`.
@@ -138,7 +159,7 @@ Stop and collect manifest, product, board, SoC, kernel, toolchain and runtime-co
 - Dirty workspace records are local WIP evidence, not committed history.
 - Workarounds must be labelled and must not be promoted to best practice.
 
-## 9. Case Reuse Rules
+## 10. Case Reuse Rules
 
 Each reusable case must include:
 
@@ -158,17 +179,17 @@ Reject or downgrade cases when:
 - binary evidence lacks sha256;
 - the case confuses ARM-primary with RISC-V-primary scope.
 
-## 10. Current Case Inputs
+## 11. Current Case Inputs
 
 {chr(10).join(case_lines) if case_lines else '- No cases were generated; rerun stage 05.'}
 
-## 11. Board/SoC Rules Snapshot
+## 12. Board/SoC Rules Snapshot
 
 ```text
 {rules[:5000] if rules else 'No board_soc_porting_rules.md found.'}
 ```
 
-## 12. Tool Commands
+## 13. Tool Commands
 
 ```bash
 # Validate raw records and statistics
@@ -184,7 +205,7 @@ DETERMINISTIC_SEMANTIC_ANALYZER=1 bash tools/run_stage.sh "$PWD" 04_semantic_ana
 bash tools/run_stage.sh "$PWD" 07_final_auditor
 ```
 
-## 13. Failure Handling
+## 14. Failure Handling
 
 - Missing raw record file: stop and rerun raw extraction.
 - Statistics mismatch: rerun statistics QC and do not generate cases.
@@ -193,7 +214,7 @@ bash tools/run_stage.sh "$PWD" 07_final_auditor
 - Generated runbook/template/checklist too short: rerun skill generator.
 - Auditor reports blocking issues: do not accept the knowledge package.
 
-## 14. Quality Gates
+## 15. Quality Gates
 
 - Raw record counts match statistics.
 - Repo and subsystem analyses are non-empty.
@@ -203,7 +224,7 @@ bash tools/run_stage.sh "$PWD" 07_final_auditor
 - `agent_runbook.md`, `next_porting_task_template.md`, and `quality_checklist.md` are detailed enough for a fresh agent to operate without chat history.
 - Binary asset index present: {binary_index_exists}.
 
-## 15. Examples
+## 16. Examples
 
 ### WiFi compatibility
 
@@ -217,7 +238,7 @@ If a case cites audio/HDF files, require driver, board/SoC and vendor/HDF config
 
 If a bootloader or firmware blob is involved, record path, sha256, architecture, possible usage, source/introduced_by, license risk and redistribution risk before copying it.
 
-## 16. Anti-Examples
+## 17. Anti-Examples
 
 - Claiming T113 is RISC-V-primary because auxiliary firmware exists.
 - Creating an HDF audio case from `.gitattributes` or generic SDK sync evidence.
@@ -232,8 +253,9 @@ If a bootloader or firmware blob is involved, record path, sha256, architecture,
 
 1. Open `00_config/task_profile.yaml`.
 2. Confirm runtime architecture, auxiliary cores, SoC, board, kernel and system type.
-3. Load `02_statistics/statistics_summary.json`; do not invent or recalculate report numbers manually.
-4. Read `04_knowledge_base/cases/` only after confirming the scenario.
+3. If `00_config/operator_context.md` exists, read it as optional human-provided hints. Keep unknown answers as unknown and do not treat hints as evidence.
+4. Load `02_statistics/statistics_summary.json`; do not invent or recalculate report numbers manually.
+5. Read `04_knowledge_base/cases/` only after confirming the scenario.
 
 ## 2. Decision Flow
 

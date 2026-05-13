@@ -15,6 +15,7 @@ At the end, return a JSON object conforming to the provided output schema.
 ## Input files
 
 - `porting_knowledge_output/00_config/task_profile.yaml`
+- `porting_knowledge_output/00_config/operator_context.md` or `.json` if present
 - `porting_knowledge_output/01_raw_records/repo_status.raw.txt`
 - `porting_knowledge_output/01_raw_records/dirty_repo_records.csv` if present
 - `porting_knowledge_output/01_raw_records/dirty_file_records.jsonl` if present
@@ -30,6 +31,7 @@ At the end, return a JSON object conforming to the provided output schema.
 ## Rule
 
 Classify dirty files as source/config/binary/generated/build_output/prebuilt_import/unknown. Do not mark dirty content as committed history.
+Use operator-provided dirty-workspace policy as a hint for classification and reporting, not as committed-history evidence.
 
 ## Final JSON
 

@@ -7,6 +7,7 @@ This is a fresh isolated Codex session. Do not assume previous chat context. Do 
 ## Input files
 
 - `porting_knowledge_output/00_config/task_profile.yaml`
+- `porting_knowledge_output/00_config/operator_context.md` or `.json` if present
 - `porting_knowledge_output/02_statistics/statistics_summary.json`
 - `porting_knowledge_output/03_semantic_analysis/repo_analysis/`
 - `porting_knowledge_output/03_semantic_analysis/subsystem_analysis/`
@@ -31,6 +32,7 @@ The generated Skill must include:
 - inputs;
 - outputs;
 - execution workflow;
+- all-auto and human-collaboration operating modes;
 - tool commands;
 - classification taxonomy;
 - evidence rules;
@@ -41,6 +43,7 @@ The generated Skill must include:
 - anti-examples.
 
 It must distinguish ARM-primary board/SoC, RISC-V-primary distribution, and heterogeneous auxiliary-core scenarios. It must explicitly say that T113-style ARM-primary projects should not be reclassified as RISC-V-primary because auxiliary firmware exists.
+It must also state that the generated Skill is not T113-only: concrete board/SoC names come from `task_profile.yaml`, raw records, cases, and optional operator context.
 
 ## Supporting file minimums
 

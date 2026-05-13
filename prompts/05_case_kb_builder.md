@@ -7,6 +7,7 @@ This is a fresh isolated Codex session. Do not assume previous chat context. Do 
 ## Input files
 
 - `porting_knowledge_output/00_config/task_profile.yaml`
+- `porting_knowledge_output/00_config/operator_context.md` or `.json` if present
 - `porting_knowledge_output/01_raw_records/commit_records.jsonl`
 - `porting_knowledge_output/01_raw_records/file_change_records.jsonl`
 - `porting_knowledge_output/01_raw_records/dirty_file_records.jsonl`
@@ -36,6 +37,8 @@ Do not create reusable cases from:
 - generic foundation/applications changes that do not touch the claimed subsystem.
 
 Such records may be mentioned only in rejected/noise patterns or risks.
+
+Operator context can influence which evidence-backed cases are prioritized, but it cannot by itself create a reusable case. If the user says a commit is a porting commit and raw records disagree or lack evidence, mark it as unresolved context.
 
 ## Preferred case set for T113-like projects
 

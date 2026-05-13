@@ -2,8 +2,45 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_ROOT="${1:-$PWD}"
-OUT_DIR="${2:-${WORKSPACE_ROOT}/porting_knowledge_output}"
+PIPELINE_MODE="${PIPELINE_MODE:-auto}"
+POSITIONAL_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --mode)
+      PIPELINE_MODE="${2:-}"
+      if [[ -z "${PIPELINE_MODE}" ]]; then
+        echo "--mode requires auto or collab" >&2
+        exit 2
+      fi
+      shift 2
+      ;;
+    --auto)
+      PIPELINE_MODE="auto"
+      shift
+      ;;
+    --collab|--human|--interactive)
+      PIPELINE_MODE="collab"
+      shift
+      ;;
+    -h|--help)
+      echo "usage: run_pipeline.sh [--mode auto|collab] [workspace_root] [out_dir]" >&2
+      exit 0
+      ;;
+    *)
+      POSITIONAL_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+case "${PIPELINE_MODE}" in
+  auto|collab|human|interactive) ;;
+  *) echo "unknown PIPELINE_MODE/--mode: ${PIPELINE_MODE}" >&2; exit 2;;
+esac
+if [[ "${PIPELINE_MODE}" == "human" || "${PIPELINE_MODE}" == "interactive" ]]; then
+  PIPELINE_MODE="collab"
+fi
+WORKSPACE_ROOT="${POSITIONAL_ARGS[0]:-$PWD}"
+OUT_DIR="${POSITIONAL_ARGS[1]:-${WORKSPACE_ROOT}/porting_knowledge_output}"
 PIPELINE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PROMPTS_DIR="${PIPELINE_DIR}/prompts"
 SCHEMAS_DIR="${PIPELINE_DIR}/schemas"
@@ -100,11 +137,26 @@ log_msg "INFO" "Pipeline run_id=${RUN_ID}"
 log_msg "INFO" "workspace=${WORKSPACE_ROOT}"
 log_msg "INFO" "output_dir=${OUT_DIR}"
 log_msg "INFO" "pipeline_dir=${PIPELINE_DIR}"
+log_msg "INFO" "pipeline_mode=${PIPELINE_MODE}"
 log_msg "INFO" "codex=$(command -v codex)"
 log_msg "INFO" "codex_model=${CODEX_MODEL:-default}"
 log_msg "INFO" "extra_args=${CODEX_EXTRA_ARGS:-<none>}"
 log_msg "INFO" "proxy=${CODEX_PROXY_URL}"
 log_msg "INFO" "deterministic flags: raw=${DETERMINISTIC_RAW_RECORD_EXTRACTOR:-1} dirty=${DETERMINISTIC_DIRTY_WORKSPACE_ANALYZER:-1} binary=${DETERMINISTIC_BINARY_ASSET_AUDITOR:-1} stats=${DETERMINISTIC_STATISTICS_QC:-1} semantic=${DETERMINISTIC_SEMANTIC_ANALYZER:-0} case=${DETERMINISTIC_CASE_KB:-0} skill=${DETERMINISTIC_SKILL_GENERATOR:-0} audit=${DETERMINISTIC_FINAL_AUDIT:-0}"
+
+OPERATOR_CONTEXT_LOG="${LOG_DIR}/operator_context_${RUN_ID}.log"
+log_msg "INFO" "collecting operator context: mode=${PIPELINE_MODE}"
+if python3 "${TOOLS_DIR}/collect_operator_context.py" --out "${OUT_DIR}" --mode "${PIPELINE_MODE}" > "${OPERATOR_CONTEXT_LOG}" 2>&1; then
+  log_file_state "operator_context_md" "${OUT_DIR}/00_config/operator_context.md"
+  log_file_state "operator_context_json" "${OUT_DIR}/00_config/operator_context.json"
+  log_file_state "operator_context_log" "${OPERATOR_CONTEXT_LOG}"
+else
+  rc=$?
+  log_msg "ERROR" "operator context collection failed with exit_code=${rc}"
+  log_file_state "operator_context_log" "${OPERATOR_CONTEXT_LOG}"
+  tail -n 80 "${OPERATOR_CONTEXT_LOG}" | tee -a "${PIPELINE_LOG}" || true
+  exit "${rc}"
+fi
 
 run_stage() {
   local stage="$1"

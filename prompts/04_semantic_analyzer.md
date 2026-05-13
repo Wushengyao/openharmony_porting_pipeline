@@ -7,6 +7,7 @@ This is a fresh isolated Codex session. Do not assume previous chat context. Do 
 ## Input files
 
 - `porting_knowledge_output/00_config/task_profile.yaml`
+- `porting_knowledge_output/00_config/operator_context.md` or `.json` if present
 - `porting_knowledge_output/01_raw_records/commit_records.jsonl`
 - `porting_knowledge_output/01_raw_records/file_change_records.jsonl`
 - `porting_knowledge_output/01_raw_records/dirty_file_records.jsonl`
@@ -26,6 +27,8 @@ This is a fresh isolated Codex session. Do not assume previous chat context. Do 
 ## Method
 
 This stage must do semantic interpretation, not just directory listing. You may run deterministic helper scripts to prepare candidate slices, but the final files must include evidence-grounded engineering interpretation.
+
+Use `operator_context` as optional scenario context and prioritization hints. It can guide attention, but semantic claims still require raw-record evidence. If user hints conflict with evidence, write the conflict as a risk or note.
 
 Required filtering:
 

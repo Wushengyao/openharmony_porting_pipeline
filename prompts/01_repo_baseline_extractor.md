@@ -15,6 +15,11 @@ At the end, return a JSON object conforming to the provided output schema.
 ## Input files
 
 - `porting_knowledge_output/00_config/task_profile.yaml`
+- `porting_knowledge_output/00_config/operator_context.md` or `.json` if present
+
+## Human collaboration context
+
+Use `operator_context` as optional hints for baseline boundaries, porting-before/after definitions, known porting commit ranges, and known non-porting sync/import commits. Do not fabricate baselines from hints; when hints are unverifiable, preserve them in `baseline_resolution_report.md` as operator-provided context.
 
 ## Required actions
 

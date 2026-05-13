@@ -15,9 +15,14 @@ At the end, return a JSON object conforming to the provided output schema.
 ## Input files
 
 - `porting_knowledge_output/00_config/task_profile.yaml`
+- `porting_knowledge_output/00_config/operator_context.md` or `.json` if present
 - `porting_knowledge_output/00_config/repo_revision_map.csv`
 - `porting_knowledge_output/01_raw_records/repo_list.csv`
 - `porting_knowledge_output/01_raw_records/repo_status.raw.txt`
+
+## Human collaboration context
+
+Use `operator_context` as optional hints for known porting commits, non-porting sync/import commits, and dirty-workspace policy. Raw records must still come from git/repo evidence; if hints cannot be verified, record them only as context, not as facts.
 
 ## Required output files
 

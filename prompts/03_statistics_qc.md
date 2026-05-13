@@ -15,6 +15,7 @@ At the end, return a JSON object conforming to the provided output schema.
 ## Input files
 
 - `porting_knowledge_output/00_config/task_profile.yaml`
+- `porting_knowledge_output/00_config/operator_context.md` or `.json` if present
 - `porting_knowledge_output/00_config/repo_revision_map.csv`
 - `porting_knowledge_output/01_raw_records/commit_records.jsonl`
 - `porting_knowledge_output/01_raw_records/file_change_records.jsonl`
@@ -35,6 +36,7 @@ At the end, return a JSON object conforming to the provided output schema.
 ## Hard rule
 
 All counts must be computed from raw records. `statistics_summary.json` is the authoritative count source for later stages.
+Operator context must not change numeric counts.
 
 ## Final JSON
 

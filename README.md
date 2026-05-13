@@ -6,12 +6,26 @@ Evidence-bound pipeline for extracting reusable OpenHarmony board/SoC porting kn
 
 The pipeline classifies the porting scenario, extracts repo and raw change records, audits dirty workspace and binary assets, computes statistics, builds semantic and case knowledge, generates a reusable Skill, and runs a final audit.
 
+This project is not T113-only. T113/T113-S3 rules are guardrails for a common ARM-primary + auxiliary-core pattern and for the current sample workspace; concrete board/SoC names must come from `task_profile.yaml`, raw records, cases, and optional operator context.
+
 The design goal is **stage isolation**: each stage has its own Codex context and passes only files, summaries and stage results to the next stage.
 
 ## Typical Usage
 
 ```bash
 bash tools/run_pipeline.sh /path/to/ohos
+```
+
+Run in human-collaboration mode:
+
+```bash
+bash tools/run_pipeline.sh --mode collab /path/to/ohos
+```
+
+Equivalent environment form:
+
+```bash
+PIPELINE_MODE=collab bash tools/run_pipeline.sh /path/to/ohos
 ```
 
 Run one stage:
@@ -38,6 +52,21 @@ The default output directory is:
 8. `05_case_kb_builder`
 9. `06_skill_generator`
 10. `07_final_auditor`
+
+## Operating Modes
+
+- `auto` (default): the pipeline runs from start to finish without asking questions. It writes `00_config/operator_context.*` with unknown/default answers so every later stage has an explicit "no human supplement" record.
+- `collab`: before stage 00, the pipeline asks concise questions about project background, before/after porting boundaries, known porting commits, dirty workspace policy, binary provenance, and knowledge priorities. Blank or "unknown" answers are accepted and do not block the run.
+
+Human answers are saved as:
+
+```text
+porting_knowledge_output/00_config/operator_context.md
+porting_knowledge_output/00_config/operator_context.json
+porting_knowledge_output/00_config/operator_context.yaml
+```
+
+Operator context is a hint, not repository evidence. If it conflicts with git/repo evidence, later stages should record the conflict and prefer verifiable evidence.
 
 ## Deterministic and LLM Stages
 

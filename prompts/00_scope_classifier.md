@@ -17,7 +17,12 @@ At the end, return a JSON object conforming to the provided output schema.
 - Current workspace directory tree
 - repo manifest if available
 - user-provided notes under `porting_knowledge_input/` if present
+- `porting_knowledge_output/00_config/operator_context.md` or `.json` if present
 - existing `00_config/task_config.yaml` only if present
+
+## Human collaboration context
+
+If `operator_context` exists, treat it as user-supplied hints for project background and intended scope. It is not repository evidence. If it conflicts with manifests, product paths, or source evidence, record the conflict in the report and prefer verifiable workspace evidence.
 
 ## Required actions
 
