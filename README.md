@@ -22,6 +22,18 @@ Run in human-collaboration mode:
 bash tools/run_pipeline.sh --mode collab /path/to/ohos
 ```
 
+Run the full pipeline and export cross-scenario meta inputs explicitly:
+
+```bash
+bash tools/run_pipeline.sh --export-meta /path/to/ohos
+```
+
+Skip the meta export stage when only the v4 single-scenario output is needed:
+
+```bash
+bash tools/run_pipeline.sh --no-export-meta /path/to/ohos
+```
+
 Equivalent environment form:
 
 ```bash
@@ -56,6 +68,17 @@ bash tools/run_cross_scenario_aggregator.sh \
   --input-root scenario_outputs \
   --out openharmony_porting_meta_output
 ```
+
+Optional LLM refinement after deterministic aggregation:
+
+```bash
+bash tools/run_cross_scenario_aggregator.sh \
+  --input-root scenario_outputs \
+  --out openharmony_porting_meta_output \
+  --llm-refine
+```
+
+See `docs/CROSS_SCENARIO_USAGE.md` for a compact usage guide.
 
 The default output directory is:
 

@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PIPELINE_MODE="${PIPELINE_MODE:-auto}"
+PIPELINE_EXPORT_META="${PIPELINE_EXPORT_META:-1}"
 POSITIONAL_ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -18,12 +19,20 @@ while [[ $# -gt 0 ]]; do
       PIPELINE_MODE="auto"
       shift
       ;;
+    --export-meta)
+      PIPELINE_EXPORT_META="1"
+      shift
+      ;;
+    --no-export-meta)
+      PIPELINE_EXPORT_META="0"
+      shift
+      ;;
     --collab|--human|--interactive)
       PIPELINE_MODE="collab"
       shift
       ;;
     -h|--help)
-      echo "用法：run_pipeline.sh [--mode auto|collab] [workspace_root] [out_dir]" >&2
+      echo "用法：run_pipeline.sh [--mode auto|collab] [--export-meta|--no-export-meta] [workspace_root] [out_dir]" >&2
       exit 0
       ;;
     *)
@@ -138,6 +147,7 @@ log_msg "INFO" "workspace=${WORKSPACE_ROOT}"
 log_msg "INFO" "output_dir=${OUT_DIR}"
 log_msg "INFO" "pipeline_dir=${PIPELINE_DIR}"
 log_msg "INFO" "pipeline_mode=${PIPELINE_MODE}"
+log_msg "INFO" "export_meta=${PIPELINE_EXPORT_META}"
 log_msg "INFO" "codex=$(command -v codex)"
 log_msg "INFO" "codex_model=${CODEX_MODEL:-default}"
 log_msg "INFO" "extra_args=${CODEX_EXTRA_ARGS:-<none>}"
@@ -434,7 +444,11 @@ run_stage "04_semantic_analyzer" "${PROMPTS_DIR}/04_semantic_analyzer.md" "${SCH
 run_stage "05_case_kb_builder" "${PROMPTS_DIR}/05_case_kb_builder.md" "${SCHEMAS_DIR}/stage_result.schema.json"
 run_stage "06_skill_generator" "${PROMPTS_DIR}/06_skill_generator.md" "${SCHEMAS_DIR}/stage_result.schema.json"
 run_stage "07_final_auditor" "${PROMPTS_DIR}/07_final_auditor.md" "${SCHEMAS_DIR}/audit_result.schema.json"
-run_stage "08_meta_input_exporter" "${PROMPTS_DIR}/08_meta_input_exporter.md" "${SCHEMAS_DIR}/stage_result.schema.json"
+if [[ "${PIPELINE_EXPORT_META}" == "1" ]]; then
+  run_stage "08_meta_input_exporter" "${PROMPTS_DIR}/08_meta_input_exporter.md" "${SCHEMAS_DIR}/stage_result.schema.json"
+else
+  log_msg "INFO" "08_meta_input_exporter skipped because PIPELINE_EXPORT_META=${PIPELINE_EXPORT_META}"
+fi
 
 if python3 "${TOOLS_DIR}/render_chinese_summary.py" --out "${OUT_DIR}" --overall 2>&1 | tee -a "${PIPELINE_LOG}"; then
   log_file_state "overall Chinese summary" "${OUT_DIR}/06_audit/pipeline_summary.zh.md"

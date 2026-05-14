@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "method_id",
+    "title",
+    "promotion_level",
+    "supporting_patterns",
+    "supporting_cases",
+    "scenario_ids",
+    "applicability",
+    "non_applicability",
+    "evidence_strength"
+  ],
+  "properties": {
+    "method_id": { "type": "string" },
+    "title": { "type": "string" },
+    "promotion_level": {
+      "type": "string",
+      "enum": ["universal", "universal_candidate", "conditional", "scenario_specific", "risk_only", "anti_pattern"]
+    },
+    "supporting_patterns": { "type": "array", "items": { "type": "string" } },
+    "supporting_cases": { "type": "array", "items": { "type": "string" } },
+    "scenario_ids": { "type": "array", "items": { "type": "string" } },
+    "applicability": { "type": "array", "items": { "type": "string" } },
+    "non_applicability": { "type": "array", "items": { "type": "string" } },
+    "evidence_strength": { "type": "string" },
+    "statement": { "type": "string" },
+    "risks": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": true
+}

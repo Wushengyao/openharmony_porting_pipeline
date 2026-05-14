@@ -1,35 +1,43 @@
-# Stage 09: Cross-Scenario Aggregator
+# Stage 09: Cross-Scenario Aggregator LLM Refinement
 
-This stage reads multiple single-scenario `07_meta_inputs/` directories and produces a global OpenHarmony porting method library. Prefer the deterministic entrypoint:
+This is a fresh isolated Codex session. Do not assume previous chat context. Do not read individual source repos. Do not read raw giant evidence files unless explicitly listed below. This stage refines already-normalized cross-scenario output, not single-scenario Markdown reports.
 
-```bash
-bash tools/run_cross_scenario_aggregator.sh --input <porting_knowledge_output> --input <porting_knowledge_output> --out openharmony_porting_meta_output
-```
+## Environment
 
-or:
+The environment variable `CROSS_SCENARIO_META_OUTPUT` points to the `openharmony_porting_meta_output/` directory. If it is unset, use `openharmony_porting_meta_output/` under the current working directory.
 
-```bash
-bash tools/run_cross_scenario_aggregator.sh --input-root scenario_outputs --out openharmony_porting_meta_output
-```
+## Allowed input files
 
-## Inputs
-
-Each input must already contain:
-
-- `07_meta_inputs/scenario_card.yaml`
-- `07_meta_inputs/normalized_cases.jsonl`
-- `07_meta_inputs/pattern_candidates.jsonl`
-- `07_meta_inputs/anti_patterns.jsonl`
-- `07_meta_inputs/method_fragments.jsonl`
-- `07_meta_inputs/validation_status.yaml`
-
-If an input lacks `07_meta_inputs`, stop and tell the operator to run `08_meta_input_exporter`. Do not parse old Markdown-only outputs for aggregation.
-
-## Required outputs
+Read only compact meta files:
 
 - `00_scenario_registry/scenario_registry.yaml`
 - `00_scenario_registry/scenario_comparison_matrix.md`
 - `01_normalized_cases/cases.jsonl`
+- `02_patterns/pattern_candidates.jsonl`
+- `02_patterns/method_fragments.jsonl`
+- `02_patterns/anti_patterns.jsonl`
+- `02_patterns/universal_methods.md`
+- `02_patterns/conditional_patterns.md`
+- `02_patterns/scenario_specific_knowledge.md`
+- `02_patterns/anti_patterns.md`
+- `03_methodology/*.md`
+- `04_global_kb/problem_taxonomy.yaml`
+- `04_global_kb/risk_taxonomy.yaml`
+- `04_global_kb/path_module_ontology.md`
+- `meta_report.md`
+
+Do not read:
+
+- `evidence_index.jsonl` if it is large;
+- raw single-scenario `commit_records.jsonl`;
+- raw single-scenario `binary_asset_records.csv`;
+- raw single-scenario `dirty_file_records.jsonl`;
+- previous chat transcripts.
+
+## Required outputs
+
+Update or create:
+
 - `02_patterns/universal_methods.md`
 - `02_patterns/conditional_patterns.md`
 - `02_patterns/scenario_specific_knowledge.md`
@@ -46,14 +54,19 @@ If an input lacks `07_meta_inputs`, stop and tell the operator to run `08_meta_i
 - `05_generated_skills/heterogeneous_aux_core_skill.md`
 - `meta_report.md`
 
-## Promotion rules
+## Rules
 
-- Formal `universal` requires at least three distinct `scenario_id` values.
-- If fewer than three scenarios are supplied, write only `universal_candidate`, `conditional`, `scenario_specific`, `risk_only`, and `anti_pattern`.
-- `conditional` patterns must name applicability and non-applicability, such as ARM-primary board/SoC, RISC-V-primary distribution, heterogeneous auxiliary-core, HDF/driver chain, binary/prebuilt governance, or dirty workspace governance.
-- Scenario-specific knowledge such as BK7236, T113 speaker PA pins, vendor directory shapes, and concrete firmware blobs must remain scenario-specific.
-- Preserve traceability: method -> pattern -> case -> scenario -> evidence.
+1. Do not promote formal `universal` methods unless at least three distinct `scenario_id` values support them.
+2. If fewer than three scenarios are present, keep shared-looking rules as `universal_candidate`.
+3. Do not merge ARM-primary, RISC-V-primary, and heterogeneous auxiliary-core scenarios into one undifferentiated method.
+4. Each conditional pattern must include applicability and non-applicability.
+5. Scenario-specific knowledge must remain concrete and must not be generalized.
+6. Anti-patterns must include risk, trigger condition and prevention.
+7. Preserve traceability: every method must refer to scenario IDs, pattern IDs, case IDs, or documented evidence class.
+8. Do not use single-scenario `generated_skill.md` as proof for universal methods.
+9. If information conflicts across scenarios, document the conflict and turn it into a conditional rule rather than smoothing it out.
+10. Do not claim build/boot/runtime/test validation unless validation_status or logs prove it.
 
-## Safety
+## Final JSON
 
-Do not load large `evidence_index.jsonl`, binary CSVs, dirty JSONL, or full diffs into context. Use compact normalized inputs only.
+Return JSON conforming to `stage_result.schema.json` with status, summary, input_files_read, output_files_written, blocking_issues, non_blocking_issues, and next_stage_inputs.

@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Deterministically aggregate multiple 07_meta_inputs directories."""
+"""Aggregate multiple 07_meta_inputs directories into a cross-scenario meta KB.
+
+This script is deliberately conservative:
+- it accepts only normalized Stage-08 inputs;
+- it never promotes a formal universal method from fewer than three scenarios;
+- it preserves scenario-specific evidence instead of flattening differences;
+- it writes machine-readable pattern/case/method JSONL files for auditability.
+"""
 
 from __future__ import annotations
 
@@ -25,6 +32,8 @@ REQUIRED_META_INPUT_FILES = [
     "validation_status.yaml",
     "meta_input_audit.md",
 ]
+
+FORMAL_UNIVERSAL_MIN_SCENARIOS = 3
 
 
 def fail(message: str) -> None:
@@ -58,6 +67,8 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
                 fail(f"JSONL parse failed: {path}:{lineno}: {exc}")
             if isinstance(obj, dict):
                 rows.append(obj)
+            else:
+                fail(f"JSONL row must be object: {path}:{lineno}")
     return rows
 
 
@@ -84,7 +95,7 @@ def listify(value: Any) -> list[str]:
 
 
 def slugify(value: str) -> str:
-    value = value.lower()
+    value = str(value).lower()
     value = re.sub(r"[^a-z0-9]+", "_", value)
     return re.sub(r"_+", "_", value).strip("_") or "unknown"
 
@@ -134,7 +145,7 @@ def markdown_table(headers: list[str], rows: list[list[Any]]) -> str:
         "| " + " | ".join(["---"] * len(headers)) + " |",
     ]
     for row in rows:
-        lines.append("| " + " | ".join(str(cell) for cell in row) + " |")
+        lines.append("| " + " | ".join(str(cell).replace("\n", " ") for cell in row) + " |")
     return "\n".join(lines)
 
 
@@ -149,15 +160,22 @@ def load_scenarios(meta_dirs: list[Path]) -> list[dict[str, Any]]:
         if scenario_id in seen_ids:
             fail(f"Duplicate scenario_id across inputs: {scenario_id}")
         seen_ids.add(scenario_id)
+        cases = read_jsonl(meta / "normalized_cases.jsonl")
+        patterns = read_jsonl(meta / "pattern_candidates.jsonl")
+        anti_patterns = read_jsonl(meta / "anti_patterns.jsonl")
+        fragments = read_jsonl(meta / "method_fragments.jsonl")
+        for row in [*cases, *patterns, *anti_patterns, *fragments]:
+            if row.get("scenario_id") != scenario_id:
+                fail(f"{meta}: row scenario_id={row.get('scenario_id')} does not match scenario_card scenario_id={scenario_id}")
         scenarios.append(
             {
                 "meta_dir": meta,
                 "card": card,
-                "validation": read_yaml(meta / "validation_status.yaml") if (meta / "validation_status.yaml").exists() else {},
-                "cases": read_jsonl(meta / "normalized_cases.jsonl"),
-                "patterns": read_jsonl(meta / "pattern_candidates.jsonl"),
-                "anti_patterns": read_jsonl(meta / "anti_patterns.jsonl"),
-                "method_fragments": read_jsonl(meta / "method_fragments.jsonl"),
+                "validation": read_yaml(meta / "validation_status.yaml"),
+                "cases": cases,
+                "patterns": patterns,
+                "anti_patterns": anti_patterns,
+                "method_fragments": fragments,
             }
         )
     return scenarios
@@ -246,6 +264,42 @@ def write_case_indexes(out: Path, cases: list[dict[str, Any]]) -> None:
             write_jsonl(bucket_dir / f"{value}.jsonl", rows)
 
 
+def dedupe_pattern_ids(patterns: list[dict[str, Any]], fragments: list[dict[str, Any]]) -> None:
+    seen: set[str] = set()
+    remap: dict[tuple[str, str], str] = {}
+    for pattern in patterns:
+        old_id = str(pattern.get("pattern_id") or "PATTERN-UNKNOWN")
+        scenario_id = str(pattern.get("scenario_id") or "unknown")
+        new_id = old_id
+        if new_id in seen:
+            new_id = f"{old_id}-{slugify(scenario_id).upper()}"
+            suffix = 2
+            while new_id in seen:
+                new_id = f"{old_id}-{slugify(scenario_id).upper()}-{suffix}"
+                suffix += 1
+            pattern["pattern_id"] = new_id
+        seen.add(new_id)
+        remap[(scenario_id, old_id)] = new_id
+    if not remap:
+        return
+    for fragment in fragments:
+        scenario_id = str(fragment.get("scenario_id") or "unknown")
+        source_patterns = []
+        changed = False
+        for pattern_id in fragment.get("source_patterns") or []:
+            mapped = remap.get((scenario_id, str(pattern_id)), str(pattern_id))
+            source_patterns.append(mapped)
+            changed = changed or mapped != pattern_id
+        if changed:
+            fragment["source_patterns"] = source_patterns
+
+
+def write_machine_readable_patterns(out: Path, patterns: list[dict[str, Any]], fragments: list[dict[str, Any]], anti_patterns: list[dict[str, Any]]) -> None:
+    write_jsonl(out / "02_patterns/pattern_candidates.jsonl", patterns)
+    write_jsonl(out / "02_patterns/method_fragments.jsonl", fragments)
+    write_jsonl(out / "02_patterns/anti_patterns.jsonl", anti_patterns)
+
+
 def support_count_by_statement(fragments: list[dict[str, Any]]) -> dict[str, set[str]]:
     support: dict[str, set[str]] = defaultdict(set)
     for fragment in fragments:
@@ -261,12 +315,12 @@ def write_universal_methods(out: Path, scenarios: list[dict[str, Any]], fragment
     formal = [
         (statement, sorted(ids))
         for statement, ids in support.items()
-        if len(ids) >= 3 and len(scenarios) >= 3
+        if len(ids) >= FORMAL_UNIVERSAL_MIN_SCENARIOS and len(scenarios) >= FORMAL_UNIVERSAL_MIN_SCENARIOS
     ]
     lines = [
         "# Universal Methods",
         "",
-        "Promotion rule: a formal universal method requires at least three distinct scenario_id values, broad applicability, explicit constraints, and no workaround-only basis.",
+        f"Promotion rule: a formal universal method requires at least {FORMAL_UNIVERSAL_MIN_SCENARIOS} distinct scenario_id values, broad applicability, explicit constraints, and no workaround-only basis.",
         "",
     ]
     if formal:
@@ -278,13 +332,13 @@ def write_universal_methods(out: Path, scenarios: list[dict[str, Any]], fragment
             [
                 "## No Formal Universal Methods Promoted",
                 "",
-                f"Input scenario count is {len(scenarios)}. Evidence is insufficient for formal universal promotion; keep these as universal_candidate until at least three scenarios support them.",
+                f"Input scenario count is {len(scenarios)}. Evidence is insufficient for formal universal promotion; keep these as universal_candidate until at least {FORMAL_UNIVERSAL_MIN_SCENARIOS} scenarios support them.",
                 "",
                 "## Universal Candidates",
                 "",
             ]
         )
-        for statement, ids in sorted(support.items(), key=lambda item: (-len(item[1]), item[0]))[:20]:
+        for statement, ids in sorted(support.items(), key=lambda item: (-len(item[1]), item[0]))[:30]:
             lines.append(f"- {statement} Evidence strength: {len(ids)} scenario(s): {', '.join(sorted(ids))}.")
     (out / "02_patterns/universal_methods.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -459,7 +513,7 @@ def write_methodology(out: Path, scenario_count: int, cases: list[dict[str, Any]
         (out / "03_methodology" / filename).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def write_global_kb(out: Path, cases: list[dict[str, Any]], anti_patterns: list[dict[str, Any]]) -> None:
+def write_global_kb(out: Path, cases: list[dict[str, Any]], patterns: list[dict[str, Any]], fragments: list[dict[str, Any]], anti_patterns: list[dict[str, Any]]) -> None:
     evidence_rows = []
     for case in cases:
         evidence_rows.append(
@@ -471,6 +525,46 @@ def write_global_kb(out: Path, cases: list[dict[str, Any]], anti_patterns: list[
             }
         )
     write_jsonl(out / "04_global_kb/evidence_index.jsonl", evidence_rows)
+    traces = []
+    cases_by_id = {case.get("case_id"): case for case in cases}
+    patterns_by_id = {pattern.get("pattern_id"): pattern for pattern in patterns}
+    for pattern in patterns:
+        for case_id in pattern.get("source_case_ids") or []:
+            case = cases_by_id.get(case_id)
+            traces.append(
+                {
+                    "trace_type": "pattern_to_case",
+                    "pattern_id": pattern.get("pattern_id"),
+                    "case_id": case_id,
+                    "scenario_id": case.get("scenario_id") if case else pattern.get("scenario_id"),
+                    "evidence": case.get("evidence") if case else {},
+                }
+            )
+    for fragment in fragments:
+        for pattern_id in fragment.get("source_patterns") or []:
+            pattern = patterns_by_id.get(pattern_id)
+            traces.append(
+                {
+                    "trace_type": "method_to_pattern",
+                    "method_fragment_id": fragment.get("method_fragment_id"),
+                    "pattern_id": pattern_id,
+                    "scenario_id": fragment.get("scenario_id"),
+                    "pattern_exists": bool(pattern),
+                }
+            )
+        for case_id in fragment.get("source_case_ids") or []:
+            case = cases_by_id.get(case_id)
+            traces.append(
+                {
+                    "trace_type": "method_to_case",
+                    "method_fragment_id": fragment.get("method_fragment_id"),
+                    "case_id": case_id,
+                    "scenario_id": fragment.get("scenario_id"),
+                    "case_exists": bool(case),
+                    "evidence": case.get("evidence") if case else {},
+                }
+            )
+    write_jsonl(out / "04_global_kb/evidence_trace_index.jsonl", traces)
     (out / "04_global_kb/path_module_ontology.md").write_text(
         "# Path / Module Ontology\n\n- `device/board`: board binding and hardware configuration.\n- `device/soc`: SoC BSP, UAPI, drivers and platform glue.\n- `vendor`: product/vendor configuration and generated HDF assets.\n- `drivers`: HDF and kernel-facing driver code.\n- `third_party`: imported runtime/build dependencies and architecture compatibility work.\n- `prebuilts`: toolchain/runtime prebuilts requiring provenance governance.\n",
         encoding="utf-8",
@@ -497,7 +591,7 @@ def write_generated_skills(out: Path, scenario_count: int) -> None:
         "Do not promote single-scenario generated_skill.md content into formal universal guidance."
     )
     skill_files = {
-        "universal_openharmony_porting_skill.md": f"# Universal OpenHarmony Porting Skill\n\n{shared_guard}\n\nFormal universal methods require at least three supporting scenarios. Current scenario count: {scenario_count}.\n",
+        "universal_openharmony_porting_skill.md": f"# Universal OpenHarmony Porting Skill\n\n{shared_guard}\n\nFormal universal methods require at least {FORMAL_UNIVERSAL_MIN_SCENARIOS} supporting scenarios. Current scenario count: {scenario_count}.\n",
         "arm_primary_board_soc_skill.md": f"# ARM-Primary Board/SoC Skill\n\n{shared_guard}\n\nFocus on product/board/vendor/SoC binding, driver/HDF chains, boot firmware provenance, dirty workspace separation, and binary/prebuilt governance.\n",
         "riscv_primary_distribution_skill.md": f"# RISC-V Primary Distribution Skill\n\n{shared_guard}\n\nFocus on runtime architecture classification, toolchain and third_party compatibility, boot stack, kernel/userspace ABI, and avoiding auxiliary-core confusion.\n",
         "heterogeneous_aux_core_skill.md": f"# Heterogeneous Auxiliary-Core Skill\n\n{shared_guard}\n\nKeep auxiliary firmware, DSP, ARISC, C906, and RISC-V coprocessor evidence separate from the primary OpenHarmony runtime architecture.\n",
@@ -534,13 +628,13 @@ def write_meta_report(out: Path, scenarios: list[dict[str, Any]], cases: list[di
     ]
     for key in ["universal_candidate", "conditional", "scenario_specific", "risk_only", "workaround", "anti_pattern", "unknown"]:
         lines.append(f"- {key}: {reuse_counts.get(key, 0)}")
-    if scenario_count < 3:
+    if scenario_count < FORMAL_UNIVERSAL_MIN_SCENARIOS:
         lines.extend(
             [
                 "",
                 "## Universal Promotion Gate",
                 "",
-                "No formal universal method is promoted because fewer than three scenarios were supplied. Keep shared-looking rules as universal_candidate or conditional.",
+                f"No formal universal method is promoted because fewer than {FORMAL_UNIVERSAL_MIN_SCENARIOS} scenarios were supplied. Keep shared-looking rules as universal_candidate or conditional.",
             ]
         )
     (out / "meta_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -571,16 +665,21 @@ def main() -> None:
     patterns = [pattern for scenario in scenarios for pattern in scenario["patterns"]]
     anti_patterns = [item for scenario in scenarios for item in scenario["anti_patterns"]]
     fragments = [fragment for scenario in scenarios for fragment in scenario["method_fragments"]]
+    for case in cases:
+        if case.get("reuse_level") == "universal":
+            case["reuse_level"] = "universal_candidate"
+    dedupe_pattern_ids(patterns, fragments)
 
     write_registry(out, scenarios)
     write_case_indexes(out, cases)
+    write_machine_readable_patterns(out, patterns, fragments, anti_patterns)
     write_universal_methods(out, scenarios, fragments)
     write_conditional_patterns(out, patterns, cases)
     write_scenario_specific(out, cases)
     write_anti_patterns(out, anti_patterns)
     write_additional_pattern_views(out, cases, patterns)
     write_methodology(out, len(scenarios), cases)
-    write_global_kb(out, cases, anti_patterns)
+    write_global_kb(out, cases, patterns, fragments, anti_patterns)
     write_generated_skills(out, len(scenarios))
     write_meta_report(out, scenarios, cases, patterns, anti_patterns)
 
@@ -592,6 +691,7 @@ def main() -> None:
         "case_count": len(cases),
         "pattern_candidate_count": len(patterns),
         "anti_pattern_count": len(anti_patterns),
+        "method_fragment_count": len(fragments),
         "input_meta_dirs": [str(path) for path in meta_dirs],
         "output_dir": str(out),
     }
