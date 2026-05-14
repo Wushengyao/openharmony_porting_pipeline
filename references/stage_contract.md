@@ -18,3 +18,5 @@ Required final message fields:
 ```
 
 Stages must not communicate by chat history. They communicate by files only.
+
+Each attempted stage run has an attempt id (`run_id`). Pending results, ndjson logs, and validation logs for a stage must share the same attempt id until validation passes. Only validation-passed attempts may be promoted to `_stage_results/<stage>.json` and copied to canonical `_codex_stage_logs/<stage>.validation.log`. Failed attempts belong under `_codex_stage_logs/_failed_attempts/<stage>/<run_id>/`.

@@ -79,6 +79,32 @@ Repo and subsystem analysis must include:
 - binary/prebuilt evidence where relevant;
 - risks and unknowns.
 
+Subsystem analysis must be feature-level, not only coarse classification buckets. In addition to any broad files such as `board_soc_porting_scope.md`, write feature/topic files when evidence supports them, for example:
+
+- `wifi_runtime_integration.md`
+- `wifi_bk7236_driver_chain.md`
+- `hdf_audio_chain.md`
+- `board_vendor_product_binding.md`
+- `bootloader_firmware_provenance.md`
+- `dirty_workspace_governance.md`
+- `binary_prebuilt_risk.md`
+
+Use concrete feature names from evidence rather than forcing the examples above when the project is not T113-like. A valid run with porting evidence should produce at least three feature-level subsystem files beyond coarse buckets.
+
+Dirty and binary/prebuilt evidence may be attached to a commit, repo, subsystem, or future case only when at least one of these is true:
+
+- same `repo_path`;
+- source path prefix overlap;
+- strong theme keyword match (for example WiFi/WPA/libnl/dhcpcd/BK7236, HDF/audio/codec/DAI/DMA/HCS, bootloader/U-Boot/SPL/DTS/binary).
+
+Otherwise place dirty/binary records only in risk/governance sections. Do not hang unrelated `.o`, `.cmd`, `package-lock`, or `.gitattributes` samples on a feature candidate just because they share a broad classification bucket.
+
+Case-candidate gating must be conservative:
+
+- `initial_import` is never `is_case_candidate=true`.
+- commits whose subject contains `force sync sdk code` are `is_case_candidate=false` unless non-`.gitattributes` evidence proves a specific board/SoC/driver/build change; in that rare case, write the proof in `case_candidate_reasons`.
+- `.gitattributes`-only commits are never case candidates.
+
 ## Evidence rule
 
 Every non-trivial claim must cite commit/file/diff/dirty/binary evidence. If missing, mark as `unknown` or `inference`.

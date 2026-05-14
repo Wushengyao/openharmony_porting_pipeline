@@ -184,6 +184,26 @@ def dirty_status(row: dict[str, Any]) -> str:
     return str(row.get("xy_status") or row.get("change_type") or row.get("change_status") or "unknown")
 
 
+THEME_DIRTY_BINARY_NEEDLES: dict[str, list[str]] = {
+    "wifi_type_api_compat": ["wifi", "wpa", "supplicant", "dhcpcd", "bk7236", "libnl", "wireless"],
+    "wifi_runtime_integration": ["wifi", "wpa", "supplicant", "dhcpcd", "bk7236", "libnl", "wireless"],
+    "hdf_audio_chain": ["audio", "hdf", "codec", "dai", "dma", "hcs", "hcb", "speaker"],
+    "product_board_soc_binding": ["product", "vendor/", "device/board", "device/soc", "config.json"],
+    "boot_firmware_board_config": ["boot", "brandy", "u-boot", "uboot", "spl", "arisc", "dsp", "fex", "dts"],
+    "kernel_driver_adaptation": ["kernel", "driver", "drivers/", ".ko", "kconfig", "defconfig"],
+    "binary_prebuilt_provenance": ["prebuilt", ".bin", ".so", ".a", ".elf", ".img", ".fw"],
+    "build_integration": ["build.gn", "bundle.json", "config.gni", "gn", "makefile", "ninja", "product.gni"],
+    "soc_uapi_include_integration": ["libawion", "uapi", "cedar_ve"],
+    "reboot_efex_runtime_support": ["toybox", "reboot", "efex"],
+    "cedar_ve_driver_uapi_fix": ["cedar-ve", "cedar_ve", "ve_plat"],
+}
+
+
+def text_matches_needles(row: dict[str, Any], needles: list[str]) -> bool:
+    text = " ".join(str(row.get(key) or "") for key in ["repo_path", "path", "file_path", "dirty_content_class", "asset_kind", "possible_usage", "analysis_note"]).lower()
+    return any(needle in text for needle in needles)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
@@ -427,6 +447,58 @@ def main() -> None:
                 lines.append(f"- `{row.get('path') or row.get('file_path')}` kind={row.get('asset_kind') or 'unknown'} sha256={row.get('sha256')} usage={row.get('possible_usage')}")
         lines.append("")
         (subsystem_dir / f"{safe_name(classification)}.md").write_text("\n".join(lines), encoding="utf-8")
+
+    theme_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in commit_analysis:
+        theme = str(row.get("semantic_theme") or "unknown")
+        if theme in {"initial_import", "sync_noise", "general_porting"}:
+            continue
+        theme_groups[theme].append(row)
+    for theme, rows in sorted(theme_groups.items()):
+        candidates_in_theme = [row for row in rows if row.get("is_case_candidate")]
+        if not candidates_in_theme:
+            continue
+        needles = THEME_DIRTY_BINARY_NEEDLES.get(theme, [theme.replace("_", "/")])
+        theme_dirty = [row for row in dirty_files if text_matches_needles(row, needles)]
+        theme_binary = [row for row in binary_rows if text_matches_needles(row, needles)]
+        lines = [
+            f"# Feature Subsystem Analysis: {theme}",
+            "",
+            md_table(
+                ["Metric", "Value"],
+                [
+                    ["commit analyses", len(rows)],
+                    ["case candidates", len(candidates_in_theme)],
+                    ["theme-matched dirty file records", len(theme_dirty)],
+                    ["theme-matched binary asset records", len(theme_binary)],
+                ],
+            ),
+            "",
+            "## Candidate Evidence",
+        ]
+        for row in first_items(candidates_in_theme, 20):
+            lines.append(
+                f"- {row['commit_evidence_id']} repo={row['repo_path']} commit={row['commit_hash']} score={row['case_candidate_score']} subject={row['subject']}"
+            )
+        lines.extend(["", "## Theme-Matched Dirty Evidence"])
+        if theme_dirty:
+            for row in first_items(theme_dirty, 12):
+                lines.append(f"- {row.get('repo_path')} `{row.get('path') or row.get('file_path')}` status={dirty_status(row)}")
+        else:
+            lines.append("- None matched by repo/path/theme; unrelated dirty records remain risk-only.")
+        lines.extend(["", "## Theme-Matched Binary/Prebuilt Evidence"])
+        if theme_binary:
+            for row in first_items(theme_binary, 12):
+                lines.append(f"- `{row.get('path') or row.get('file_path')}` kind={row.get('asset_kind') or 'unknown'} sha256={row.get('sha256')}")
+        else:
+            lines.append("- None matched by repo/path/theme; unrelated binary records remain risk-only.")
+        lines.extend([
+            "",
+            "## Association Rule",
+            "Dirty and binary samples listed here match by repo/path/theme needles. Broad classification-only matches are excluded from feature evidence and should be handled as risks.",
+            "",
+        ])
+        (subsystem_dir / f"{safe_name(theme)}.md").write_text("\n".join(lines), encoding="utf-8")
 
     (sem_dir / "risk_items.md").write_text("\n".join(risk_items) + "\n", encoding="utf-8")
     (sem_dir / "workaround_items.md").write_text("\n".join(workaround_items) + "\n", encoding="utf-8")

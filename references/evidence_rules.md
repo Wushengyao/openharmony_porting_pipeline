@@ -7,3 +7,6 @@
 5. If evidence is absent, write `unknown` or `inference`; do not state it as fact.
 6. Workarounds must be separated from best practices.
 7. `task_profile.yaml` is authoritative for scenario type unless a formal scope change request is generated.
+8. Reusable cases must use one canonical `evidence:` block with `commits`, `files`, `diffs`, and optional `dirty_records`/`binary_records`; do not add a separate validator-only evidence block.
+9. Every concrete source path mentioned in case prose must resolve to `file_change_records.jsonl` or `dirty_file_records.jsonl`, or be explicitly marked `unknown`.
+10. Dirty and binary records may be attached to a case or feature only by same repo, path prefix, or strong theme keyword match; broad classification-only attachment is risk-only.

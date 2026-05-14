@@ -54,7 +54,41 @@ Generate fewer, higher-quality cases. Prefer 5 to 7 cases, such as:
 
 ## Case evidence gate
 
-Every reusable case must include a YAML-like evidence block with commits/files/diffs and optional dirty/binary records. Each case must have:
+Every reusable case must include exactly one canonical YAML-like `## Evidence` block. Do not add a second `Validator Evidence` block. The validator reads the same evidence humans read.
+
+Use this schema:
+
+```yaml
+evidence:
+  commits:
+    - repo_path: device/board/seed/t113_auto
+      commit_hash: cd98bf141bed4cd8eb8de0687225b11ea0d92917
+      subject: "K1:sun8iw20p1:P2:wifi:add wifi function"
+  files:
+    - repo_path: device/board/seed/t113_auto
+      file_path: BUILD.gn
+      record_id: "file_change:..."
+  diffs:
+    - 01_raw_records/diffs/commit__device_board_seed_t113_auto__cd98bf141bed.patch
+  dirty_records:
+    - repo_path: vendor/seed/t113_evb1
+      file_path: hdf_config/.built-in.a.cmd
+      relation: risk_only
+  binary_records:
+    - path: drivers/hdf_core/adapter/khdf/linux/model/audio/built-in.a
+      sha256: "..."
+      relation: risk_only
+```
+
+Rules for the evidence block:
+
+- every `commit_hash` must exist in `commit_records.jsonl`;
+- every `file_path` must exist in `file_change_records.jsonl` or `dirty_file_records.jsonl`, paired with the stated `repo_path`;
+- every source path mentioned anywhere in the case body must also appear in the canonical evidence block or be explicitly marked `unknown`;
+- do not mention unsupported files such as `feature.json` unless that path exists in raw or dirty records;
+- do not use wildcard-only evidence for the main case claim.
+
+Each case must have:
 
 - Case ID;
 - Problem;
@@ -69,12 +103,16 @@ Every reusable case must include a YAML-like evidence block with commits/files/d
 
 Do not write template sentences such as “the area carries changes” or “claims are limited to the evidence block above.” Explain the engineering pattern.
 
+Dirty/binary association must be precise. Attach dirty or binary records to a case only when same repo, path prefix, or strong theme keywords match the case. If not, put them in `workaround_items.md`, `binary_risk_report.md`, or a risk-only note, not in the case evidence.
+
 ## Theme consistency gate
 
 - HDF/Audio case evidence must include audio/HDF/codec/DAI/DMA/HCS/HCB/speaker-related paths or subjects.
 - WiFi case evidence must include WiFi/WPA/supplicant/libnl/dhcpcd/BK7236/wireless-related paths or subjects.
 - Boot/firmware case evidence must include bootloader/brandy/U-Boot/SPL/ARISC/DSP/FEX/DTS/binary-related paths or subjects.
 - Product/board/SoC case evidence must include productdefine/vendor/device/board/device/soc/config-related paths or subjects.
+
+If a candidate mixes multiple feature themes (for example speaker PA pin, WiFi module compile support, and board DTS), split it into separate cases or explicitly label it as a board hardware binding pattern and keep evidence grouped by subtheme.
 
 ## Final JSON
 

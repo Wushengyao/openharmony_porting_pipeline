@@ -141,6 +141,11 @@ The validator and final auditor now block:
 - empty repo/subsystem analysis;
 - template-like cases;
 - cases based only on force-sync or `.gitattributes` evidence;
+- force-sync, initial-import, or `.gitattributes`-only commits marked as case candidates;
+- subsystem analysis that stops at coarse classification buckets without feature-level files;
+- case files with a secondary `Validator Evidence` block instead of the canonical `evidence:` schema;
+- concrete source paths mentioned in case bodies that do not resolve to raw or dirty file records;
+- passed stages whose canonical validation logs still contain failed attempts;
 - HDF/WiFi/Boot/Product case titles that do not match evidence paths;
 - too-short generated runbook/template/checklist files;
 - generated outputs contradicting `task_profile.yaml`.
@@ -152,6 +157,28 @@ Stage logs are written under:
 ```text
 porting_knowledge_output/_codex_stage_logs/
 ```
+
+Each stage attempt writes attempt-scoped logs first:
+
+```text
+porting_knowledge_output/_codex_stage_logs/<stage>.<run_id>.ndjson
+porting_knowledge_output/_codex_stage_logs/<stage>.<run_id>.validation.log
+```
+
+Only a validation-passed attempt is copied to the canonical paths:
+
+```text
+porting_knowledge_output/_codex_stage_logs/<stage>.ndjson
+porting_knowledge_output/_codex_stage_logs/<stage>.validation.log
+```
+
+Failed attempts are moved under:
+
+```text
+porting_knowledge_output/_codex_stage_logs/_failed_attempts/<stage>/<run_id>/
+```
+
+Final summaries and auditors must read promoted stage results and canonical validation logs only. Archived failed attempts are evidence for debugging, not final pipeline status.
 
 Stage JSON results are written under:
 

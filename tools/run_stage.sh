@@ -82,8 +82,30 @@ EXTRA_ARGS=(${CODEX_EXTRA_ARGS:-})
 
 RESULT="${RESULT_DIR}/${STAGE}.json"
 PENDING_RESULT="${RESULT_DIR}/${STAGE}.${RUN_ID}.pending.json"
-LOG="${LOG_DIR}/${STAGE}.ndjson"
-VALIDATION_LOG="${LOG_DIR}/${STAGE}.validation.log"
+LOG="${LOG_DIR}/${STAGE}.${RUN_ID}.ndjson"
+VALIDATION_LOG="${LOG_DIR}/${STAGE}.${RUN_ID}.validation.log"
+CANONICAL_LOG="${LOG_DIR}/${STAGE}.ndjson"
+CANONICAL_VALIDATION_LOG="${LOG_DIR}/${STAGE}.validation.log"
+FAILED_ATTEMPT_DIR="${LOG_DIR}/_failed_attempts/${STAGE}/${RUN_ID}"
+
+archive_failed_attempt() {
+  mkdir -p "${FAILED_ATTEMPT_DIR}"
+  for path in "${LOG}" "${VALIDATION_LOG}" "${PENDING_RESULT}"; do
+    if [[ -e "${path}" ]]; then
+      mv -f "${path}" "${FAILED_ATTEMPT_DIR}/"
+    fi
+  done
+  log_msg INFO "${STAGE}: archived failed attempt: ${FAILED_ATTEMPT_DIR}"
+}
+
+publish_success_attempt() {
+  if [[ -e "${LOG}" ]]; then
+    cp -f "${LOG}" "${CANONICAL_LOG}"
+  fi
+  if [[ -e "${VALIDATION_LOG}" ]]; then
+    cp -f "${VALIDATION_LOG}" "${CANONICAL_VALIDATION_LOG}"
+  fi
+}
 
 log_msg INFO "single-stage run_id=${RUN_ID}"
 log_msg INFO "workspace=${WORKSPACE_ROOT}"
@@ -115,6 +137,7 @@ run_python_stage() {
     log_msg ERROR "${STAGE}: deterministic ${label} failed with exit_code=${RC} after $((END_EPOCH - START_EPOCH))s"
     log_file_state "stage log" "${LOG}"
     tail -n 120 "${LOG}" | tee -a "${PIPELINE_LOG}" || true
+    archive_failed_attempt
     exit "${RC}"
   fi
 }
@@ -150,6 +173,7 @@ else
   log_file_state "ndjson log" "${LOG}"
   log_file_state "pending result" "${PENDING_RESULT}"
   tail -n 120 "${LOG}" | tee -a "${PIPELINE_LOG}" || true
+  archive_failed_attempt
   exit "${RC}"
 fi
 
@@ -165,10 +189,12 @@ if python3 "${TOOLS_DIR}/validate_stage.py" --workspace "${WORKSPACE_ROOT}" --ou
   else
     log_msg WARN "${STAGE}: Chinese summary rendering failed"
   fi
+  publish_success_attempt
   log_msg INFO "${STAGE}: validation passed"
 else
   RC=$?
   log_msg ERROR "${STAGE}: validation failed with exit_code=${RC}"
   tail -n 120 "${VALIDATION_LOG}" | tee -a "${PIPELINE_LOG}" || true
+  archive_failed_attempt
   exit "${RC}"
 fi

@@ -101,10 +101,57 @@ def load_stage_result(path: Path) -> dict[str, Any]:
     return data
 
 
-def extract_case_evidence(text: str) -> tuple[list[str], list[str]]:
-    commits = [x.strip() for x in re.findall(r"commit_hash:\s*([^\n\r]+)", text)]
-    files = [x.strip() for x in re.findall(r"file_path:\s*([^\n\r]+)", text)]
+def clean_marker(value: str) -> str:
+    value = value.split("#", 1)[0].strip()
+    return value.strip("`'\", ")
+
+
+def extract_case_evidence(text: str) -> tuple[list[str], list[dict[str, Any]]]:
+    commits: list[str] = []
+    files: list[dict[str, Any]] = []
+    current_repo = ""
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        line = re.sub(r"^[-*]\s+", "", line)
+        repo_match = re.match(r"repo_path:\s*([^\n\r]+)", line)
+        if repo_match:
+            current_repo = clean_marker(repo_match.group(1))
+            continue
+        commit_match = re.match(r"commit_hash:\s*([^\n\r]+)", line)
+        if commit_match:
+            commits.append(clean_marker(commit_match.group(1)))
+            continue
+        file_match = re.match(r"file_path:\s*([^\n\r]+)", line)
+        if file_match:
+            file_path = clean_marker(file_match.group(1))
+            candidates = [file_path]
+            if current_repo and not file_path.startswith(f"{current_repo}/"):
+                candidates.append(f"{current_repo}/{file_path}".strip("/"))
+            files.append({"file_path": file_path, "repo_path": current_repo, "candidates": candidates})
     return commits, files
+
+
+def extract_body_file_refs(text: str) -> set[str]:
+    refs: set[str] = set()
+    path_re = re.compile(r"(?<![\w./-])(?:[A-Za-z0-9_.+-]+/){1,}[A-Za-z0-9_.+-]+")
+    ignored_prefixes = (
+        "01_raw_records/diffs/",
+        "04_knowledge_base/",
+        "05_skill_output/",
+        "06_audit/",
+        "porting_knowledge_output/",
+    )
+    for match in path_re.finditer(text):
+        ref = match.group(0).strip("`'\",.)]")
+        if ref in {"o/.cmd", "a/.cmd", "so/.cmd"}:
+            continue
+        if ref.startswith(ignored_prefixes):
+            continue
+        name = Path(ref).name
+        if "." not in name and name not in {"BUILD.gn", "BoardConfig.mk"}:
+            continue
+        refs.add(ref)
+    return refs
 
 
 def validate_case_evidence(out: Path) -> None:
@@ -145,23 +192,45 @@ def validate_case_evidence(out: Path) -> None:
         commits, files = extract_case_evidence(text)
         if len(text) < 1200:
             weak.append(f"{case.name}: too short ({len(text)} chars)")
+        if "validator evidence" in lower:
+            weak.append(f"{case.name}: uses secondary Validator Evidence block instead of the canonical evidence schema")
+        if "evidence:" not in lower or "commits:" not in lower or "files:" not in lower:
+            weak.append(f"{case.name}: missing canonical evidence/commits/files schema")
         for section in required_sections:
             if section.lower() not in lower:
                 weak.append(f"{case.name}: missing section {section}")
         for phrase in banned_phrases:
             if phrase in lower:
                 weak.append(f"{case.name}: banned template phrase {phrase}")
-        if not commits or not any(c in commit_hashes or c[:12] in commit_hashes or c[:8] in commit_hashes for c in commits):
+        missing_commits = [c for c in commits if c not in commit_hashes and c[:12] not in commit_hashes and c[:8] not in commit_hashes]
+        if not commits:
             weak.append(f"{case.name}: commit evidence absent from commit_records")
+        elif missing_commits:
+            weak.append(f"{case.name}: unresolved commit_hash values: {missing_commits[:3]}")
+        missing_files = [
+            f["file_path"]
+            for f in files
+            if not any(candidate in file_keys for candidate in f["candidates"])
+        ]
         if not files:
             weak.append(f"{case.name}: missing file_path evidence")
-        elif all(Path(p).name == ".gitattributes" for p in files):
+        elif missing_files:
+            weak.append(f"{case.name}: unresolved file_path values: {missing_files[:3]}")
+        elif all(Path(f["file_path"]).name == ".gitattributes" for f in files):
             weak.append(f"{case.name}: .gitattributes-only evidence")
+        unsupported_body_refs = sorted(
+            ref
+            for ref in extract_body_file_refs(text)
+            if ref not in file_keys
+        )
+        if unsupported_body_refs:
+            weak.append(f"{case.name}: unsupported body file references: {unsupported_body_refs[:5]}")
         if "force sync sdk code" in lower and "non-applicability" not in lower:
             weak.append(f"{case.name}: force-sync evidence promoted as reusable case")
         # Coarse title/evidence semantic checks.
         title = case.name.lower()
-        evidence_text = " ".join([title, lower, *files]).lower()
+        evidence_file_text = " ".join(f["file_path"] for f in files)
+        evidence_text = " ".join([title, lower, evidence_file_text]).lower()
         checks = [
             (["hdf", "audio"], ["hdf", "audio", "codec", "dai", "dma", "hcs", "hcb", "speaker"]),
             (["wifi", "wpa"], ["wifi", "wpa", "supplicant", "libnl", "dhcpcd", "bk7236", "wireless"]),
@@ -172,6 +241,63 @@ def validate_case_evidence(out: Path) -> None:
                 weak.append(f"{case.name}: title/evidence mismatch for {title_needles}")
     if weak:
         fail("Case quality/evidence failures: " + "; ".join(weak[:20]))
+
+
+def validate_semantic_outputs(out: Path) -> None:
+    commit_analysis = out / "03_semantic_analysis/commit_analysis.jsonl"
+    subsystem_dir = out / "03_semantic_analysis/subsystem_analysis"
+    generic_names = {
+        "board_soc_porting_scope.md",
+        "bootloader_packaging_scope.md",
+        "kernel_scope.md",
+        "openharmony_common.md",
+    }
+    feature_files = [
+        path for path in subsystem_dir.glob("*.md")
+        if path.name not in generic_names
+    ]
+    if count_jsonl(commit_analysis) > 0 and len(feature_files) < 3:
+        fail(
+            "subsystem_analysis lacks feature-level files; expected at least three files beyond coarse classification buckets"
+        )
+    noisy_candidates: list[str] = []
+    for obj in read_jsonl(commit_analysis):
+        subject = str(obj.get("subject") or "").lower()
+        files: list[str] = []
+        for item in obj.get("evidence_files") or []:
+            if isinstance(item, dict):
+                files.append(str(item.get("file_path") or item.get("path") or ""))
+            else:
+                files.append(str(item))
+        files = [fp for fp in files if fp]
+        gitattributes_only = bool(files) and all(Path(fp).name == ".gitattributes" for fp in files)
+        force_sync = "force sync sdk code" in subject or "force-sync" in subject
+        if obj.get("is_case_candidate") and (force_sync or gitattributes_only or obj.get("origin_type") == "initial_import"):
+            noisy_candidates.append(str(obj.get("commit_hash") or obj.get("commit_evidence_id")))
+    if noisy_candidates:
+        fail(f"noise commits marked as case candidates: {noisy_candidates[:5]}")
+
+
+def validate_success_logs(out: Path) -> None:
+    result_dir = out / "_stage_results"
+    log_dir = out / "_codex_stage_logs"
+    bad: list[str] = []
+    if not result_dir.exists() or not log_dir.exists():
+        return
+    for result_path in result_dir.glob("*.json"):
+        try:
+            data = json.loads(result_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if data.get("status") != "passed":
+            continue
+        validation_log = log_dir / f"{result_path.stem}.validation.log"
+        if validation_log.exists():
+            text = validation_log.read_text(encoding="utf-8", errors="ignore")
+            if "[BLOCKED]" in text or "validation failed" in text:
+                bad.append(validation_log.name)
+    if bad:
+        fail(f"canonical validation logs contain failed attempts for passed stages: {bad[:8]}")
 
 
 def require_text_quality(path: Path, min_chars: int, required_terms: list[str]) -> None:
@@ -256,6 +382,7 @@ def main() -> None:
         require_nonempty_dir(out / "03_semantic_analysis/subsystem_analysis")
         require_file(out / "03_semantic_analysis/risk_items.md")
         require_file(out / "03_semantic_analysis/workaround_items.md")
+        validate_semantic_outputs(out)
         # If deterministic candidate files exist, they must be non-empty when candidate commits exist.
         candidate_path = out / "03_semantic_analysis/_llm_inputs/semantic_candidate_commits.jsonl"
         if candidate_path.exists():
@@ -282,6 +409,7 @@ def main() -> None:
         blocking_text = (out / "06_audit/blocking_issues.md").read_text(encoding="utf-8", errors="ignore").strip()
         if "- None" not in blocking_text and len(blocking_text.splitlines()) > 2:
             fail("final auditor reported blocking issues")
+        validate_success_logs(out)
 
     else:
         fail(f"Unknown stage: {stage}")

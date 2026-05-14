@@ -164,12 +164,34 @@ run_stage() {
   local schema="$3"
   local result="${RESULT_DIR}/${stage}.json"
   local pending_result="${RESULT_DIR}/${stage}.${RUN_ID}.pending.json"
-  local log="${LOG_DIR}/${stage}.ndjson"
-  local validation_log="${LOG_DIR}/${stage}.validation.log"
+  local log="${LOG_DIR}/${stage}.${RUN_ID}.ndjson"
+  local validation_log="${LOG_DIR}/${stage}.${RUN_ID}.validation.log"
+  local canonical_log="${LOG_DIR}/${stage}.ndjson"
+  local canonical_validation_log="${LOG_DIR}/${stage}.validation.log"
+  local failed_attempt_dir="${LOG_DIR}/_failed_attempts/${stage}/${RUN_ID}"
   local start_epoch
   local end_epoch
   local elapsed
   start_epoch="$(date +%s)"
+
+  archive_failed_attempt() {
+    mkdir -p "${failed_attempt_dir}"
+    for path in "${log}" "${validation_log}" "${pending_result}"; do
+      if [[ -e "${path}" ]]; then
+        mv -f "${path}" "${failed_attempt_dir}/"
+      fi
+    done
+    log_msg "INFO" "${stage}: archived failed attempt: ${failed_attempt_dir}"
+  }
+
+  publish_success_attempt() {
+    if [[ -e "${log}" ]]; then
+      cp -f "${log}" "${canonical_log}"
+    fi
+    if [[ -e "${validation_log}" ]]; then
+      cp -f "${validation_log}" "${canonical_validation_log}"
+    fi
+  }
 
   log_msg "INFO" "===== Running ${stage} ====="
   log_msg "INFO" "${stage}: prompt=${prompt}"
@@ -197,6 +219,7 @@ run_stage() {
       log_file_state "${stage}: raw extraction log" "${log}"
       log_msg "ERROR" "${stage}: last 80 lines from ${log}"
       tail -n 80 "${log}" | tee -a "${PIPELINE_LOG}" || true
+      archive_failed_attempt
       return "${rc}"
     fi
   elif [[ "${stage}" == "aux_dirty_workspace" && "${DETERMINISTIC_DIRTY_WORKSPACE_ANALYZER:-1}" != "0" ]]; then
@@ -215,6 +238,7 @@ run_stage() {
       log_file_state "${stage}: dirty workspace log" "${log}"
       log_msg "ERROR" "${stage}: last 80 lines from ${log}"
       tail -n 80 "${log}" | tee -a "${PIPELINE_LOG}" || true
+      archive_failed_attempt
       return "${rc}"
     fi
   elif [[ "${stage}" == "aux_binary_asset_auditor" && "${DETERMINISTIC_BINARY_ASSET_AUDITOR:-1}" != "0" ]]; then
@@ -233,6 +257,7 @@ run_stage() {
       log_file_state "${stage}: binary asset audit log" "${log}"
       log_msg "ERROR" "${stage}: last 80 lines from ${log}"
       tail -n 80 "${log}" | tee -a "${PIPELINE_LOG}" || true
+      archive_failed_attempt
       return "${rc}"
     fi
   elif [[ "${stage}" == "03_statistics_qc" && "${DETERMINISTIC_STATISTICS_QC:-1}" != "0" ]]; then
@@ -251,6 +276,7 @@ run_stage() {
       log_file_state "${stage}: aggregation log" "${log}"
       log_msg "ERROR" "${stage}: last 80 lines from ${log}"
       tail -n 80 "${log}" | tee -a "${PIPELINE_LOG}" || true
+      archive_failed_attempt
       return "${rc}"
     fi
   elif [[ "${stage}" == "04_semantic_analyzer" && "${DETERMINISTIC_SEMANTIC_ANALYZER:-0}" != "0" ]]; then
@@ -269,6 +295,7 @@ run_stage() {
       log_file_state "${stage}: semantic log" "${log}"
       log_msg "ERROR" "${stage}: last 80 lines from ${log}"
       tail -n 80 "${log}" | tee -a "${PIPELINE_LOG}" || true
+      archive_failed_attempt
       return "${rc}"
     fi
   elif [[ "${stage}" == "05_case_kb_builder" && "${DETERMINISTIC_CASE_KB:-0}" != "0" ]]; then
@@ -287,6 +314,7 @@ run_stage() {
       log_file_state "${stage}: case KB log" "${log}"
       log_msg "ERROR" "${stage}: last 80 lines from ${log}"
       tail -n 80 "${log}" | tee -a "${PIPELINE_LOG}" || true
+      archive_failed_attempt
       return "${rc}"
     fi
   elif [[ "${stage}" == "06_skill_generator" && "${DETERMINISTIC_SKILL_GENERATOR:-0}" != "0" ]]; then
@@ -305,6 +333,7 @@ run_stage() {
       log_file_state "${stage}: Skill output log" "${log}"
       log_msg "ERROR" "${stage}: last 80 lines from ${log}"
       tail -n 80 "${log}" | tee -a "${PIPELINE_LOG}" || true
+      archive_failed_attempt
       return "${rc}"
     fi
   elif [[ "${stage}" == "07_final_auditor" && "${DETERMINISTIC_FINAL_AUDIT:-0}" != "0" ]]; then
@@ -323,6 +352,7 @@ run_stage() {
       log_file_state "${stage}: final audit log" "${log}"
       log_msg "ERROR" "${stage}: last 80 lines from ${log}"
       tail -n 80 "${log}" | tee -a "${PIPELINE_LOG}" || true
+      archive_failed_attempt
       return "${rc}"
     fi
   elif codex exec \
@@ -343,6 +373,7 @@ run_stage() {
     log_file_state "${stage}: pending result" "${pending_result}"
     log_msg "ERROR" "${stage}: last 80 lines from ${log}"
     tail -n 80 "${log}" | tee -a "${PIPELINE_LOG}" || true
+    archive_failed_attempt
     return "${rc}"
   fi
 
@@ -362,12 +393,14 @@ run_stage() {
     else
       log_msg "WARN" "${stage}: Chinese summary rendering failed"
     fi
+    publish_success_attempt
     log_msg "INFO" "${stage}: validation passed"
   else
     local rc=$?
     log_msg "ERROR" "${stage}: validation failed with exit_code=${rc}"
     log_msg "ERROR" "${stage}: last 80 lines from ${validation_log}"
     tail -n 80 "${validation_log}" | tee -a "${PIPELINE_LOG}" || true
+    archive_failed_attempt
     return "${rc}"
   fi
 }

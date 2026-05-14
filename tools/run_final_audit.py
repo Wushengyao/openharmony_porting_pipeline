@@ -67,11 +67,58 @@ def read_json(path: Path) -> dict[str, Any]:
         return {}
 
 
+def clean_marker(value: str) -> str:
+    value = value.split("#", 1)[0].strip()
+    return value.strip("`'\", ")
+
+
 def extract_case_evidence(text: str) -> tuple[list[str], list[str], list[str]]:
     commits = re.findall(r"commit_hash:\s*([^\n\r]+)", text)
     files = re.findall(r"file_path:\s*([^\n\r]+)", text)
     bins = re.findall(r"sha256:\s*([^\n\r]+)", text)
-    return [x.strip() for x in commits], [x.strip() for x in files], [x.strip() for x in bins]
+    return [clean_marker(x) for x in commits], [clean_marker(x) for x in files], [clean_marker(x) for x in bins]
+
+
+def extract_body_file_refs(text: str) -> set[str]:
+    refs: set[str] = set()
+    path_re = re.compile(r"(?<![\w./-])(?:[A-Za-z0-9_.+-]+/){1,}[A-Za-z0-9_.+-]+")
+    ignored_prefixes = (
+        "01_raw_records/diffs/",
+        "04_knowledge_base/",
+        "05_skill_output/",
+        "06_audit/",
+        "porting_knowledge_output/",
+    )
+    for match in path_re.finditer(text):
+        ref = match.group(0).strip("`'\",.)]")
+        if ref in {"o/.cmd", "a/.cmd", "so/.cmd"}:
+            continue
+        if ref.startswith(ignored_prefixes):
+            continue
+        name = Path(ref).name
+        if "." not in name and name not in {"BUILD.gn", "BoardConfig.mk"}:
+            continue
+        refs.add(ref)
+    return refs
+
+
+def validation_log_failures(out: Path) -> list[str]:
+    result_dir = out / "_stage_results"
+    log_dir = out / "_codex_stage_logs"
+    failures: list[str] = []
+    if not result_dir.exists() or not log_dir.exists():
+        return failures
+    for result_path in result_dir.glob("*.json"):
+        data = read_json(result_path)
+        if data.get("status") != "passed":
+            continue
+        validation_log = log_dir / f"{result_path.stem}.validation.log"
+        if not validation_log.exists():
+            continue
+        text = read_text(validation_log)
+        if "[BLOCKED]" in text or "validation failed" in text:
+            failures.append(validation_log.name)
+    return failures
 
 
 def append_once(items: list[str], item: str) -> None:
@@ -197,6 +244,19 @@ def main() -> None:
         blocking.append("repo_analysis directory is empty")
     if not subsystem_dir.exists() or not any(subsystem_dir.glob("*.md")):
         blocking.append("subsystem_analysis directory is empty")
+    else:
+        generic_subsystems = {
+            "board_soc_porting_scope.md",
+            "bootloader_packaging_scope.md",
+            "kernel_scope.md",
+            "openharmony_common.md",
+        }
+        feature_subsystems = [
+            path for path in subsystem_dir.glob("*.md")
+            if path.name not in generic_subsystems
+        ]
+        if len(feature_subsystems) < 3:
+            blocking.append("subsystem_analysis lacks feature-level files beyond coarse classification buckets")
 
     task_profile = read_text(out / "00_config/task_profile.yaml").lower()
     generated_skill = read_text(out / "05_skill_output/generated_skill.md")
@@ -267,12 +327,24 @@ def main() -> None:
         if not commits:
             blocking.append(f"case lacks commit evidence: {case.name}")
         else:
-            if not any(c in commit_hashes or c[:12] in commit_hashes or c[:8] in commit_hashes for c in commits):
-                blocking.append(f"case commit evidence not found in commit_records: {case.name}")
+            missing_commits = [c for c in commits if c not in commit_hashes and c[:12] not in commit_hashes and c[:8] not in commit_hashes]
+            if missing_commits:
+                blocking.append(f"case commit evidence not found in commit_records: {case.name}: {missing_commits[:3]}")
         if not files:
             blocking.append(f"case lacks file evidence: {case.name}")
         elif all_gitattributes(files):
             blocking.append(f"case evidence is .gitattributes-only: {case.name}")
+        else:
+            missing_files = [fp for fp in files if fp not in known_files]
+            if missing_files:
+                blocking.append(f"case file evidence not found in raw/dirty records: {case.name}: {missing_files[:3]}")
+        if "validator evidence" in lower:
+            blocking.append(f"case uses secondary Validator Evidence block instead of canonical evidence schema: {case.name}")
+        if "evidence:" not in lower or "commits:" not in lower or "files:" not in lower:
+            blocking.append(f"case missing canonical evidence/commits/files schema: {case.name}")
+        unsupported_refs = sorted(ref for ref in extract_body_file_refs(text) if ref not in known_files)
+        if unsupported_refs:
+            blocking.append(f"case references source paths absent from raw/dirty records: {case.name}: {unsupported_refs[:5]}")
         if "force sync sdk code" in lower and "rejected" not in lower and "non-applicability" not in lower:
             blocking.append(f"force-sync evidence promoted as reusable case: {case.name}")
         ok, reason = evidence_matches_theme(case.name, text, files)
@@ -332,6 +404,23 @@ def main() -> None:
         append_once(non_blocking, item)
     for item in deterministic_stage_logs(out):
         append_once(non_blocking, item)
+    for item in validation_log_failures(out):
+        blocking.append(f"canonical validation log for passed stage contains failed attempt: {item}")
+    for row in read_jsonl(out / "03_semantic_analysis/commit_analysis.jsonl"):
+        subject = str(row.get("subject") or "").lower()
+        files = [str(x) for x in (row.get("evidence_files") or [])]
+        file_paths = []
+        for item in row.get("evidence_files") or []:
+            if isinstance(item, dict):
+                file_paths.append(str(item.get("file_path") or item.get("path") or ""))
+            else:
+                file_paths.append(str(item))
+        if not file_paths:
+            file_paths = files
+        gitattributes_only = bool(file_paths) and all(Path(fp).name == ".gitattributes" for fp in file_paths)
+        force_sync = "force sync sdk code" in subject or "force-sync" in subject
+        if row.get("is_case_candidate") and (row.get("origin_type") == "initial_import" or gitattributes_only or force_sync):
+            blocking.append(f"noise commit marked as case candidate: {row.get('repo_path')} {row.get('commit_hash')}")
     if "status: None" in read_text(out / "03_semantic_analysis/dirty_workspace_analysis.md"):
         append_once(non_blocking, "dirty workspace report contains status: None")
 

@@ -241,7 +241,7 @@ def case_markdown(idx: int, theme: str, rows: list[dict[str, Any]], dirty: list[
             f"      subject: {row.get('subject')}",
             f"      semantic_theme: {row.get('semantic_theme')}",
         ])
-    lines.append("  evidence_files:")
+    lines.append("  files:")
     for item in files:
         lines.extend([
             f"    - repo_path: {item.get('repo_path')}",
@@ -253,7 +253,7 @@ def case_markdown(idx: int, theme: str, rows: list[dict[str, Any]], dirty: list[
         for diff in diffs:
             lines.append(f"    - {diff}")
     if dirty:
-        lines.append("  dirty_files:")
+        lines.append("  dirty_records:")
         for item in dirty[:8]:
             lines.extend([
                 f"    - repo_path: {item.get('repo_path')}",
@@ -261,9 +261,10 @@ def case_markdown(idx: int, theme: str, rows: list[dict[str, Any]], dirty: list[
                 f"      evidence_id: {item.get('evidence_id')}",
                 f"      xy_status: {dirty_status(item)}",
                 f"      change_type: {item.get('change_type') or 'unknown'}",
+                "      relation: theme_matched_risk",
             ])
     if binaries:
-        lines.append("  binary_assets:")
+        lines.append("  binary_records:")
         for item in binaries[:8]:
             lines.extend([
                 f"    - path: {item.get('path') or item.get('file_path')}",
@@ -271,6 +272,7 @@ def case_markdown(idx: int, theme: str, rows: list[dict[str, Any]], dirty: list[
                 f"      sha256: {item.get('sha256')}",
                 f"      possible_usage: {item.get('possible_usage')}",
                 f"      runtime_dependency: {item.get('runtime_dependency')}",
+                "      relation: theme_matched_risk",
             ])
     lines.extend([
         "```",
