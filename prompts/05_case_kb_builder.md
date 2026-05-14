@@ -90,6 +90,7 @@ Rules for the evidence block:
 
 Each case must have:
 
+- YAML frontmatter with `schema_version`, `case_id`, `title`, `porting_phase`, `subsystem`, `problem_type`, `reuse_level`, `evidence_level`, and `confidence`;
 - Case ID;
 - Problem;
 - Root Cause;
@@ -100,6 +101,8 @@ Each case must have:
 - Verification;
 - Risks;
 - Confidence.
+
+The frontmatter is consumed by Stage 08 `08_meta_input_exporter`. Keep it aligned with the body evidence and never set `reuse_level: universal` in a single-scenario case; use `universal_candidate`, `conditional`, `scenario_specific`, `risk_only`, or `workaround`.
 
 Do not write template sentences such as “the area carries changes” or “claims are limited to the evidence block above.” Explain the engineering pattern.
 

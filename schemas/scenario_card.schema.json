@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "scenario_id",
+    "source_output_dir",
+    "project_name",
+    "scenario_type",
+    "runtime_arch",
+    "runtime_core",
+    "statistics",
+    "validation_status",
+    "quality"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "scenario_id": { "type": "string", "minLength": 3 },
+    "source_output_dir": { "type": "string" },
+    "project_name": { "type": "string" },
+    "openharmony_version": { "type": "string" },
+    "scenario_type": { "type": "array", "items": { "type": "string" } },
+    "runtime_arch": { "type": "string" },
+    "runtime_core": { "type": "string" },
+    "auxiliary_cores": { "type": "array", "items": { "type": "string" } },
+    "soc_vendor": { "type": "string" },
+    "soc": { "type": "string" },
+    "board": { "type": "string" },
+    "kernel": { "type": "string" },
+    "system_type": { "type": "string" },
+    "primary_focus": { "type": "array", "items": { "type": "string" } },
+    "statistics": { "type": "object" },
+    "validation_status": { "type": "object" },
+    "quality": { "type": "object" },
+    "notes": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": true
+}

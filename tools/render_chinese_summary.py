@@ -21,6 +21,7 @@ STAGE_NAMES = {
     "05_case_kb_builder": "案例知识库构建",
     "06_skill_generator": "技能生成",
     "07_final_auditor": "最终审计",
+    "08_meta_input_exporter": "跨场景输入导出",
 }
 
 STAGE_ORDER = list(STAGE_NAMES)
@@ -69,6 +70,9 @@ def stage_highlights(data: dict[str, Any]) -> list[list[Any]]:
         ("changed_repo_count", "有变更仓库数"),
         ("case_candidate_count", "候选案例数"),
         ("case_count", "案例数"),
+        ("pattern_candidate_count", "模式候选数"),
+        ("anti_pattern_count", "反模式数"),
+        ("method_fragment_count", "方法片段数"),
         ("blocking_issue_count", "阻塞问题数"),
         ("non_blocking_issue_count", "非阻塞问题数"),
     ]
@@ -103,6 +107,12 @@ def stage_cn_sentence(data: dict[str, Any]) -> str:
         )
     if stage == "05_case_kb_builder" and "case_count" in data:
         return f"案例知识库构建已{status}：生成 {data.get('case_count')} 个证据约束案例。"
+    if stage == "08_meta_input_exporter" and "case_count" in data:
+        return (
+            f"跨场景输入导出已{status}：标准化 {data.get('case_count')} 个案例、"
+            f"{data.get('pattern_candidate_count', 0)} 个模式候选、"
+            f"{data.get('anti_pattern_count', 0)} 个反模式。"
+        )
     if stage == "04_semantic_analyzer" and "case_candidate_count" in data:
         return f"语义分析已{status}：识别 {data.get('case_candidate_count')} 个候选案例。"
     return f"{stage_name(stage)}阶段已{status}。"

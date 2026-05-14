@@ -63,6 +63,7 @@ case "${STAGE}" in
   05_case_kb_builder) PROMPT="${PROMPTS_DIR}/05_case_kb_builder.md"; SCHEMA="${SCHEMAS_DIR}/stage_result.schema.json";;
   06_skill_generator) PROMPT="${PROMPTS_DIR}/06_skill_generator.md"; SCHEMA="${SCHEMAS_DIR}/stage_result.schema.json";;
   07_final_auditor) PROMPT="${PROMPTS_DIR}/07_final_auditor.md"; SCHEMA="${SCHEMAS_DIR}/audit_result.schema.json";;
+  08_meta_input_exporter) PROMPT="${PROMPTS_DIR}/08_meta_input_exporter.md"; SCHEMA="${SCHEMAS_DIR}/stage_result.schema.json";;
   *) echo "未知阶段：${STAGE}" >&2; exit 2;;
 esac
 
@@ -118,7 +119,7 @@ log_msg INFO "codex=$(command -v codex || echo missing)"
 log_msg INFO "codex_model=${CODEX_MODEL:-default}"
 log_msg INFO "extra_args=${CODEX_EXTRA_ARGS:-<none>}"
 log_msg INFO "proxy=${CODEX_PROXY_URL}"
-log_msg INFO "deterministic flags: raw=${DETERMINISTIC_RAW_RECORD_EXTRACTOR:-1} dirty=${DETERMINISTIC_DIRTY_WORKSPACE_ANALYZER:-1} binary=${DETERMINISTIC_BINARY_ASSET_AUDITOR:-1} stats=${DETERMINISTIC_STATISTICS_QC:-1} semantic=${DETERMINISTIC_SEMANTIC_ANALYZER:-0} case=${DETERMINISTIC_CASE_KB:-0} skill=${DETERMINISTIC_SKILL_GENERATOR:-0} audit=${DETERMINISTIC_FINAL_AUDIT:-0}"
+log_msg INFO "deterministic flags: raw=${DETERMINISTIC_RAW_RECORD_EXTRACTOR:-1} dirty=${DETERMINISTIC_DIRTY_WORKSPACE_ANALYZER:-1} binary=${DETERMINISTIC_BINARY_ASSET_AUDITOR:-1} stats=${DETERMINISTIC_STATISTICS_QC:-1} semantic=${DETERMINISTIC_SEMANTIC_ANALYZER:-0} case=${DETERMINISTIC_CASE_KB:-0} skill=${DETERMINISTIC_SKILL_GENERATOR:-0} audit=${DETERMINISTIC_FINAL_AUDIT:-0} meta=${DETERMINISTIC_META_INPUT_EXPORTER:-1}"
 log_file_state operator_context "${OUT_DIR}/00_config/operator_context.md"
 log_file_state prompt "${PROMPT}"
 log_file_state schema "${SCHEMA}"
@@ -158,6 +159,8 @@ elif [[ "${STAGE}" == "06_skill_generator" && "${DETERMINISTIC_SKILL_GENERATOR:-
   run_python_stage "Skill output" "generate_skill_output.py"
 elif [[ "${STAGE}" == "07_final_auditor" && "${DETERMINISTIC_FINAL_AUDIT:-0}" != "0" ]]; then
   run_python_stage "final audit" "run_final_audit.py"
+elif [[ "${STAGE}" == "08_meta_input_exporter" && "${DETERMINISTIC_META_INPUT_EXPORTER:-1}" != "0" ]]; then
+  run_python_stage "meta input export" "export_meta_inputs.py"
 elif codex exec \
   "${CODEX_BASE_ARGS[@]}" \
   "${EXTRA_ARGS[@]}" \

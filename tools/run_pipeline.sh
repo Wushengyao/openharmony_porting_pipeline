@@ -142,7 +142,7 @@ log_msg "INFO" "codex=$(command -v codex)"
 log_msg "INFO" "codex_model=${CODEX_MODEL:-default}"
 log_msg "INFO" "extra_args=${CODEX_EXTRA_ARGS:-<none>}"
 log_msg "INFO" "proxy=${CODEX_PROXY_URL}"
-log_msg "INFO" "deterministic flags: raw=${DETERMINISTIC_RAW_RECORD_EXTRACTOR:-1} dirty=${DETERMINISTIC_DIRTY_WORKSPACE_ANALYZER:-1} binary=${DETERMINISTIC_BINARY_ASSET_AUDITOR:-1} stats=${DETERMINISTIC_STATISTICS_QC:-1} semantic=${DETERMINISTIC_SEMANTIC_ANALYZER:-0} case=${DETERMINISTIC_CASE_KB:-0} skill=${DETERMINISTIC_SKILL_GENERATOR:-0} audit=${DETERMINISTIC_FINAL_AUDIT:-0}"
+log_msg "INFO" "deterministic flags: raw=${DETERMINISTIC_RAW_RECORD_EXTRACTOR:-1} dirty=${DETERMINISTIC_DIRTY_WORKSPACE_ANALYZER:-1} binary=${DETERMINISTIC_BINARY_ASSET_AUDITOR:-1} stats=${DETERMINISTIC_STATISTICS_QC:-1} semantic=${DETERMINISTIC_SEMANTIC_ANALYZER:-0} case=${DETERMINISTIC_CASE_KB:-0} skill=${DETERMINISTIC_SKILL_GENERATOR:-0} audit=${DETERMINISTIC_FINAL_AUDIT:-0} meta=${DETERMINISTIC_META_INPUT_EXPORTER:-1}"
 
 OPERATOR_CONTEXT_LOG="${LOG_DIR}/operator_context_${RUN_ID}.log"
 log_msg "INFO" "collecting operator context: mode=${PIPELINE_MODE}"
@@ -355,6 +355,25 @@ run_stage() {
       archive_failed_attempt
       return "${rc}"
     fi
+  elif [[ "${stage}" == "08_meta_input_exporter" && "${DETERMINISTIC_META_INPUT_EXPORTER:-1}" != "0" ]]; then
+    log_msg "INFO" "${stage}: using deterministic export_meta_inputs.py"
+    if python3 "${TOOLS_DIR}/export_meta_inputs.py" \
+      --out "${OUT_DIR}" \
+      --stage-result "${pending_result}" > "${log}" 2>&1; then
+      end_epoch="$(date +%s)"
+      elapsed="$((end_epoch - start_epoch))"
+      log_msg "INFO" "${stage}: deterministic meta input export completed in ${elapsed}s"
+    else
+      local rc=$?
+      end_epoch="$(date +%s)"
+      elapsed="$((end_epoch - start_epoch))"
+      log_msg "ERROR" "${stage}: deterministic meta input export failed with exit_code=${rc} after ${elapsed}s"
+      log_file_state "${stage}: meta input export log" "${log}"
+      log_msg "ERROR" "${stage}: last 80 lines from ${log}"
+      tail -n 80 "${log}" | tee -a "${PIPELINE_LOG}" || true
+      archive_failed_attempt
+      return "${rc}"
+    fi
   elif codex exec \
     "${CODEX_BASE_ARGS[@]}" \
     "${EXTRA_ARGS[@]}" \
@@ -415,6 +434,7 @@ run_stage "04_semantic_analyzer" "${PROMPTS_DIR}/04_semantic_analyzer.md" "${SCH
 run_stage "05_case_kb_builder" "${PROMPTS_DIR}/05_case_kb_builder.md" "${SCHEMAS_DIR}/stage_result.schema.json"
 run_stage "06_skill_generator" "${PROMPTS_DIR}/06_skill_generator.md" "${SCHEMAS_DIR}/stage_result.schema.json"
 run_stage "07_final_auditor" "${PROMPTS_DIR}/07_final_auditor.md" "${SCHEMAS_DIR}/audit_result.schema.json"
+run_stage "08_meta_input_exporter" "${PROMPTS_DIR}/08_meta_input_exporter.md" "${SCHEMAS_DIR}/stage_result.schema.json"
 
 if python3 "${TOOLS_DIR}/render_chinese_summary.py" --out "${OUT_DIR}" --overall 2>&1 | tee -a "${PIPELINE_LOG}"; then
   log_file_state "overall Chinese summary" "${OUT_DIR}/06_audit/pipeline_summary.zh.md"

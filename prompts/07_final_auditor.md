@@ -30,6 +30,8 @@ This is a fresh isolated Codex session. Do not assume previous chat context. Do 
 15. Every source path mentioned in case bodies resolves to `file_change_records.jsonl` or `dirty_file_records.jsonl`; unsupported paths are blocking unless clearly marked `unknown`.
 16. `commit_analysis.jsonl` must not mark `initial_import`, `.gitattributes`-only, or unproven `force sync sdk code` commits as `is_case_candidate=true`.
 17. Dirty/binary samples attached to a case or feature must match by repo, path prefix, or strong theme keyword; broad classification-only matches are non-blocking at minimum and blocking if used as primary evidence.
+18. If `07_meta_inputs/` already exists from a prior Stage 08 run, audit that `scenario_card.yaml`, `normalized_cases.jsonl`, `pattern_candidates.jsonl`, `anti_patterns.jsonl`, `method_fragments.jsonl`, `validation_status.yaml`, and `meta_input_audit.md` are present and do not mark single-scenario cases as `universal`.
+19. If `07_meta_inputs/` does not exist yet, record no blocking issue for that absence; Stage 08 runs after this final audit in the full pipeline and performs the hard meta-input validation.
 
 ## Blocking examples
 

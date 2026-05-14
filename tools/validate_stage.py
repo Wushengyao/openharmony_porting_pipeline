@@ -6,6 +6,7 @@ import csv
 from datetime import datetime
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -310,6 +311,24 @@ def require_text_quality(path: Path, min_chars: int, required_terms: list[str]) 
         fail(f"{path.name} missing required terms/sections: {missing}")
 
 
+def validate_meta_inputs(out: Path) -> None:
+    script = Path(__file__).with_name("validate_meta_inputs.py")
+    require_file(script)
+    proc = subprocess.run(
+        [sys.executable, str(script), "--out", str(out)],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    if proc.returncode != 0:
+        fail(f"meta input validation failed with exit_code={proc.returncode}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--workspace", required=True)
@@ -410,6 +429,16 @@ def main() -> None:
         if "- None" not in blocking_text and len(blocking_text.splitlines()) > 2:
             fail("final auditor reported blocking issues")
         validate_success_logs(out)
+
+    elif stage == "08_meta_input_exporter":
+        require_file(out / "07_meta_inputs/scenario_card.yaml")
+        require_file(out / "07_meta_inputs/normalized_cases.jsonl")
+        require_file(out / "07_meta_inputs/pattern_candidates.jsonl")
+        require_file(out / "07_meta_inputs/anti_patterns.jsonl")
+        require_file(out / "07_meta_inputs/method_fragments.jsonl")
+        require_file(out / "07_meta_inputs/validation_status.yaml")
+        require_file(out / "07_meta_inputs/meta_input_audit.md")
+        validate_meta_inputs(out)
 
     else:
         fail(f"Unknown stage: {stage}")

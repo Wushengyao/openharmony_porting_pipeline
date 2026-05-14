@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "anti_pattern_id",
+    "scenario_id",
+    "description",
+    "risk",
+    "evidence",
+    "prevention",
+    "reuse_level"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "anti_pattern_id": { "type": "string" },
+    "scenario_id": { "type": "string" },
+    "description": { "type": "string" },
+    "risk": { "type": "string" },
+    "evidence": { "type": "array" },
+    "prevention": { "type": "string" },
+    "reuse_level": { "type": "string", "const": "anti_pattern" }
+  },
+  "additionalProperties": true
+}

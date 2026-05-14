@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "pattern_id",
+    "scenario_id",
+    "source_case_ids",
+    "candidate_scope",
+    "hypothesis",
+    "supporting_evidence",
+    "evidence_strength",
+    "needs_cross_scenario_confirmation",
+    "promotion_constraints",
+    "counterexamples"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "pattern_id": { "type": "string" },
+    "scenario_id": { "type": "string" },
+    "source_case_ids": { "type": "array", "items": { "type": "string" } },
+    "candidate_scope": {
+      "type": "string",
+      "enum": ["universal_candidate", "conditional", "scenario_specific", "risk_only", "anti_pattern", "workaround", "unknown"]
+    },
+    "hypothesis": { "type": "string" },
+    "supporting_evidence": { "type": "array" },
+    "evidence_strength": { "type": "string" },
+    "needs_cross_scenario_confirmation": { "type": "boolean" },
+    "promotion_constraints": { "type": "array", "items": { "type": "string" } },
+    "counterexamples": { "type": "array" }
+  },
+  "additionalProperties": true
+}

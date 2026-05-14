@@ -31,6 +31,19 @@ If `operator_context` exists, treat it as user-supplied hints for project backgr
 3. Write `porting_knowledge_output/00_config/task_profile.yaml`.
 4. Write `porting_knowledge_output/00_config/scope_classification_report.md`.
 
+`task_profile.yaml` should include cross-scenario export hints when evidence supports them:
+
+```yaml
+scenario_id_hint: unknown
+project_name_hint: unknown
+soc_vendor: unknown
+soc: unknown
+board: unknown
+openharmony_version: unknown
+```
+
+These fields help Stage 08 build `scenario_card.yaml`. If a value is unknown, write `unknown`; do not infer build/boot/runtime validation from repository evidence.
+
 ## Classification rule
 
 For T113/T113-S3/T113-i: if evidence indicates ARM runs OpenHarmony and RISC-V is auxiliary/firmware/coproc, set:

@@ -4,7 +4,7 @@ Evidence-bound pipeline for extracting reusable OpenHarmony board/SoC porting kn
 
 ## Goal
 
-The pipeline classifies the porting scenario, extracts repo and raw change records, audits dirty workspace and binary assets, computes statistics, builds semantic and case knowledge, generates a reusable Skill, and runs a final audit.
+The pipeline classifies the porting scenario, extracts repo and raw change records, audits dirty workspace and binary assets, computes statistics, builds semantic and case knowledge, generates a reusable Skill, runs a final audit, and exports normalized single-scenario inputs for cross-scenario aggregation.
 
 This project is not T113-only. T113/T113-S3 rules are guardrails for a common ARM-primary + auxiliary-core pattern and for the current sample workspace; concrete board/SoC names must come from `task_profile.yaml`, raw records, cases, and optional operator context.
 
@@ -34,6 +34,29 @@ Run one stage:
 bash tools/run_stage.sh /path/to/ohos 03_statistics_qc
 ```
 
+Export normalized cross-scenario inputs for an existing single-scenario output:
+
+```bash
+bash tools/run_stage.sh /path/to/ohos 08_meta_input_exporter /path/to/ohos/porting_knowledge_output
+```
+
+Aggregate multiple scenarios into a meta knowledge base:
+
+```bash
+bash tools/run_cross_scenario_aggregator.sh \
+  --input scenario_outputs/t113/porting_knowledge_output \
+  --input scenario_outputs/ruyios/porting_knowledge_output \
+  --out openharmony_porting_meta_output
+```
+
+Or discover inputs under a root:
+
+```bash
+bash tools/run_cross_scenario_aggregator.sh \
+  --input-root scenario_outputs \
+  --out openharmony_porting_meta_output
+```
+
 The default output directory is:
 
 ```text
@@ -52,6 +75,22 @@ The default output directory is:
 8. `05_case_kb_builder`
 9. `06_skill_generator`
 10. `07_final_auditor`
+11. `08_meta_input_exporter`
+
+Stage 08 writes:
+
+```text
+porting_knowledge_output/07_meta_inputs/
+├── scenario_card.yaml
+├── normalized_cases.jsonl
+├── pattern_candidates.jsonl
+├── anti_patterns.jsonl
+├── method_fragments.jsonl
+├── validation_status.yaml
+└── meta_input_audit.md
+```
+
+The cross-scenario aggregator reads only these compact normalized inputs. If an input lacks `07_meta_inputs`, run Stage 08 first; the aggregator intentionally does not parse old Markdown-only outputs.
 
 ## Operating Modes
 
@@ -132,6 +171,8 @@ DETERMINISTIC_STATISTICS_QC=0 bash tools/run_stage.sh /path/to/ohos 03_statistic
 - Statistics are copied from `02_statistics/statistics_summary.json`.
 - Initial import, force-sync SDK commits and `.gitattributes`-only commits must not become reusable cases.
 - T113-style ARM-primary + auxiliary-core profiles must not be silently rewritten as RISC-V-primary.
+- Single-scenario cases and generated Skill output must not be promoted directly to formal universal methods.
+- Build, boot, runtime and test validation must stay `unknown` unless explicit logs support a stronger status.
 
 ## Quality Gates
 
@@ -149,6 +190,10 @@ The validator and final auditor now block:
 - HDF/WiFi/Boot/Product case titles that do not match evidence paths;
 - too-short generated runbook/template/checklist files;
 - generated outputs contradicting `task_profile.yaml`.
+- missing or invalid `07_meta_inputs` during Stage 08;
+- single-scenario normalized cases marked as `universal`;
+- pattern candidates missing cross-scenario confirmation requirements;
+- method fragments that reference non-existent cases or patterns.
 
 ## Logs
 
@@ -195,4 +240,5 @@ bash tools/run_stage.sh "$PWD" 04_semantic_analyzer porting_knowledge_output
 bash tools/run_stage.sh "$PWD" 05_case_kb_builder porting_knowledge_output
 bash tools/run_stage.sh "$PWD" 06_skill_generator porting_knowledge_output
 bash tools/run_stage.sh "$PWD" 07_final_auditor porting_knowledge_output
+bash tools/run_stage.sh "$PWD" 08_meta_input_exporter porting_knowledge_output
 ```

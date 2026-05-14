@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "case_id",
+    "scenario_id",
+    "source_case_path",
+    "title",
+    "scenario_type",
+    "porting_phase",
+    "subsystem",
+    "problem_type",
+    "reuse_level",
+    "evidence_level",
+    "evidence",
+    "rule",
+    "confidence",
+    "validation"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "case_id": { "type": "string" },
+    "scenario_id": { "type": "string" },
+    "source_case_path": { "type": "string" },
+    "title": { "type": "string" },
+    "scenario_type": { "type": "array", "items": { "type": "string" } },
+    "porting_phase": { "type": "array", "items": { "type": "string" } },
+    "subsystem": { "type": "array", "items": { "type": "string" } },
+    "problem_type": { "type": "array", "items": { "type": "string" } },
+    "reuse_level": {
+      "type": "string",
+      "enum": ["universal_candidate", "conditional", "scenario_specific", "risk_only", "anti_pattern", "workaround", "unknown"]
+    },
+    "evidence_level": { "type": "string" },
+    "applicability": { "type": "array", "items": { "type": "string" } },
+    "non_applicability": { "type": "array", "items": { "type": "string" } },
+    "evidence": { "type": "object" },
+    "rule": { "type": "string" },
+    "risks": { "type": "array", "items": { "type": "string" } },
+    "confidence": { "type": "string" },
+    "validation": { "type": "object" }
+  },
+  "additionalProperties": true
+}

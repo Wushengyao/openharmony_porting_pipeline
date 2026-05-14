@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "method_fragment_id",
+    "scenario_id",
+    "porting_phase",
+    "statement",
+    "source_case_ids",
+    "source_patterns",
+    "candidate_scope",
+    "preconditions",
+    "failure_modes",
+    "evidence_strength"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "method_fragment_id": { "type": "string" },
+    "scenario_id": { "type": "string" },
+    "porting_phase": { "type": "string" },
+    "statement": { "type": "string" },
+    "source_case_ids": { "type": "array", "items": { "type": "string" } },
+    "source_patterns": { "type": "array", "items": { "type": "string" } },
+    "candidate_scope": {
+      "type": "string",
+      "enum": ["universal_candidate", "conditional", "scenario_specific", "risk_only", "anti_pattern", "workaround", "unknown"]
+    },
+    "preconditions": { "type": "array", "items": { "type": "string" } },
+    "failure_modes": { "type": "array", "items": { "type": "string" } },
+    "evidence_strength": { "type": "string" }
+  },
+  "additionalProperties": true
+}

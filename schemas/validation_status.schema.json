@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "scenario_id",
+    "build",
+    "boot",
+    "runtime_features",
+    "tests",
+    "knowledge_extraction",
+    "notes"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "scenario_id": { "type": "string" },
+    "build": { "type": "object" },
+    "boot": { "type": "object" },
+    "runtime_features": { "type": "object" },
+    "tests": { "type": "object" },
+    "knowledge_extraction": { "type": "object" },
+    "notes": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": true
+}

@@ -88,6 +88,51 @@ CASE_DEFS = {
     },
 }
 
+CASE_META = {
+    "wifi_type_api_compat": {
+        "porting_phase": ["driver_enablement", "runtime_integration"],
+        "subsystem": ["wifi", "network", "third_party"],
+        "problem_type": ["vendor_code_compatibility", "libc_api_compatibility"],
+        "reuse_level": "conditional",
+    },
+    "wifi_runtime_integration": {
+        "porting_phase": ["driver_enablement", "runtime_integration", "board_vendor_binding"],
+        "subsystem": ["wifi", "network", "third_party"],
+        "problem_type": ["runtime_service_chain", "multi_repo_binding", "binary_prebuilt_governance"],
+        "reuse_level": "conditional",
+    },
+    "hdf_audio_chain": {
+        "porting_phase": ["driver_enablement", "hdf_integration", "board_vendor_binding"],
+        "subsystem": ["audio", "hdf", "driver"],
+        "problem_type": ["multi_repo_binding", "driver_config_chain"],
+        "reuse_level": "conditional",
+    },
+    "soc_uapi_include_integration": {
+        "porting_phase": ["driver_enablement", "build_integration"],
+        "subsystem": ["soc", "kernel", "uapi"],
+        "problem_type": ["uapi_abi_alignment", "include_path_binding"],
+        "reuse_level": "conditional",
+    },
+    "reboot_efex_runtime_support": {
+        "porting_phase": ["runtime_integration", "boot_firmware"],
+        "subsystem": ["toybox", "bootloader", "runtime_command"],
+        "problem_type": ["runtime_command_support", "board_recovery_flow"],
+        "reuse_level": "scenario_specific",
+    },
+    "cedar_ve_driver_uapi_fix": {
+        "porting_phase": ["driver_enablement", "kernel_bsp_adaptation"],
+        "subsystem": ["kernel", "video", "uapi"],
+        "problem_type": ["driver_uapi_fix", "dirty_workspace_governance"],
+        "reuse_level": "conditional",
+    },
+    "build_integration": {
+        "porting_phase": ["build_integration", "board_vendor_binding"],
+        "subsystem": ["build", "product", "board"],
+        "problem_type": ["build_graph_integration", "product_config_binding"],
+        "reuse_level": "conditional",
+    },
+}
+
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
@@ -212,6 +257,7 @@ def dirty_status(item: dict[str, Any]) -> str:
 
 def case_markdown(idx: int, theme: str, rows: list[dict[str, Any]], dirty: list[dict[str, Any]], binaries: list[dict[str, str]]) -> str:
     spec = CASE_DEFS[theme]
+    meta = CASE_META.get(theme, {})
     files: list[dict[str, Any]] = []
     diffs: list[str] = []
     for row in rows:
@@ -220,7 +266,24 @@ def case_markdown(idx: int, theme: str, rows: list[dict[str, Any]], dirty: list[
     files = uniq_dicts(files, limit=18)
     diffs = list(dict.fromkeys(diffs))[:8]
 
+    def yaml_list(key: str, values: list[str]) -> list[str]:
+        return [f"{key}:"] + [f"  - {value}" for value in values]
+
     lines = [
+        "---",
+        "schema_version: 1",
+        f"case_id: {spec['id']}",
+        f"title: {json.dumps(spec['title'], ensure_ascii=False)}",
+    ]
+    lines.extend(yaml_list("porting_phase", meta.get("porting_phase", ["knowledge_extraction"])))
+    lines.extend(yaml_list("subsystem", meta.get("subsystem", ["general"])))
+    lines.extend(yaml_list("problem_type", meta.get("problem_type", ["porting_adaptation"])))
+    lines.extend([
+        f"reuse_level: {meta.get('reuse_level', 'conditional')}",
+        "evidence_level: commit_file_diff",
+        "confidence: medium_high",
+        "---",
+        "",
         f"# Case {idx}: {spec['title']}",
         "",
         f"## Case ID",
@@ -232,7 +295,7 @@ def case_markdown(idx: int, theme: str, rows: list[dict[str, Any]], dirty: list[
         "```yaml",
         "evidence:",
         "  commits:",
-    ]
+    ])
     for row in rows[:6]:
         lines.extend([
             f"    - repo_path: {row.get('repo_path')}",
