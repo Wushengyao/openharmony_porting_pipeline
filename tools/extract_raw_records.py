@@ -18,6 +18,7 @@ from typing import Any
 
 
 MAX_HASH_BYTES = 128 * 1024 * 1024
+MAX_BLOB_INFO_FILES_PER_COMMIT = 1000
 
 BINARY_EXTS = {
     ".a",
@@ -91,13 +92,29 @@ def log(message: str) -> None:
 
 
 def run_git(root: Path, repo: str, args: list[str], text: bool = True) -> subprocess.CompletedProcess[Any]:
-    return subprocess.run(
-        ["git", "-C", str(root / repo), *args],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=text,
-        check=False,
-    )
+    kwargs: dict[str, Any] = {
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": text,
+        "check": False,
+    }
+    if text:
+        kwargs.update({"encoding": "utf-8", "errors": "replace"})
+    return subprocess.run(["git", "-C", str(root / repo), *args], **kwargs)
+
+
+def run_git_to_file(root: Path, repo: str, args: list[str], path: Path) -> subprocess.CompletedProcess[str]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as handle:
+        return subprocess.run(
+            ["git", "-C", str(root / repo), *args],
+            stdout=handle,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:
@@ -219,11 +236,29 @@ def git_blob_info(root: Path, repo: str, commit_hash: str, file_path: str) -> tu
         size = 0
     if size > MAX_HASH_BYTES:
         return size_text, "", False
-    data_cp = run_git(root, repo, ["show", f"{commit_hash}:{file_path}"], text=False)
-    if data_cp.returncode != 0:
+    proc = subprocess.Popen(
+        ["git", "-C", str(root / repo), "show", f"{commit_hash}:{file_path}"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    digest = hashlib.sha256()
+    prefix = bytearray()
+    assert proc.stdout is not None
+    while True:
+        chunk = proc.stdout.read(1024 * 1024)
+        if not chunk:
+            break
+        digest.update(chunk)
+        if len(prefix) < 8192:
+            prefix.extend(chunk[: 8192 - len(prefix)])
+    proc.stdout.close()
+    if proc.stderr is not None:
+        proc.stderr.read()
+        proc.stderr.close()
+    proc.wait()
+    if proc.returncode != 0:
         return size_text, "", False
-    data = data_cp.stdout
-    return size_text, hashlib.sha256(data).hexdigest(), b"\0" in data[:8192]
+    return size_text, digest.hexdigest(), b"\0" in prefix
 
 
 def local_file_info(path: Path) -> tuple[str, str]:
@@ -360,12 +395,21 @@ def extract_commit_records(
         baseline_status = repo.get("baseline_status") or rev_row.get("baseline_status") or ""
         baseline_revision = repo.get("baseline_revision") or rev_row.get("baseline_revision") or ""
         merge_base_revision = repo.get("merge_base_revision") or rev_row.get("merge_base_revision") or ""
-        rev_cp = run_git(root, repo_path, ["rev-list", "--reverse", "HEAD"])
+        range_limited = False
+        if baseline_revision and merge_base_revision:
+            rev_cp = run_git(root, repo_path, ["rev-list", "--reverse", f"{merge_base_revision}..HEAD"])
+            range_limited = rev_cp.returncode == 0
+        else:
+            rev_cp = run_git(root, repo_path, ["rev-list", "--reverse", "HEAD"])
         if rev_cp.returncode != 0:
             log(f"skip commit scan for {repo_path}: {rev_cp.stderr.strip()[:200]}")
             continue
         revisions = [line.strip() for line in rev_cp.stdout.splitlines() if line.strip()]
-        root_revision = revisions[0] if revisions else ""
+        if not revisions:
+            continue
+        root_cp = run_git(root, repo_path, ["rev-list", "--max-parents=0", "HEAD"])
+        root_revisions = [line.strip() for line in root_cp.stdout.splitlines() if line.strip()]
+        root_revision = root_revisions[0] if root_revisions else revisions[0]
         for commit_hash in revisions:
             meta_cp = run_git(
                 root,
@@ -381,10 +425,12 @@ def extract_commit_records(
                 origin_type = "initial_import"
             elif is_merge:
                 origin_type = "merge_commit"
+            elif range_limited:
+                origin_type = "downstream_unique"
+            elif baseline_status in {"downstream_only", "initial_import"}:
+                origin_type = "post_import_change"
             elif baseline_status == "baseline_unknown" or not baseline_revision:
                 origin_type = "baseline_unknown"
-            elif merge_base_revision and commit_hash not in {merge_base_revision, baseline_revision}:
-                origin_type = "downstream_unique"
             else:
                 origin_type = "post_import_change"
 
@@ -393,19 +439,32 @@ def extract_commit_records(
             insertions = deletions = 0
             if not is_initial and not is_merge:
                 patch_path = diffs / f"commit__{safe_name(repo_path)}__{commit_hash[:12]}.patch"
-                patch_cp = run_git(root, repo_path, ["show", "--binary", "--find-renames", "--format=fuller", commit_hash])
-                patch_path.write_text(patch_cp.stdout, encoding="utf-8", errors="replace")
+                patch_cp = run_git_to_file(
+                    root,
+                    repo_path,
+                    ["show", "--binary", "--find-renames", "--format=fuller", commit_hash],
+                    patch_path,
+                )
+                if patch_cp.returncode != 0:
+                    log(f"git show failed for {repo_path}:{commit_hash}: {patch_cp.stderr.strip()[:200]}")
                 diff_path = str(patch_path.relative_to(out))
                 counts["diffs"] += 1
                 status_by_path, old_path_by_path = diff_name_status(root, repo_path, commit_hash)
-                for added, deleted, file_path in diff_numstat(root, repo_path, commit_hash):
+                numstat_rows = diff_numstat(root, repo_path, commit_hash)
+                skip_blob_info = len(numstat_rows) > MAX_BLOB_INFO_FILES_PER_COMMIT
+                if skip_blob_info:
+                    log(
+                        "skip per-blob sha for large commit "
+                        f"{repo_path}:{commit_hash[:12]} files={len(numstat_rows)}"
+                    )
+                for added, deleted, file_path in numstat_rows:
                     change_type = status_by_path.get(file_path, "")
                     old_path = old_path_by_path.get(file_path, "")
                     numstat_binary = added == "-" or deleted == "-"
                     size_bytes = ""
                     sha256 = ""
                     nul_detected = False
-                    if not change_type.startswith("D"):
+                    if not skip_blob_info and not change_type.startswith("D"):
                         size_bytes, sha256, nul_detected = git_blob_info(root, repo_path, commit_hash, file_path)
                     is_binary = is_binary_or_prebuilt(file_path, numstat_binary=numstat_binary, nul_detected=nul_detected)
                     add_count = 0 if numstat_binary else int_or_zero(added)
@@ -553,8 +612,9 @@ def extract_dirty_records(
         diff_path = ""
         if modified_lines:
             patch_path = diffs / f"dirty__{safe_name(repo_path)}.patch"
-            diff_cp = run_git(root, repo_path, ["diff", "--binary"])
-            patch_path.write_text(diff_cp.stdout, encoding="utf-8", errors="replace")
+            diff_cp = run_git_to_file(root, repo_path, ["diff", "--binary"], patch_path)
+            if diff_cp.returncode != 0:
+                log(f"git diff failed for dirty repo {repo_path}: {diff_cp.stderr.strip()[:200]}")
             diff_path = str(patch_path.relative_to(out))
             counts["diffs"] += 1
         dirty_repo_id = f"dirty_repo:{repo_path}"

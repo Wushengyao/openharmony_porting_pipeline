@@ -142,16 +142,19 @@ def extract_body_file_refs(text: str) -> set[str]:
         "06_audit/",
         "porting_knowledge_output/",
     )
-    for match in path_re.finditer(text):
-        ref = match.group(0).strip("`'\",.)]")
-        if ref in {"o/.cmd", "a/.cmd", "so/.cmd"}:
+    for line in text.splitlines():
+        if re.match(r"\s*(?:-\s*)?(?:repo_path|file_path|record_id|commit_hash|sha256|path):\s*", line):
             continue
-        if ref.startswith(ignored_prefixes):
-            continue
-        name = Path(ref).name
-        if "." not in name and name not in {"BUILD.gn", "BoardConfig.mk"}:
-            continue
-        refs.add(ref)
+        for match in path_re.finditer(line):
+            ref = match.group(0).strip("`'\",.)]")
+            if ref in {"o/.cmd", "a/.cmd", "so/.cmd"}:
+                continue
+            if ref.startswith(ignored_prefixes):
+                continue
+            name = Path(ref).name
+            if "." not in name and name not in {"BUILD.gn", "BoardConfig.mk"}:
+                continue
+            refs.add(ref)
     return refs
 
 

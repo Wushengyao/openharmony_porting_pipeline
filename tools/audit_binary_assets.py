@@ -87,6 +87,19 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def iter_jsonl(path: Path):
+    if not path.exists():
+        return
+    with path.open(encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            try:
+                yield json.loads(line)
+            except Exception:
+                continue
+
+
 def write_csv(path: Path, rows: list[dict[str, Any]], preferred_fields: list[str]) -> None:
     fields = list(preferred_fields)
     seen = set(fields)
@@ -196,6 +209,17 @@ def detect_arch_from_file(workspace_root: Path, path: str) -> str:
     return "unknown"
 
 
+def should_probe_arch(path: str, kind: str) -> bool:
+    if guess_arch(path) != "unknown":
+        return False
+    if kind not in {"firmware_blob", "kernel_module", "object_file", "shared_library", "static_library"}:
+        return False
+    ext = suffix(path)
+    if ext in {".cmd", ".hcb", ".gz", ".xz", ".lz4", ".tar", ".bz2", ".zip", ".jar"}:
+        return False
+    return True
+
+
 def possible_usage(path: str, kind: str | None = None) -> str:
     kind = kind or asset_kind(path)
     if kind == "metadata":
@@ -288,12 +312,12 @@ def main() -> None:
     kb.mkdir(parents=True, exist_ok=True)
 
     rows = read_csv(raw / "binary_asset_records.csv")
-    file_changes = read_jsonl(raw / "file_change_records.jsonl")
-    dirty_files = read_jsonl(raw / "dirty_file_records.jsonl")
-
     existing_paths = {str(row.get("path") or "") for row in rows}
-    for source_name, source_rows in [("file_change", file_changes), ("dirty_workspace", dirty_files)]:
-        for item in source_rows:
+    for source_name, source_path in [
+        ("file_change", raw / "file_change_records.jsonl"),
+        ("dirty_workspace", raw / "dirty_file_records.jsonl"),
+    ]:
+        for item in iter_jsonl(source_path):
             path = str(item.get("workspace_path") or "")
             rel = str(item.get("path") or item.get("file_path") or "")
             if not path and item.get("repo_path") and rel:
@@ -326,6 +350,7 @@ def main() -> None:
             )
             existing_paths.add(path)
 
+    arch_cache: dict[str, str] = {}
     for row in rows:
         path = str(row.get("path") or row.get("file_path") or "")
         row["path"] = path
@@ -336,7 +361,11 @@ def main() -> None:
         row["size_bytes"] = row.get("size_bytes") or row.get("size") or ""
         arch = str(row.get("architecture") or "")
         if not arch or arch == "unknown":
-            arch = detect_arch_from_file(workspace_root, path)
+            arch = guess_arch(path)
+        if (not arch or arch == "unknown") and should_probe_arch(path, kind):
+            if path not in arch_cache:
+                arch_cache[path] = detect_arch_from_file(workspace_root, path)
+            arch = arch_cache[path]
         if not arch or arch == "unknown":
             arch = guess_arch(path)
         row["architecture"] = arch
