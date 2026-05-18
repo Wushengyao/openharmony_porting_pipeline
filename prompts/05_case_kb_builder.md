@@ -26,6 +26,15 @@ This is a fresh isolated Codex session. Do not assume previous chat context. Do 
 - `04_knowledge_base/board_soc_porting_rules.md`
 - `04_knowledge_base/workaround_items.md`
 
+## Output ownership boundary
+
+Stage 05 owns only the required files listed above. Do not delete, rename, replace, or "clean up" files written by earlier stages, even when they are also under `04_knowledge_base/`. In particular, preserve:
+
+- `04_knowledge_base/binary_asset_index.md`
+- `04_knowledge_base/binary_risk_report.md`
+
+Those files are declared by `aux_binary_asset_auditor` and must remain present for final artifact validation. If they look stale or unrelated to Stage 05, mention that as a non-blocking note; do not remove them.
+
 ## Strict exclusions
 
 Do not create reusable cases from:

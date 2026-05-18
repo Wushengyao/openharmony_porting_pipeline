@@ -522,18 +522,61 @@ def normalize_reuse_level(value: Any, audit_notes: list[str], source: str) -> st
 
 
 def normalize_confidence(value: Any) -> str:
+    if isinstance(value, (int, float)):
+        score = float(value)
+        if score >= 0.90:
+            return "high"
+        if score >= 0.75:
+            return "medium_high"
+        if score >= 0.55:
+            return "medium"
+        return "low"
     text = str(value or "").lower()
+    number = re.search(r"\b(?:0(?:\.\d+)?|1(?:\.0+)?)\b", text)
+    if number:
+        score = float(number.group(0))
+        if score >= 0.90:
+            return "high"
+        if score >= 0.75:
+            return "medium_high"
+        if score >= 0.55:
+            return "medium"
+        return "low"
     if "high" in text and "medium" in text:
         return "medium_high"
     if "high" in text:
         return "high"
-    if "low" in text and "medium" in text:
-        return "medium_low"
     if "low" in text:
         return "low"
     if "medium" in text:
         return "medium"
     return "unknown"
+
+
+def normalize_evidence_type(value: Any, evidence: dict[str, Any]) -> str:
+    text = slugify(str(value or ""))
+    allowed = {
+        "commit_file_diff",
+        "commit_file",
+        "log_verified",
+        "dirty_or_binary_only",
+        "operator_context",
+        "unknown",
+    }
+    if text in allowed:
+        return text
+    return evidence_level(evidence)
+
+
+def normalize_evidence_strength(value: Any, confidence: str, evidence_type_value: str) -> str:
+    text = slugify(str(value or ""))
+    if text in {"high", "medium", "low"}:
+        return text
+    if confidence in {"high", "medium_high"} and evidence_type_value in {"commit_file_diff", "log_verified"}:
+        return "high"
+    if confidence in {"high", "medium_high", "medium"}:
+        return "medium"
+    return "low"
 
 
 def unknownish(value: Any) -> bool:
@@ -554,6 +597,16 @@ def normalize_cases(out: Path, card: dict[str, Any], audit_notes: list[str]) -> 
         reuse_level = normalize_reuse_level(frontmatter.get("reuse_level"), audit_notes, str(path.relative_to(out)))
         if reuse_level == "unknown":
             reuse_level = "conditional"
+        confidence = normalize_confidence(first_value(frontmatter.get("confidence"), section_text(body, "Confidence")))
+        evidence_type_value = normalize_evidence_type(
+            first_value(frontmatter.get("evidence_type"), frontmatter.get("evidence_level"), evidence_level(evidence)),
+            evidence,
+        )
+        evidence_strength_value = normalize_evidence_strength(
+            frontmatter.get("evidence_strength"),
+            confidence,
+            evidence_type_value,
+        )
         row = {
             "schema_version": 1,
             "case_id": case_id,
@@ -566,12 +619,14 @@ def normalize_cases(out: Path, card: dict[str, Any], audit_notes: list[str]) -> 
             "problem_type": listify(first_value(frontmatter.get("problem_type"), inferred["problem_type"], default=[])),
             "reuse_level": reuse_level,
             "evidence_level": str(first_value(frontmatter.get("evidence_level"), evidence_level(evidence))),
+            "evidence_type": evidence_type_value,
+            "evidence_strength": evidence_strength_value,
             "applicability": listify(first_value(frontmatter.get("applicability"), inferred["applicability"], default=[])),
             "non_applicability": listify(first_value(frontmatter.get("non_applicability"), ["riscv_primary_distribution"] if "board_soc_arm_primary" in card.get("scenario_type", []) else [], default=[])),
             "evidence": evidence,
             "rule": rule,
             "risks": listify(frontmatter.get("risks")),
-            "confidence": normalize_confidence(first_value(frontmatter.get("confidence"), section_text(body, "Confidence"))),
+            "confidence": confidence,
             "validation": {
                 "build": "unknown",
                 "boot": "unknown",
