@@ -17,7 +17,7 @@
     "title": { "type": "string" },
     "promotion_level": {
       "type": "string",
-      "enum": ["universal", "universal_candidate", "conditional", "scenario_specific", "risk_only", "anti_pattern"]
+      "enum": ["universal_by_design", "universal_from_evidence", "universal_candidate", "conditional", "scenario_specific", "risk_only", "anti_pattern"]
     },
     "supporting_patterns": { "type": "array", "items": { "type": "string" } },
     "supporting_cases": { "type": "array", "items": { "type": "string" } },
@@ -26,7 +26,8 @@
     "non_applicability": { "type": "array", "items": { "type": "string" } },
     "evidence_strength": { "type": "string" },
     "statement": { "type": "string" },
-    "risks": { "type": "array", "items": { "type": "string" } }
+    "risks": { "type": "array", "items": { "type": "string" } },
+    "supporting_method_fragments": { "type": "array", "items": { "type": "string" } }
   },
   "additionalProperties": true
 }

@@ -13,6 +13,8 @@
     "problem_type",
     "reuse_level",
     "evidence_level",
+    "evidence_type",
+    "evidence_strength",
     "evidence",
     "rule",
     "confidence",
@@ -32,7 +34,19 @@
       "type": "string",
       "enum": ["universal_candidate", "conditional", "scenario_specific", "risk_only", "anti_pattern", "workaround", "unknown"]
     },
-    "evidence_level": { "type": "string" },
+    "evidence_level": {
+      "type": "string",
+      "enum": ["commit_file_diff", "commit_file", "dirty_or_binary_only", "log_verified", "unknown"]
+    },
+    "evidence_type": {
+      "type": "string",
+      "enum": ["commit_file_diff", "commit_file", "dirty_or_binary_only", "log_verified", "unknown"]
+    },
+    "evidence_strength": {
+      "type": "string",
+      "enum": ["high", "medium_high", "medium", "medium_low", "low", "unknown"]
+    },
+    "scenario_shape": { "type": "array", "items": { "type": "string" } },
     "applicability": { "type": "array", "items": { "type": "string" } },
     "non_applicability": { "type": "array", "items": { "type": "string" } },
     "evidence": { "type": "object" },

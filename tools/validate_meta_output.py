@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -23,9 +24,11 @@ REQUIRED_FILES = [
     "01_normalized_cases/cases.jsonl",
     "02_patterns/pattern_candidates.jsonl",
     "02_patterns/method_fragments.jsonl",
+    "02_patterns/meta_methods.jsonl",
     "02_patterns/anti_patterns.jsonl",
     "02_patterns/universal_methods.md",
     "02_patterns/conditional_patterns.md",
+    "02_patterns/case_inventory_by_scenario.md",
     "02_patterns/scenario_specific_knowledge.md",
     "02_patterns/anti_patterns.md",
     "02_patterns/workaround_patterns.md",
@@ -45,9 +48,42 @@ REQUIRED_FILES = [
     "05_generated_skills/arm_primary_board_soc_skill.md",
     "05_generated_skills/riscv_primary_distribution_skill.md",
     "05_generated_skills/heterogeneous_aux_core_skill.md",
+    "meta_skill_pack/README.md",
+    "meta_skill_pack/install.sh",
+    "meta_skill_pack/references/meta_output_contract.md",
+    "meta_skill_pack/schemas/meta_method.schema.json",
+    "meta_skill_pack/universal_openharmony_porting/SKILL.md",
+    "meta_skill_pack/arm_primary_board_soc/SKILL.md",
+    "meta_skill_pack/riscv_primary_distribution/SKILL.md",
+    "meta_skill_pack/heterogeneous_aux_core/SKILL.md",
     "meta_report.md",
     "cross_scenario_result.json",
 ]
+
+EVIDENCE_TYPES = {
+    "commit_file_diff",
+    "commit_file",
+    "dirty_or_binary_only",
+    "log_verified",
+    "unknown",
+}
+EVIDENCE_STRENGTHS = {
+    "high",
+    "medium_high",
+    "medium",
+    "medium_low",
+    "low",
+    "unknown",
+}
+PROMOTION_LEVELS = {
+    "universal_by_design",
+    "universal_from_evidence",
+    "universal_candidate",
+    "conditional",
+    "scenario_specific",
+    "risk_only",
+    "anti_pattern",
+}
 
 
 def fail(message: str) -> None:
@@ -149,6 +185,7 @@ def main() -> None:
     cases = read_jsonl(out / "01_normalized_cases/cases.jsonl")
     patterns = read_jsonl(out / "02_patterns/pattern_candidates.jsonl")
     fragments = read_jsonl(out / "02_patterns/method_fragments.jsonl")
+    meta_methods = read_jsonl(out / "02_patterns/meta_methods.jsonl")
     anti_patterns = read_jsonl(out / "02_patterns/anti_patterns.jsonl")
     evidence_traces = read_jsonl(out / "04_global_kb/evidence_trace_index.jsonl")
     scenario_count = int(registry.get("scenario_count") or 0)
@@ -160,6 +197,8 @@ def main() -> None:
     if scenario_count < 1:
         fail("scenario registry must contain at least one scenario")
     scenario_ids = {str(item.get("scenario_id")) for item in scenarios}
+    scenario_types_by_id = {str(item.get("scenario_id")): set(listify(item.get("scenario_type"))) for item in scenarios}
+    soc_vendors_by_id = {str(item.get("scenario_id")): str(item.get("soc_vendor") or "unknown") for item in scenarios}
     for item in scenarios:
         scenario_id = str(item.get("scenario_id") or "")
         for key in ["source_meta_dir_label", "source_meta_dir_relative", "source_output_label", "source_output_dir_relative"]:
@@ -187,6 +226,24 @@ def main() -> None:
         for key in ["porting_phase", "subsystem", "problem_type", "scenario_type"]:
             if not listify(case.get(key)):
                 fail(f"case {case_id} missing non-empty {key}")
+        case_scenario_types = set(listify(case.get("scenario_type")))
+        unknown_types = case_scenario_types - scenario_types_by_id.get(scenario_id, set())
+        if unknown_types:
+            fail(
+                f"case {case_id} uses scenario_type outside registry for {scenario_id}: "
+                f"{sorted(unknown_types)} not in {sorted(scenario_types_by_id.get(scenario_id, set()))}"
+            )
+        evidence_type = str(case.get("evidence_type") or "")
+        evidence_level = str(case.get("evidence_level") or "")
+        evidence_strength = str(case.get("evidence_strength") or "")
+        if evidence_type not in EVIDENCE_TYPES:
+            fail(f"case {case_id} has invalid evidence_type={evidence_type}")
+        if evidence_level not in EVIDENCE_TYPES:
+            fail(f"case {case_id} has invalid evidence_level={evidence_level}; evidence_level must be a canonical evidence type")
+        if evidence_level != evidence_type:
+            fail(f"case {case_id} evidence_level={evidence_level} must match evidence_type={evidence_type}")
+        if evidence_strength not in EVIDENCE_STRENGTHS:
+            fail(f"case {case_id} has invalid evidence_strength={evidence_strength}")
         if not evidence_nonempty(case):
             fail(f"case {case_id} has no evidence in commits/files/diffs/dirty/binary")
 
@@ -229,6 +286,49 @@ def main() -> None:
         for pattern_id in fragment.get("source_patterns") or []:
             if pattern_id not in pattern_ids:
                 fail(f"method fragment {fid} references unknown source_pattern {pattern_id}")
+
+    meta_method_ids: set[str] = set()
+    for method in meta_methods:
+        method_id = str(method.get("method_id") or "")
+        if not method_id:
+            fail("meta method missing method_id")
+        if method_id in meta_method_ids:
+            fail(f"duplicate meta method_id: {method_id}")
+        meta_method_ids.add(method_id)
+        promotion_level = str(method.get("promotion_level") or "")
+        if promotion_level not in PROMOTION_LEVELS:
+            fail(f"meta method {method_id} has invalid promotion_level={promotion_level}")
+        method_scenario_ids = listify(method.get("scenario_ids"))
+        if not method_scenario_ids:
+            fail(f"meta method {method_id} missing scenario_ids")
+        for scenario_id in method_scenario_ids:
+            if scenario_id not in scenario_ids:
+                fail(f"meta method {method_id} references unknown scenario_id {scenario_id}")
+        supporting_cases = listify(method.get("supporting_cases"))
+        supporting_patterns = listify(method.get("supporting_patterns"))
+        for case_id in supporting_cases:
+            if case_id not in case_ids:
+                fail(f"meta method {method_id} references unknown supporting case {case_id}")
+        for pattern_id in supporting_patterns:
+            if pattern_id not in pattern_ids:
+                fail(f"meta method {method_id} references unknown supporting pattern {pattern_id}")
+        if promotion_level == "universal_by_design":
+            if supporting_cases or supporting_patterns:
+                fail(f"meta method {method_id} is universal_by_design but has source case/pattern evidence")
+        if promotion_level == "universal_from_evidence":
+            if len(set(method_scenario_ids)) < 3:
+                fail(f"meta method {method_id} universal_from_evidence requires at least 3 scenario_id values")
+            if len(supporting_cases) + len(supporting_patterns) < 2:
+                fail(f"meta method {method_id} universal_from_evidence requires at least 2 source cases or patterns")
+            method_types = set()
+            method_vendors = set()
+            for scenario_id in method_scenario_ids:
+                method_types.update(scenario_types_by_id.get(scenario_id, set()))
+                vendor = soc_vendors_by_id.get(scenario_id, "unknown")
+                if vendor != "unknown":
+                    method_vendors.add(vendor)
+            if len(method_types) < 2 and len(method_vendors) < 2:
+                fail(f"meta method {method_id} universal_from_evidence requires at least 2 scenario_type values or 2 SoC/vendor values")
 
     anti_ids = {str(item.get("anti_pattern_id") or "") for item in anti_patterns}
     for required in [
@@ -276,13 +376,32 @@ def main() -> None:
     )
     require_terms(
         out / "meta_report.md",
-        ["universal", "universal_candidate", "conditional", "scenario_specific", "risk_only", "anti_pattern"],
+        ["universal_by_design", "universal_from_evidence", "universal_candidate", "conditional", "scenario_specific", "risk_only", "anti_pattern"],
     )
+    for rel in [
+        "meta_skill_pack/universal_openharmony_porting/SKILL.md",
+        "meta_skill_pack/arm_primary_board_soc/SKILL.md",
+        "meta_skill_pack/riscv_primary_distribution/SKILL.md",
+        "meta_skill_pack/heterogeneous_aux_core/SKILL.md",
+    ]:
+        path = out / rel
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        if not text.startswith("---\n"):
+            fail(f"{path} missing SKILL.md frontmatter")
+        for term in ["name:", "description:", "Input Contract", "Case Selector", "Failure Gates"]:
+            if term not in text:
+                fail(f"{path} missing required Skill contract term {term}")
+    if not os.access(out / "meta_skill_pack/install.sh", os.X_OK):
+        fail("meta_skill_pack/install.sh must be executable")
     universal_text = (out / "02_patterns/universal_methods.md").read_text(encoding="utf-8", errors="ignore").lower()
+    if "### universal:" in universal_text or "promotion_level: universal\n" in universal_text:
+        fail("universal_methods.md must use universal_by_design or universal_from_evidence, not bare universal")
+    if scenario_count >= 3 and "universal_by_design" not in universal_text:
+        fail("universal_methods.md must distinguish universal_by_design pipeline guardrails when formal guardrails are present")
     if scenario_count < 3 and "no formal universal methods promoted" not in universal_text:
         fail("universal_methods.md must not promote formal universal methods when scenario_count < 3")
 
-    print(f"[OK] meta output valid: scenarios={scenario_count} cases={len(cases)} patterns={len(patterns)} fragments={len(fragments)} traces={len(evidence_traces)}")
+    print(f"[OK] meta output valid: scenarios={scenario_count} cases={len(cases)} patterns={len(patterns)} fragments={len(fragments)} meta_methods={len(meta_methods)} traces={len(evidence_traces)}")
 
 
 if __name__ == "__main__":

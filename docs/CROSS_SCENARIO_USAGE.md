@@ -75,10 +75,39 @@ bash tools/run_cross_scenario_aggregator.sh \
 
 ## 5. Key Rule
 
-Single-scenario outputs may produce `universal_candidate`, but formal `universal` methods require at least three distinct scenarios and successful validation.
+Single-scenario outputs may produce `universal_candidate`, but formal promotion must use explicit levels:
+
+- `universal_by_design`: pipeline guardrails such as evidence-class separation, scenario scope authority, and validation separation. These are not source-fix methods derived from cases.
+- `universal_from_evidence`: case/pattern-derived methods with at least three distinct scenarios, at least two source cases or patterns, and scenario-type or SoC/vendor diversity.
+
+Do not use a bare `universal` label.
+
+The aggregator also normalizes case evidence fields:
+
+- `evidence_type` / `evidence_level`: `commit_file_diff`, `commit_file`, `dirty_or_binary_only`, `log_verified`, or `unknown`.
+- `evidence_strength`: `high`, `medium_high`, `medium`, `medium_low`, `low`, or `unknown`.
+
+Case `scenario_type` values must be registry-defined labels for the same `scenario_id`; synthesized labels belong in `scenario_shape`.
 
 ## 6. Traceability Notes
 
 The aggregated `02_patterns/method_fragments.jsonl` includes `global_method_fragment_id` because single-scenario exporters may reuse local IDs such as `MF-CASE-001`.
 
 `04_global_kb/evidence_trace_index.jsonl` is intentionally slim: it uses `trace_id` and `evidence_ref` links into `04_global_kb/evidence_index.jsonl` instead of embedding full evidence in every trace row.
+
+## 7. Installable Meta Skill Pack
+
+Cross-scenario aggregation emits installable Skill drafts:
+
+```text
+openharmony_porting_meta_output/meta_skill_pack/
+|-- universal_openharmony_porting/SKILL.md
+|-- arm_primary_board_soc/SKILL.md
+|-- riscv_primary_distribution/SKILL.md
+|-- heterogeneous_aux_core/SKILL.md
+|-- references/
+|-- schemas/
+`-- install.sh
+```
+
+The validation transcript is retained as `_validate_meta_output.log` in the output directory.

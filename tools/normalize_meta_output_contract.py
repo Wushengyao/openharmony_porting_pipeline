@@ -87,8 +87,8 @@ def normalize(out: Path) -> list[str]:
     if meta_report.exists() and ensure_section(
         meta_report,
         "Standard Reuse Classes",
-        "The standard reuse classes are `universal`, `universal_candidate`, `conditional`, `scenario_specific`, `risk_only`, and `anti_pattern`.",
-        ["universal", "universal_candidate", "conditional", "scenario_specific", "risk_only", "anti_pattern"],
+        "The standard reuse classes are `universal_by_design`, `universal_from_evidence`, `universal_candidate`, `conditional`, `scenario_specific`, `risk_only`, and `anti_pattern`.",
+        ["universal_by_design", "universal_from_evidence", "universal_candidate", "conditional", "scenario_specific", "risk_only", "anti_pattern"],
     ):
         changed.append(str(meta_report))
 

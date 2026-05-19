@@ -35,6 +35,49 @@ REQUIRED_META_INPUT_FILES = [
 
 FORMAL_UNIVERSAL_MIN_SCENARIOS = 3
 
+EVIDENCE_TYPES = {
+    "commit_file_diff",
+    "commit_file",
+    "dirty_or_binary_only",
+    "log_verified",
+    "unknown",
+}
+EVIDENCE_STRENGTHS = {
+    "high",
+    "medium_high",
+    "medium",
+    "medium_low",
+    "low",
+    "unknown",
+}
+EVIDENCE_TYPE_ALIASES = {
+    "commit_file_diff": "commit_file_diff",
+    "commit_and_file": "commit_file",
+    "commit_file": "commit_file",
+    "dirty_or_binary_only": "dirty_or_binary_only",
+    "log_verified": "log_verified",
+    "unknown": "unknown",
+}
+SCENARIO_TYPE_ALIASES = {
+    "board_soc_arm_primary_auxiliary_core": ["board_soc_arm_primary", "heterogeneous_aux_core"],
+    "arm_primary_auxiliary_core": ["board_soc_arm_primary", "heterogeneous_aux_core"],
+    "arm_primary_aux_core": ["board_soc_arm_primary", "heterogeneous_aux_core"],
+}
+DEFAULT_GUARDRAIL_METHOD_IDS = {
+    "MF-EVIDENCE-FIRST-001": "Evidence-Class Separation",
+    "MF-SCOPE-AUTHORITY-001": "Scenario Scope Authority",
+    "MF-VALIDATION-SEPARATION-001": "Validation Separation",
+}
+PROMOTION_LEVELS = [
+    "universal_by_design",
+    "universal_from_evidence",
+    "universal_candidate",
+    "conditional",
+    "scenario_specific",
+    "risk_only",
+    "anti_pattern",
+]
+
 
 def fail(message: str) -> None:
     print(f"[BLOCKED] {message}", file=sys.stderr)
@@ -94,10 +137,98 @@ def listify(value: Any) -> list[str]:
     return [text] if text else []
 
 
+def unique_list(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        text = str(value).strip()
+        if text and text not in seen:
+            seen.add(text)
+            result.append(text)
+    return result
+
+
 def slugify(value: str) -> str:
     value = str(value).lower()
     value = re.sub(r"[^a-z0-9]+", "_", value)
     return re.sub(r"_+", "_", value).strip("_") or "unknown"
+
+
+def canonical_evidence_type(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    return EVIDENCE_TYPE_ALIASES.get(text)
+
+
+def infer_evidence_type(case: dict[str, Any]) -> str:
+    for key in ["evidence_type", "evidence_level"]:
+        canonical = canonical_evidence_type(case.get(key))
+        if canonical:
+            return canonical
+    evidence = case.get("evidence") or {}
+    validation = case.get("validation") or {}
+    if isinstance(validation, dict) and validation.get("test_logs"):
+        return "log_verified"
+    if isinstance(evidence, dict):
+        if evidence.get("diffs"):
+            return "commit_file_diff"
+        if evidence.get("commits") or evidence.get("files"):
+            return "commit_file"
+        if evidence.get("dirty_files") or evidence.get("binary_assets"):
+            return "dirty_or_binary_only"
+    return "unknown"
+
+
+def normalize_evidence_fields(case: dict[str, Any]) -> None:
+    raw_level = str(case.get("evidence_level") or "").strip()
+    evidence_type = infer_evidence_type(case)
+    case["evidence_type"] = evidence_type
+    # Keep evidence_level for backward compatibility, but make it the same
+    # canonical type so it no longer mixes type and strength vocabularies.
+    case["evidence_level"] = evidence_type
+
+    strength = str(case.get("evidence_strength") or "").strip()
+    if strength not in EVIDENCE_STRENGTHS:
+        for candidate in [str(case.get("confidence") or "").strip(), raw_level]:
+            if candidate in EVIDENCE_STRENGTHS:
+                strength = candidate
+                break
+        else:
+            strength = "unknown"
+    case["evidence_strength"] = strength
+
+
+def normalize_scenario_types(case: dict[str, Any], card: dict[str, Any]) -> None:
+    allowed = listify(card.get("scenario_type"))
+    allowed_set = set(allowed)
+    raw = listify(case.get("scenario_type"))
+    normalized: list[str] = []
+    scenario_shape = listify(case.get("scenario_shape"))
+
+    for label in raw:
+        if label in allowed_set:
+            normalized.append(label)
+            continue
+        mapped = [item for item in SCENARIO_TYPE_ALIASES.get(label, []) if item in allowed_set]
+        lower = label.lower()
+        if not mapped and "aux" in lower and "heterogeneous_aux_core" in allowed_set:
+            mapped.append("heterogeneous_aux_core")
+        if not mapped and "arm" in lower and "board_soc_arm_primary" in allowed_set:
+            mapped.append("board_soc_arm_primary")
+        if not mapped and "riscv" in lower and "primary" in lower and "riscv_primary_distribution" in allowed_set:
+            mapped.append("riscv_primary_distribution")
+        if mapped:
+            normalized.extend(mapped)
+            scenario_shape.append(label)
+        else:
+            normalized.append(label)
+
+    if not raw and allowed:
+        normalized = allowed
+    case["scenario_type"] = unique_list(normalized)
+    if scenario_shape:
+        case["scenario_shape"] = unique_list(scenario_shape)
 
 
 def text_blob(*values: Any) -> str:
@@ -241,6 +372,9 @@ def load_scenarios(meta_dirs: list[Path]) -> list[dict[str, Any]]:
         patterns = read_jsonl(meta / "pattern_candidates.jsonl")
         anti_patterns = read_jsonl(meta / "anti_patterns.jsonl")
         fragments = read_jsonl(meta / "method_fragments.jsonl")
+        for case in cases:
+            normalize_scenario_types(case, card)
+            normalize_evidence_fields(case)
         for row in [*cases, *patterns, *anti_patterns, *fragments]:
             if row.get("scenario_id") != scenario_id:
                 fail(f"{meta}: row scenario_id={row.get('scenario_id')} does not match scenario_card scenario_id={scenario_id}")
@@ -393,52 +527,176 @@ def annotate_global_records(cases: list[dict[str, Any]], fragments: list[dict[st
         fragment["global_method_fragment_id"] = global_method_fragment_id(fragment)
 
 
+def normalize_pattern_evidence(patterns: list[dict[str, Any]], cases: list[dict[str, Any]]) -> None:
+    cases_by_id = {str(case.get("case_id")): case for case in cases}
+    for pattern in patterns:
+        for evidence in pattern.get("supporting_evidence") or []:
+            if not isinstance(evidence, dict):
+                continue
+            case = cases_by_id.get(str(evidence.get("case_id") or ""))
+            if case:
+                evidence["evidence_type"] = case.get("evidence_type", "unknown")
+                evidence["evidence_level"] = case.get("evidence_level", "unknown")
+                evidence["evidence_strength"] = case.get("evidence_strength", "unknown")
+                continue
+            canonical = canonical_evidence_type(evidence.get("evidence_level"))
+            if canonical:
+                evidence["evidence_type"] = canonical
+                evidence["evidence_level"] = canonical
+
+
 def write_machine_readable_patterns(out: Path, patterns: list[dict[str, Any]], fragments: list[dict[str, Any]], anti_patterns: list[dict[str, Any]]) -> None:
     write_jsonl(out / "02_patterns/pattern_candidates.jsonl", patterns)
     write_jsonl(out / "02_patterns/method_fragments.jsonl", fragments)
     write_jsonl(out / "02_patterns/anti_patterns.jsonl", anti_patterns)
 
 
-def support_count_by_statement(fragments: list[dict[str, Any]]) -> dict[str, set[str]]:
-    support: dict[str, set[str]] = defaultdict(set)
+def fragments_by_statement(fragments: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for fragment in fragments:
         statement = str(fragment.get("statement") or "").strip()
         if not statement:
             continue
-        support[statement].add(str(fragment.get("scenario_id") or "unknown"))
-    return support
+        groups[statement].append(fragment)
+    return groups
+
+
+def scenario_values_by_id(scenarios: list[dict[str, Any]], scenario_ids: list[str], field: str) -> set[str]:
+    cards = {str(item["card"].get("scenario_id")): item["card"] for item in scenarios}
+    values: set[str] = set()
+    for scenario_id in scenario_ids:
+        values.update(listify(cards.get(scenario_id, {}).get(field)))
+    return {value for value in values if value and value != "unknown"}
+
+
+def method_title(statement: str, fragments: list[dict[str, Any]]) -> str:
+    method_id = str(fragments[0].get("method_fragment_id") or "")
+    if method_id in DEFAULT_GUARDRAIL_METHOD_IDS:
+        return DEFAULT_GUARDRAIL_METHOD_IDS[method_id]
+    first_sentence = statement.split(".", 1)[0].strip()
+    return first_sentence[:80] or "Untitled Method"
+
+
+def build_meta_methods(scenarios: list[dict[str, Any]], fragments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    used_ids: set[str] = set()
+    for statement, rows in sorted(fragments_by_statement(fragments).items()):
+        scenario_ids = sorted({str(row.get("scenario_id") or "unknown") for row in rows})
+        if len(scenario_ids) < FORMAL_UNIVERSAL_MIN_SCENARIOS:
+            continue
+
+        source_cases = sorted({str(case_id) for row in rows for case_id in row.get("source_case_ids") or []})
+        source_patterns = sorted({str(pattern_id) for row in rows for pattern_id in row.get("source_patterns") or []})
+        method_ids = {str(row.get("method_fragment_id") or "") for row in rows}
+        by_design = not source_cases and not source_patterns and method_ids <= set(DEFAULT_GUARDRAIL_METHOD_IDS)
+        scenario_types = scenario_values_by_id(scenarios, scenario_ids, "scenario_type")
+        soc_vendors = scenario_values_by_id(scenarios, scenario_ids, "soc_vendor")
+
+        if by_design:
+            promotion_level = "universal_by_design"
+            evidence_strength = "pipeline_guardrail"
+        elif len(source_cases) + len(source_patterns) >= 2 and (len(scenario_types) >= 2 or len(soc_vendors) >= 2):
+            promotion_level = "universal_from_evidence"
+            evidence_strength = "high"
+        else:
+            promotion_level = "universal_candidate"
+            evidence_strength = "medium"
+
+        base_id = "META-" + slugify(f"{promotion_level}-{method_title(statement, rows)}").upper()
+        method_id = base_id
+        suffix = 2
+        while method_id in used_ids:
+            method_id = f"{base_id}-{suffix}"
+            suffix += 1
+        used_ids.add(method_id)
+
+        records.append(
+            {
+                "method_id": method_id,
+                "title": method_title(statement, rows),
+                "promotion_level": promotion_level,
+                "supporting_patterns": source_patterns,
+                "supporting_cases": source_cases,
+                "scenario_ids": scenario_ids,
+                "applicability": sorted(scenario_types) or ["cross_scenario_governance"],
+                "non_applicability": ["source-derived universal"] if by_design else [],
+                "evidence_strength": evidence_strength,
+                "statement": statement,
+                "risks": sorted({risk for row in rows for risk in listify(row.get("failure_modes"))}),
+                "supporting_method_fragments": [global_method_fragment_id(row) for row in rows],
+            }
+        )
+    return records
 
 
 def write_universal_methods(out: Path, scenarios: list[dict[str, Any]], fragments: list[dict[str, Any]]) -> None:
-    support = support_count_by_statement(fragments)
-    formal = [
-        (statement, sorted(ids))
-        for statement, ids in support.items()
-        if len(ids) >= FORMAL_UNIVERSAL_MIN_SCENARIOS and len(scenarios) >= FORMAL_UNIVERSAL_MIN_SCENARIOS
-    ]
+    meta_methods = build_meta_methods(scenarios, fragments)
+    write_jsonl(out / "02_patterns/meta_methods.jsonl", meta_methods)
     lines = [
         "# Universal Methods",
         "",
-        f"Promotion rule: a formal universal method requires at least {FORMAL_UNIVERSAL_MIN_SCENARIOS} distinct scenario_id values, broad applicability, explicit constraints, and no workaround-only basis.",
+        f"Promotion rule: formal reusable methods require at least {FORMAL_UNIVERSAL_MIN_SCENARIOS} distinct scenario_id values and must declare one of these promotion levels: `{', '.join(PROMOTION_LEVELS)}`.",
+        "",
+        "`universal_by_design` means a pipeline guardrail, not a case-derived source fix. `universal_from_evidence` requires source cases or patterns plus cross-scenario diversity.",
         "",
     ]
-    if formal:
-        lines.extend(["## Promoted Universal Methods", ""])
-        for statement, ids in formal:
-            lines.append(f"- {statement} Supported scenarios: {', '.join(ids)}.")
+    by_design = [record for record in meta_methods if record["promotion_level"] == "universal_by_design"]
+    from_evidence = [record for record in meta_methods if record["promotion_level"] == "universal_from_evidence"]
+    candidates = [record for record in meta_methods if record["promotion_level"] == "universal_candidate"]
+    if by_design:
+        lines.extend(["## Universal By Design / Pipeline Guardrails", ""])
+        for record in by_design:
+            lines.extend(
+                [
+                    f"### universal_by_design: {record['title']}",
+                    "",
+                    f"- Method: {record['statement']}",
+                    f"- Support: {', '.join(record['scenario_ids'])}.",
+                    f"- Traceability: {', '.join(record['supporting_method_fragments'])}.",
+                    "- Source cases/patterns: none; this is a pipeline guardrail.",
+                    "- Constraint: Do not present this as a case-derived OpenHarmony source fix.",
+                    "",
+                ]
+            )
+    if from_evidence:
+        lines.extend(["## Universal From Evidence", ""])
+        for record in from_evidence:
+            lines.extend(
+                [
+                    f"### universal_from_evidence: {record['title']}",
+                    "",
+                    f"- Method: {record['statement']}",
+                    f"- Support: {', '.join(record['scenario_ids'])}.",
+                    f"- source_case_ids: {', '.join(record['supporting_cases']) or 'none'}",
+                    f"- source_patterns: {', '.join(record['supporting_patterns']) or 'none'}",
+                    f"- Applicability: {', '.join(record['applicability'])}.",
+                    "",
+                ]
+            )
     else:
+        lines.extend(
+            [
+                "## Universal From Evidence",
+                "",
+                "No `universal_from_evidence` methods were promoted. Shared case-derived rules remain conditional or universal_candidate until they have sufficient source case/pattern traceability and scenario diversity.",
+                "",
+            ]
+        )
+    if not by_design and not from_evidence:
         lines.extend(
             [
                 "## No Formal Universal Methods Promoted",
                 "",
                 f"Input scenario count is {len(scenarios)}. Evidence is insufficient for formal universal promotion; keep these as universal_candidate until at least {FORMAL_UNIVERSAL_MIN_SCENARIOS} scenarios support them.",
                 "",
-                "## Universal Candidates",
-                "",
             ]
         )
-        for statement, ids in sorted(support.items(), key=lambda item: (-len(item[1]), item[0]))[:30]:
-            lines.append(f"- {statement} Evidence strength: {len(ids)} scenario(s): {', '.join(sorted(ids))}.")
+    lines.extend(["## Universal Candidates Not Promoted", ""])
+    if candidates:
+        for record in candidates:
+            lines.append(f"- `{record['method_id']}`: {record['statement']} Support: {', '.join(record['scenario_ids'])}.")
+    else:
+        lines.append("- No additional `universal_candidate` methods met the cross-scenario support threshold.")
     (out / "02_patterns/universal_methods.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -496,21 +754,32 @@ def write_conditional_patterns(out: Path, patterns: list[dict[str, Any]], cases:
 
 
 def write_scenario_specific(out: Path, cases: list[dict[str, Any]]) -> None:
+    inventory_lines = [
+        "# Case Inventory By Scenario",
+        "",
+        "All normalized cases are listed here as concrete scenario records. This is an inventory, not a promotion decision.",
+        "",
+    ]
+    for scenario_id in sorted({str(case.get("scenario_id")) for case in cases}):
+        inventory_lines.extend([f"## {scenario_id}", ""])
+        for case in [row for row in cases if str(row.get("scenario_id")) == scenario_id]:
+            inventory_lines.append(
+                f"- `{case.get('case_id')}`: {case.get('title')} reuse_level={case.get('reuse_level')}; evidence_type={case.get('evidence_type', case.get('evidence_level', 'unknown'))}."
+            )
+        inventory_lines.append("")
+    (out / "02_patterns/case_inventory_by_scenario.md").write_text("\n".join(inventory_lines).rstrip() + "\n", encoding="utf-8")
+
     lines = [
         "# Scenario-Specific Knowledge",
         "",
-        "These records are retained as concrete case knowledge and must not be promoted without more scenarios.",
+        "Only cases whose normalized `reuse_level` is exactly `scenario_specific` are listed here. Conditional, risk_only, and workaround records remain in the case inventory and their own pattern views.",
         "",
     ]
-    selected = [
-        case for case in cases
-        if case.get("reuse_level") in {"scenario_specific", "risk_only", "workaround"}
-        or len({str(case.get("scenario_id"))}) == 1
-    ]
+    selected = [case for case in cases if case.get("reuse_level") == "scenario_specific"]
     for case in selected:
-        lines.append(f"- `{case.get('scenario_id')}` / `{case.get('case_id')}`: {case.get('title')} Scope: {case.get('reuse_level')}.")
-    if len(lines) == 4:
-        lines.append("- No scenario-specific cases were present.")
+        lines.append(f"- `{case.get('scenario_id')}` / `{case.get('case_id')}`: {case.get('title')}.")
+    if not selected:
+        lines.append("- No normalized cases currently use `reuse_level=scenario_specific`.")
     (out / "02_patterns/scenario_specific_knowledge.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -698,19 +967,224 @@ def write_global_kb(out: Path, cases: list[dict[str, Any]], patterns: list[dict[
     )
 
 
-def write_generated_skills(out: Path, scenario_count: int) -> None:
-    shared_guard = (
-        "Use normalized scenario cards, cases, pattern candidates, anti-patterns, and method fragments. "
-        "Do not promote single-scenario generated_skill.md content into formal universal guidance."
+def generated_skill_doc(title: str, selector: str, focus: list[str], gates: list[str], scenario_count: int) -> str:
+    lines = [
+        f"# {title}",
+        "",
+        "This generated skill draft is evidence-bound. The installable Codex Skill package is emitted under `meta_skill_pack/`.",
+        "",
+        "## Input Contract",
+        "",
+        "- `00_scenario_registry/scenario_registry.yaml` defines scenario IDs, scenario_type, runtime_arch, SoC/vendor, board, kernel, and validation status.",
+        "- `01_normalized_cases/cases.jsonl` provides canonical `evidence_type`, `evidence_strength`, and registry-scoped `scenario_type` values.",
+        "- `02_patterns/meta_methods.jsonl`, `pattern_candidates.jsonl`, `anti_patterns.jsonl`, and `method_fragments.jsonl` provide promotion and traceability inputs.",
+        "",
+        "## Case Selector",
+        "",
+        selector,
+        "",
+        "## Operating Steps",
+        "",
+        "1. Freeze scenario scope from the registry before reading cases.",
+        "2. Select cases by `scenario_type`, `applicability`, `porting_phase`, `subsystem`, and `problem_type`.",
+        "3. Follow evidence references into case or pattern records; keep dirty and binary records separate from committed source proof.",
+        "4. Apply anti-pattern checks before promoting a rule or using it as a reusable fix.",
+        "5. Preserve validation unknowns unless build, boot, runtime, or test logs prove success.",
+        "",
+        "## Focus Areas",
+        "",
+    ]
+    lines.extend(f"- {item}" for item in focus)
+    lines.extend(["", "## Failure Gates", ""])
+    lines.extend(f"- {item}" for item in gates)
+    lines.extend(
+        [
+            "",
+            "## Tool Commands",
+            "",
+            "```bash",
+            "python3 tools/validate_meta_output.py --out <openharmony_porting_meta_output>",
+            "bash tools/run_cross_scenario_aggregator.sh --input <porting_knowledge_output> --out <openharmony_porting_meta_output>",
+            "```",
+            "",
+            f"Current scenario count at generation time: `{scenario_count}`.",
+        ]
     )
-    skill_files = {
-        "universal_openharmony_porting_skill.md": f"# Universal OpenHarmony Porting Skill\n\n{shared_guard}\n\nFormal universal methods require at least {FORMAL_UNIVERSAL_MIN_SCENARIOS} supporting scenarios. Current scenario count: {scenario_count}.\n",
-        "arm_primary_board_soc_skill.md": f"# ARM-Primary Board/SoC Skill\n\n{shared_guard}\n\nFocus on product/board/vendor/SoC binding, driver/HDF chains, boot firmware provenance, dirty workspace separation, and binary/prebuilt governance.\n",
-        "riscv_primary_distribution_skill.md": f"# RISC-V Primary Distribution Skill\n\n{shared_guard}\n\nFocus on runtime architecture classification, toolchain and third_party compatibility, boot stack, kernel/userspace ABI, and avoiding auxiliary-core confusion.\n",
-        "heterogeneous_aux_core_skill.md": f"# Heterogeneous Auxiliary-Core Skill\n\n{shared_guard}\n\nKeep auxiliary firmware, DSP, ARISC, C906, and RISC-V coprocessor evidence separate from the primary OpenHarmony runtime architecture.\n",
+    return "\n".join(lines) + "\n"
+
+
+def skill_pack_doc(name: str, description: str, selector: str, focus: list[str], gates: list[str], scenario_count: int) -> str:
+    body = generated_skill_doc(name.replace("_", " ").title(), selector, focus, gates, scenario_count)
+    return "\n".join(
+        [
+            "---",
+            f"name: {name}",
+            f"description: {description}",
+            "---",
+            "",
+            body,
+        ]
+    )
+
+
+def skill_specs() -> dict[str, dict[str, Any]]:
+    return {
+        "universal_openharmony_porting": {
+            "description": "Apply evidence-bound OpenHarmony porting governance across multiple scenarios without over-promoting rules.",
+            "selector": "Use this when the task is cross-scenario method extraction, validation, promotion review, or quality gating.",
+            "focus": [
+                "universal_by_design guardrails: evidence-class separation, scenario scope authority, and validation separation.",
+                "universal_from_evidence only when `meta_methods.jsonl` supplies source cases or patterns across enough diverse scenarios.",
+                "conditional dispatch into ARM-primary, RISC-V-primary, or heterogeneous auxiliary-core skills.",
+            ],
+            "gates": [
+                "Do not use `promotion_level=universal`; choose universal_by_design or universal_from_evidence.",
+                "Do not infer build, boot, runtime, or test pass from commit/file/diff evidence alone.",
+                "Do not use generated single-scenario skill text as promotion evidence.",
+            ],
+        },
+        "arm_primary_board_soc": {
+            "description": "Review ARM-primary OpenHarmony board/SoC porting cases with auxiliary-core separation.",
+            "selector": "Use when `scenario_type` contains `board_soc_arm_primary` or the case concerns ARM board, SoC, product, vendor, HDF, DTS, or boot binding.",
+            "focus": [
+                "Product, board, vendor, and SoC binding chains.",
+                "Driver/HDF/HCS/DTS integration and generated asset separation.",
+                "Boot firmware provenance and auxiliary-core non-promotion.",
+            ],
+            "gates": [
+                "Do not collapse `heterogeneous_aux_core` into RISC-V-primary runtime scope.",
+                "Do not treat binary boot assets as source fixes.",
+                "Require registry-defined scenario_type labels only.",
+            ],
+        },
+        "riscv_primary_distribution": {
+            "description": "Review RISC-V-primary OpenHarmony distribution porting cases.",
+            "selector": "Use when `scenario_type` contains `riscv_primary_distribution` or the case involves RISC-V runtime architecture, product route, SDK/toolchain, musl, kernel, or board/vendor integration.",
+            "focus": [
+                "RISC-V build/runtime/toolchain routing.",
+                "Product, board, vendor, and SoC binding for RISC-V boards.",
+                "HDF, WiFi/SDIO, camera/media, display/GPU, boot, and binary governance under RISC-V-primary scope.",
+            ],
+            "gates": [
+                "Do not promote one vendor board workaround as universal RISC-V behavior.",
+                "Do not mix evidence_type and evidence_strength vocabularies.",
+                "Keep dirty scripts and prebuilts as risk records until committed or validated.",
+            ],
+        },
+        "heterogeneous_aux_core": {
+            "description": "Review auxiliary-core evidence inside non-RISC-V-primary OpenHarmony scenarios.",
+            "selector": "Use when `scenario_type` contains `heterogeneous_aux_core`, or when RISC-V firmware, DSP, ARISC, C906, or coprocessor evidence appears inside another primary runtime.",
+            "focus": [
+                "Auxiliary firmware and coprocessor evidence classification.",
+                "Primary runtime scope protection.",
+                "Firmware provenance, binary governance, and non-applicability notes.",
+            ],
+            "gates": [
+                "Do not classify auxiliary RISC-V firmware as RISC-V-primary OpenHarmony runtime.",
+                "Do not convert firmware presence into build/boot/runtime validation.",
+                "Keep scenario_shape separate from registry-defined scenario_type.",
+            ],
+        },
     }
-    for filename, text in skill_files.items():
-        (out / "05_generated_skills" / filename).write_text(text, encoding="utf-8")
+
+
+def write_generated_skills(out: Path, scenario_count: int) -> None:
+    specs = skill_specs()
+    filenames = {
+        "universal_openharmony_porting": "universal_openharmony_porting_skill.md",
+        "arm_primary_board_soc": "arm_primary_board_soc_skill.md",
+        "riscv_primary_distribution": "riscv_primary_distribution_skill.md",
+        "heterogeneous_aux_core": "heterogeneous_aux_core_skill.md",
+    }
+    for name, spec in specs.items():
+        text = generated_skill_doc(
+            name.replace("_", " ").title(),
+            str(spec["selector"]),
+            list(spec["focus"]),
+            list(spec["gates"]),
+            scenario_count,
+        )
+        (out / "05_generated_skills" / filenames[name]).write_text(text, encoding="utf-8")
+
+
+def write_meta_skill_pack(out: Path, scenario_count: int) -> None:
+    pack = out / "meta_skill_pack"
+    specs = skill_specs()
+    for name, spec in specs.items():
+        skill_dir = pack / name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(
+            skill_pack_doc(
+                name,
+                str(spec["description"]),
+                str(spec["selector"]),
+                list(spec["focus"]),
+                list(spec["gates"]),
+                scenario_count,
+            ),
+            encoding="utf-8",
+        )
+    references = pack / "references"
+    schemas = pack / "schemas"
+    references.mkdir(parents=True, exist_ok=True)
+    schemas.mkdir(parents=True, exist_ok=True)
+    (references / "meta_output_contract.md").write_text(
+        "# Meta Output Contract\n\n"
+        "- `scenario_type` in cases must be a subset of the registry scenario_type for the same scenario_id.\n"
+        "- `evidence_type` and `evidence_level` use evidence source enums; `evidence_strength` uses strength enums.\n"
+        "- `promotion_level` distinguishes `universal_by_design` from `universal_from_evidence`.\n"
+        "- `scenario_shape` may hold synthesized labels, but registry-defined `scenario_type` must remain canonical.\n",
+        encoding="utf-8",
+    )
+    (schemas / "meta_method.schema.json").write_text(
+        json.dumps(
+            {
+                "type": "object",
+                "required": ["method_id", "title", "promotion_level", "scenario_ids", "statement"],
+                "properties": {
+                    "method_id": {"type": "string"},
+                    "title": {"type": "string"},
+                    "promotion_level": {"type": "string", "enum": PROMOTION_LEVELS},
+                    "supporting_patterns": {"type": "array", "items": {"type": "string"}},
+                    "supporting_cases": {"type": "array", "items": {"type": "string"}},
+                    "scenario_ids": {"type": "array", "items": {"type": "string"}},
+                    "statement": {"type": "string"},
+                },
+                "additionalProperties": True,
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (pack / "README.md").write_text(
+        "# OpenHarmony Porting Meta Skill Pack\n\n"
+        "Installable Codex Skill drafts generated from cross-scenario OpenHarmony porting evidence.\n\n"
+        "Run `bash install.sh` from this directory to copy the skill folders into `${CODEX_HOME:-$HOME/.codex}/skills`.\n",
+        encoding="utf-8",
+    )
+    install = pack / "install.sh"
+    install.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEST="${CODEX_HOME:-${HOME}/.codex}/skills"
+mkdir -p "${DEST}"
+
+for skill in universal_openharmony_porting arm_primary_board_soc riscv_primary_distribution heterogeneous_aux_core; do
+  mkdir -p "${DEST}/${skill}"
+  cp -R "${SCRIPT_DIR}/${skill}/." "${DEST}/${skill}/"
+  mkdir -p "${DEST}/${skill}/references" "${DEST}/${skill}/schemas"
+  cp -R "${SCRIPT_DIR}/references/." "${DEST}/${skill}/references/"
+  cp -R "${SCRIPT_DIR}/schemas/." "${DEST}/${skill}/schemas/"
+  echo "installed ${skill} -> ${DEST}/${skill}"
+done
+""",
+        encoding="utf-8",
+    )
+    install.chmod(0o755)
 
 
 def write_meta_report(out: Path, scenarios: list[dict[str, Any]], cases: list[dict[str, Any]], patterns: list[dict[str, Any]], anti_patterns: list[dict[str, Any]]) -> None:
@@ -729,7 +1203,8 @@ def write_meta_report(out: Path, scenarios: list[dict[str, Any]], cases: list[di
         "",
         "## Promotion Classes",
         "",
-        "- universal: requires at least 3 distinct scenario_id values and is not promoted from single-scenario evidence here.",
+        "- universal_by_design: pipeline guardrail supported by scenario coverage but not derived from source cases.",
+        "- universal_from_evidence: requires at least 3 distinct scenario_id values, source cases or patterns, and scenario type or vendor diversity.",
         "- universal_candidate: plausible method fragment awaiting more scenarios.",
         "- conditional: applicable under explicit architecture, subsystem, vendor, system type or engineering-shape constraints.",
         "- scenario_specific: concrete board/SoC/vendor/module knowledge retained without promotion.",
@@ -750,6 +1225,16 @@ def write_meta_report(out: Path, scenarios: list[dict[str, Any]], cases: list[di
                 f"No formal universal method is promoted because fewer than {FORMAL_UNIVERSAL_MIN_SCENARIOS} scenarios were supplied. Keep shared-looking rules as universal_candidate or conditional.",
             ]
         )
+    lines.extend(
+        [
+            "",
+            "## Generated Skill Pack",
+            "",
+            "- Installable drafts are under `meta_skill_pack/`.",
+            "- Human-readable generated skill notes remain under `05_generated_skills/`.",
+            "- Full case inventory is under `02_patterns/case_inventory_by_scenario.md`; `scenario_specific_knowledge.md` is reserved for exact `reuse_level=scenario_specific` cases.",
+        ]
+    )
     (out / "meta_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -772,6 +1257,7 @@ def main() -> None:
         "03_methodology",
         "04_global_kb",
         "05_generated_skills",
+        "meta_skill_pack",
     ]:
         (out / subdir).mkdir(parents=True, exist_ok=True)
 
@@ -784,6 +1270,7 @@ def main() -> None:
             case["reuse_level"] = "universal_candidate"
     dedupe_pattern_ids(patterns, fragments)
     annotate_global_records(cases, fragments)
+    normalize_pattern_evidence(patterns, cases)
 
     write_registry(out, scenarios, redact_local_paths=args.redact_local_paths)
     write_case_indexes(out, cases)
@@ -796,6 +1283,7 @@ def main() -> None:
     write_methodology(out, len(scenarios), cases)
     write_global_kb(out, cases, patterns, fragments, anti_patterns)
     write_generated_skills(out, len(scenarios))
+    write_meta_skill_pack(out, len(scenarios))
     write_meta_report(out, scenarios, cases, patterns, anti_patterns)
 
     result = {

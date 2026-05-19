@@ -116,5 +116,5 @@ if [[ "${LLM_REFINE}" == "1" ]]; then
   fi
 fi
 echo "[INFO] validating meta output: ${OUT_DIR}" >&2
-python3 "${SCRIPT_DIR}/validate_meta_output.py" --out "${OUT_DIR}"
+python3 "${SCRIPT_DIR}/validate_meta_output.py" --out "${OUT_DIR}" 2>&1 | tee "${OUT_DIR}/_validate_meta_output.log"
 echo "Cross-scenario aggregation finished. Output: ${OUT_DIR}"
