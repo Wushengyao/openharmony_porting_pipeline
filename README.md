@@ -96,6 +96,63 @@ refinement and restores deterministic output if the Codex refine process fails.
 
 See `docs/CROSS_SCENARIO_USAGE.md` for a compact usage guide.
 
+Run the plan-only OpenHarmony porting execution assistant after a single
+scenario output and, optionally, cross-scenario meta output are available:
+
+```bash
+bash tools/run_porting_execution_assistant.sh \
+  --source-output /path/to/ohos/porting_knowledge_output \
+  --meta-output /path/to/openharmony_porting_meta_output \
+  /path/to/ohos
+```
+
+The execution assistant is not part of the default `run_pipeline.sh` flow. It
+writes plan-only execution artifacts under:
+
+```text
+/path/to/ohos/porting_knowledge_output/08_execution_assistant/
+├── target_profile.yaml
+├── source_tree_survey.yaml
+├── source_tree_survey.md
+├── gap_analysis.yaml
+├── gap_analysis.md
+├── porting_plan.yaml
+├── porting_plan.md
+├── patch_plan.yaml
+├── patch_plan.md
+├── build_acceptance.yaml
+├── build_acceptance.md
+├── external_dependency_followup.yaml
+├── external_dependency_followup.md
+├── uncertainty_ledger.yaml
+└── uncertainty_ledger.md
+```
+
+P0 execution-assistant guardrails:
+
+- default `plan-only`; no source edits, patch files, external downloads, or
+  automatic high-risk patch generation;
+- build acceptance is compile-flow only and may use only existing OpenHarmony
+  build scripts already present in the workspace;
+- vendor/third-party BSP, bootloader, firmware, prebuilt, closed driver, and
+  signing/packaging tool needs go to `external_dependency_followup`;
+- unknown requirements and uncertain changes go to `uncertainty_ledger`;
+- build success must not be promoted to boot/runtime/test success;
+- every recommendation must carry evidence references to user requirements,
+  source tree evidence, meta methods, cases, or logs.
+
+Minimum local checks for the new execution-assistant layer:
+
+```bash
+bash -n tools/run_porting_execution_assistant.sh
+python3 -m py_compile tools/validate_porting_execution_assistant.py
+python3 -m json.tool schemas/porting_execution_assistant.schema.json >/dev/null
+python3 tools/validate_porting_execution_assistant.py \
+  --workspace "$PWD" \
+  --out "$PWD/porting_knowledge_output" \
+  --stage-result "$PWD/porting_knowledge_output/_stage_results/10_porting_execution_assistant.json"
+```
+
 The default output directory is:
 
 ```text
@@ -115,6 +172,11 @@ The default output directory is:
 9. `06_skill_generator`
 10. `07_final_auditor`
 11. `08_meta_input_exporter`
+
+Optional post-pipeline execution assistance:
+
+12. `10_porting_execution_assistant` via
+    `tools/run_porting_execution_assistant.sh` or `tools/run_stage.sh`.
 
 Stage 08 writes:
 

@@ -35,6 +35,15 @@ Run one stage:
 bash /home/ve/.codex/skills/openharmony_porting_pipeline/tools/run_stage.sh /path/to/ohos 03_statistics_qc
 ```
 
+Run the plan-only execution assistant after the evidence pipeline:
+
+```bash
+bash /home/ve/.codex/skills/openharmony_porting_pipeline/tools/run_porting_execution_assistant.sh \
+  --source-output /path/to/ohos/porting_knowledge_output \
+  --meta-output /path/to/openharmony_porting_meta_output \
+  /path/to/ohos
+```
+
 Aggregate multiple scenario outputs:
 
 ```bash
@@ -67,6 +76,9 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
 - During `--llm-refine`, protect `cross_scenario_result.json` machine counts and restore deterministic output if Codex refinement fails.
 - Use `porting_knowledge_output/` as the default output root unless the user specifies another directory.
 - Prefer the repository scripts over hand-written ad hoc extraction or validation.
+- The execution assistant is a post-pipeline layer. It defaults to plan-only,
+  must not auto-generate high-risk patches or external dependency artifacts,
+  and must not infer boot/runtime/test pass from build pass.
 
 Cross-scenario aggregation now emits `meta_skill_pack/` with installable
 `SKILL.md` drafts plus `_validate_meta_output.log` for the validation transcript.
@@ -84,6 +96,7 @@ Cross-scenario aggregation now emits `meta_skill_pack/` with installable
 9. `06_skill_generator`
 10. `07_final_auditor`
 11. `08_meta_input_exporter`
+12. Optional `10_porting_execution_assistant`
 
 For deeper usage details, read `README.md` in this skill directory first, then
 open only the specific tool, prompt, schema, or reference needed for the user's

@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "stage": {
+      "type": "string",
+      "const": "10_porting_execution_assistant"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "blocked",
+        "partial"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "execution_mode": {
+      "type": "string",
+      "const": "plan-only"
+    },
+    "patch_apply_mode": {
+      "type": "string",
+      "enum": [
+        "none",
+        "plan-only"
+      ]
+    },
+    "artifact_root": {
+      "type": "string"
+    },
+    "input_files_read": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "output_files_written": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "blocking_issues": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "non_blocking_issues": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "next_stage_inputs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "patch_plan_item_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "external_dependency_followup_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "uncertainty_count": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "stage",
+    "status",
+    "summary",
+    "execution_mode",
+    "patch_apply_mode",
+    "artifact_root",
+    "input_files_read",
+    "output_files_written",
+    "blocking_issues",
+    "non_blocking_issues",
+    "next_stage_inputs"
+  ],
+  "additionalProperties": false
+}

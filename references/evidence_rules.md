@@ -10,3 +10,5 @@
 8. Reusable cases must use one canonical `evidence:` block with `commits`, `files`, `diffs`, and optional `dirty_records`/`binary_records`; do not add a separate validator-only evidence block.
 9. Every concrete source path mentioned in case prose must resolve to `file_change_records.jsonl` or `dirty_file_records.jsonl`, or be explicitly marked `unknown`.
 10. Dirty and binary records may be attached to a case or feature only by same repo, path prefix, or strong theme keyword match; broad classification-only attachment is risk-only.
+11. Execution-assistant recommendations must cite `evidence_refs` back to user requirements, source-tree evidence, meta methods, cases, or logs. Missing evidence becomes an `uncertainty_ledger` item, not a confirmed action.
+12. Build acceptance evidence is compile-flow evidence only. It must not be used to claim boot, runtime, driver runtime, app, CTS, or test pass.

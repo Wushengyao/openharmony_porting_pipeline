@@ -332,6 +332,33 @@ def validate_meta_inputs(out: Path) -> None:
         fail(f"meta input validation failed with exit_code={proc.returncode}")
 
 
+def validate_porting_execution_assistant(workspace: Path, out: Path, stage_result: Path) -> None:
+    script = Path(__file__).with_name("validate_porting_execution_assistant.py")
+    require_file(script)
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--workspace",
+            str(workspace),
+            "--out",
+            str(out),
+            "--stage-result",
+            str(stage_result),
+        ],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    if proc.returncode != 0:
+        fail(f"porting execution assistant validation failed with exit_code={proc.returncode}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--workspace", required=True)
@@ -442,6 +469,9 @@ def main() -> None:
         require_file(out / "07_meta_inputs/validation_status.yaml")
         require_file(out / "07_meta_inputs/meta_input_audit.md")
         validate_meta_inputs(out)
+
+    elif stage == "10_porting_execution_assistant":
+        validate_porting_execution_assistant(workspace, out, Path(args.stage_result))
 
     else:
         fail(f"Unknown stage: {stage}")

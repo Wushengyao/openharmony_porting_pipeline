@@ -64,6 +64,7 @@ case "${STAGE}" in
   06_skill_generator) PROMPT="${PROMPTS_DIR}/06_skill_generator.md"; SCHEMA="${SCHEMAS_DIR}/stage_result.schema.json";;
   07_final_auditor) PROMPT="${PROMPTS_DIR}/07_final_auditor.md"; SCHEMA="${SCHEMAS_DIR}/audit_result.schema.json";;
   08_meta_input_exporter) PROMPT="${PROMPTS_DIR}/08_meta_input_exporter.md"; SCHEMA="${SCHEMAS_DIR}/stage_result.schema.json";;
+  10_porting_execution_assistant) PROMPT="${PROMPTS_DIR}/10_porting_execution_assistant.md"; SCHEMA="${SCHEMAS_DIR}/porting_execution_assistant.schema.json";;
   *) echo "未知阶段：${STAGE}" >&2; exit 2;;
 esac
 
@@ -73,6 +74,17 @@ export HTTP_PROXY="${CODEX_PROXY_URL}" HTTPS_PROXY="${CODEX_PROXY_URL}" ALL_PROX
 export no_proxy="${no_proxy:-localhost,127.0.0.1,::1}"
 export NO_PROXY="${NO_PROXY:-${no_proxy}}"
 export NODE_USE_ENV_PROXY=1
+export PORTING_EXECUTION_MODE="${PORTING_EXECUTION_MODE:-plan-only}"
+export PORTING_EXECUTION_PATCH_APPLY_MODE="${PORTING_EXECUTION_PATCH_APPLY_MODE:-none}"
+export PORTING_EXECUTION_OUT_DIR="${PORTING_EXECUTION_OUT_DIR:-${OUT_DIR}}"
+export PORTING_EXECUTION_ARTIFACT_DIR="${PORTING_EXECUTION_ARTIFACT_DIR:-${OUT_DIR}/08_execution_assistant}"
+export PORTING_EXECUTION_SOURCE_OUTPUT="${PORTING_EXECUTION_SOURCE_OUTPUT:-${OUT_DIR}}"
+export PORTING_EXECUTION_META_OUTPUT="${PORTING_EXECUTION_META_OUTPUT:-}"
+export PORTING_EXECUTION_TARGET_PROFILE_SEED="${PORTING_EXECUTION_TARGET_PROFILE_SEED:-}"
+export PORTING_EXECUTION_BUILD_LOG="${PORTING_EXECUTION_BUILD_LOG:-}"
+if [[ "${STAGE}" == "10_porting_execution_assistant" ]]; then
+  mkdir -p "${PORTING_EXECUTION_ARTIFACT_DIR}"
+fi
 
 CODEX_BASE_ARGS=(--cd "${WORKSPACE_ROOT}" --sandbox workspace-write --skip-git-repo-check --ephemeral --json)
 if [[ -n "${CODEX_MODEL:-}" ]]; then

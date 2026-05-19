@@ -1,0 +1,358 @@
+# Stage 10: OpenHarmony Porting Execution Assistant
+
+This is a fresh isolated Codex session. Do not assume previous chat context.
+This stage extends the pipeline from meta-methodology into execution assistance.
+It does not replace the single-scenario pipeline, cross-scenario aggregator, or
+meta_skill_pack. It writes a plan-only execution package.
+
+At the end, return JSON conforming to
+`schemas/porting_execution_assistant.schema.json`.
+
+## Environment
+
+The runner exports:
+
+- `PORTING_EXECUTION_MODE`: P0 must be `plan-only`.
+- `PORTING_EXECUTION_PATCH_APPLY_MODE`: P0 is `none` or `plan-only`.
+- `PORTING_EXECUTION_OUT_DIR`: default `porting_knowledge_output/`.
+- `PORTING_EXECUTION_ARTIFACT_DIR`: default
+  `porting_knowledge_output/08_execution_assistant/`.
+- `PORTING_EXECUTION_SOURCE_OUTPUT`: existing single-scenario pipeline output.
+- `PORTING_EXECUTION_META_OUTPUT`: optional cross-scenario meta output.
+- `PORTING_EXECUTION_TARGET_PROFILE_SEED`: optional user-provided target profile
+  seed YAML.
+- `PORTING_EXECUTION_BUILD_LOG`: optional existing build log for triage.
+
+If an environment variable is unset, use the default path above or write
+`unknown`; do not invent missing facts.
+
+## Required Output Files
+
+Create all files under `PORTING_EXECUTION_ARTIFACT_DIR`:
+
+- `target_profile.yaml`
+- `source_tree_survey.yaml`
+- `source_tree_survey.md`
+- `gap_analysis.yaml`
+- `gap_analysis.md`
+- `porting_plan.yaml`
+- `porting_plan.md`
+- `patch_plan.yaml`
+- `patch_plan.md`
+- `build_acceptance.yaml`
+- `build_acceptance.md`
+- `external_dependency_followup.yaml`
+- `external_dependency_followup.md`
+- `uncertainty_ledger.yaml`
+- `uncertainty_ledger.md`
+
+Use YAML for machine-readable artifacts and Markdown for the human execution
+brief. Each YAML file must include:
+
+```yaml
+schema_version: 1
+artifact_type: <matching artifact name>
+generated_at: <ISO-like local timestamp>
+```
+
+Each recommendation/action/command/patch/gap/requirement record must include
+non-empty `evidence_refs`. Use only these evidence reference prefixes:
+
+- `user_requirement:`
+- `source_tree:`
+- `source_file:`
+- `task_profile:`
+- `operator_context:`
+- `raw_record:`
+- `dirty_record:`
+- `binary_asset:`
+- `case:`
+- `meta_method:`
+- `method_fragment:`
+- `pattern:`
+- `log:`
+- `build_log:`
+- `workspace:`
+- `unknown:`
+
+Use `unknown:` only for `uncertainty_ledger` items. Other artifacts must cite at
+least one user requirement, source-tree/source-file record, meta method, case, or
+log evidence reference.
+
+## Allowed Inputs
+
+Prefer compact, already-produced pipeline outputs:
+
+- `00_config/task_profile.yaml`
+- `00_config/operator_context.*`
+- `01_raw_records/repo_list.csv`
+- `01_raw_records/repo_status.raw.txt`
+- `01_raw_records/file_change_records.jsonl`
+- `01_raw_records/dirty_file_records.jsonl`
+- `01_raw_records/binary_asset_records.csv`
+- `02_statistics/statistics_summary.json`
+- `03_semantic_analysis/risk_items.md`
+- `03_semantic_analysis/workaround_items.md`
+- `04_knowledge_base/cases/*.md`
+- `04_knowledge_base/binary_asset_index.md`
+- `04_knowledge_base/binary_risk_report.md`
+- `05_skill_output/generated_skill.md`
+- `06_audit/final_audit_report.md`
+- `07_meta_inputs/*.yaml`
+- `07_meta_inputs/*.jsonl`
+
+If `PORTING_EXECUTION_META_OUTPUT` exists, read compact methodology and selector
+inputs only:
+
+- `02_patterns/meta_methods.jsonl`
+- `02_patterns/conditional_methods.jsonl`
+- `02_patterns/method_fragments.jsonl`
+- `02_patterns/anti_patterns.jsonl`
+- `03_methodology/*.md`
+- `04_global_kb/problem_taxonomy.yaml`
+- `04_global_kb/risk_taxonomy.yaml`
+- `meta_skill_pack/references/conditional_method_index.md`
+- `meta_skill_pack/examples/case_selector_examples.yaml`
+- `meta_report.md`
+
+Survey source tree paths needed to identify existing OpenHarmony build entry
+points and target-product structure. Prefer bounded reads such as `find`,
+`rg --files`, and small file excerpts. Do not recursively dump SDK/prebuilt
+trees.
+
+## Hard Rules
+
+1. P0 is plan-only. Do not edit source files, do not create patch files, do not
+   apply patches, and do not fetch external assets.
+2. High-risk patches, vendor BSP/firmware/bootloader/prebuilt/closed-driver work,
+   signing/packaging tools, and external dependencies must not be automatically
+   generated. Put them in `external_dependency_followup` and/or
+   `uncertainty_ledger`.
+3. `build_acceptance` covers only the target-product compile flow using existing
+   OpenHarmony build scripts already present in the workspace. It must not
+   install host packages, bootstrap toolchains, download prebuilts, or perform
+   source checkout/sync.
+4. Never infer boot, runtime, device smoke, CTS, app, driver runtime, or test
+   pass from a build pass. Keep those statuses `unknown` unless explicit logs
+   support them, and do not write `boot passed`, `runtime passed`, or
+   `test passed`.
+5. Preserve evidence-bound behavior. Every suggestion must trace to user
+   requirement, source-tree evidence, meta method, case, or log. If that trace is
+   absent, put the item in `uncertainty_ledger` instead of presenting it as a
+   confirmed action.
+6. For every requirement or modification approach you cannot confirm, write an
+   `uncertainty_ledger` item with the missing evidence, risk, and next question
+   or next source/log check.
+7. Treat dirty workspace and binary/prebuilt records as separate evidence
+   classes. Do not present a binary import as a source fix.
+8. Do not promote single-scenario cases into universal methods. Use meta methods
+   and conditional methods only within their declared applicability.
+
+## Artifact Contracts
+
+### target_profile.yaml
+
+Include:
+
+```yaml
+artifact_type: target_profile
+execution_mode: plan-only
+target:
+  product: unknown
+  board: unknown
+  soc: unknown
+  vendor: unknown
+  architecture: unknown
+  openharmony_version: unknown
+source_context:
+  workspace_root: <path or unknown>
+  source_output: <path or unknown>
+  meta_output: <path or unknown>
+requirements:
+  - requirement_id: REQ-001
+    description: <user or profile requirement>
+    source: user_requirement|task_profile|operator_context|unknown
+    evidence_refs: [...]
+```
+
+### source_tree_survey.yaml
+
+Use:
+
+```yaml
+artifact_type: source_tree_survey
+items:
+  - survey_id: SURVEY-001
+    topic: build_entrypoint|product_config|device_board|kernel|vendor_blob|signing_packaging|other
+    status: found|missing|ambiguous|unknown
+    paths: []
+    observation: <bounded observation>
+    evidence_refs: [...]
+```
+
+### gap_analysis.yaml
+
+Use:
+
+```yaml
+artifact_type: gap_analysis
+gaps:
+  - gap_id: GAP-001
+    area: product_config|board_config|kernel|hdf_driver|subsystem|binary_prebuilt|bootloader|firmware|packaging|build|unknown
+    severity: blocker|high|medium|low|unknown
+    description: <gap>
+    owner_hint: source_patch|vendor_or_third_party|user_decision|unknown
+    evidence_refs: [...]
+    uncertainty_refs: []
+```
+
+### porting_plan.yaml
+
+Use:
+
+```yaml
+artifact_type: porting_plan
+phases:
+  - phase_id: PHASE-001
+    title: <phase>
+    objective: <objective>
+    prerequisites: []
+    tasks:
+      - task_id: TASK-001
+        description: <action>
+        output: <expected artifact>
+        evidence_refs: [...]
+    acceptance: []
+    evidence_refs: [...]
+case_selector:
+  selected_cases: []
+  selected_meta_methods: []
+```
+
+### patch_plan.yaml
+
+Use:
+
+```yaml
+artifact_type: patch_plan
+default_apply_mode: plan-only
+patches:
+  - patch_id: PATCH-001
+    title: <candidate change>
+    target_paths: []
+    risk_level: low|medium|high|critical|external_dependency|unknown
+    apply_mode: plan-only|manual_review|none
+    auto_generate: false
+    rationale: <why this is only a plan>
+    evidence_refs: [...]
+    blocked_by_external_dependency: false
+```
+
+Do not include diff hunks or patch contents.
+
+### build_acceptance.yaml
+
+Use:
+
+```yaml
+artifact_type: build_acceptance
+scope: build_only
+environment_setup_policy: forbidden
+status_policy:
+  build: planned|not_run|log_triaged|unknown
+  boot: unknown
+  runtime: unknown
+  tests: unknown
+commands:
+  - command_id: BUILD-001
+    command: <existing OpenHarmony build script command or unknown>
+    cwd: <workspace-relative path>
+    purpose: <compile-flow purpose>
+    uses_existing_script: true
+    environment_setup: false
+    evidence_refs: [...]
+log_triage:
+  build_log: <path or unknown>
+  findings: []
+```
+
+If no existing build script can be confirmed, set `command: unknown` and create
+an uncertainty item. Do not write package-install or source-sync commands.
+
+### external_dependency_followup.yaml
+
+Must cover all categories even when status is `unknown` or `not_required`:
+
+```yaml
+artifact_type: external_dependency_followup
+coverage:
+  - category: bsp
+    status: required|not_required|unknown
+  - category: bootloader
+    status: required|not_required|unknown
+  - category: firmware
+    status: required|not_required|unknown
+  - category: prebuilt
+    status: required|not_required|unknown
+  - category: closed_driver
+    status: required|not_required|unknown
+  - category: signing_packaging_tools
+    status: required|not_required|unknown
+items:
+  - dependency_id: EXT-001
+    category: bsp|bootloader|firmware|prebuilt|closed_driver|signing_packaging_tools|other_third_party
+    provider_hint: <SoC vendor, board vendor, third party, user, unknown>
+    requested_artifact: <artifact>
+    why_needed: <reason>
+    required_metadata: [version, source, license, sha256, architecture, redistribution_terms]
+    evidence_refs: [...]
+```
+
+### uncertainty_ledger.yaml
+
+Use:
+
+```yaml
+artifact_type: uncertainty_ledger
+items:
+  - uncertainty_id: UNC-001
+    topic: <requirement/change/dependency/build/log/runtime>
+    unknown: <what cannot be confirmed>
+    impact: blocker|high|medium|low|unknown
+    next_action: <question, source check, log check, vendor follow-up>
+    evidence_refs: [...]
+```
+
+## P1/P2 Notes
+
+P1 features may be represented as plan-only fields only:
+
+- build log triage from `PORTING_EXECUTION_BUILD_LOG`;
+- case selector references from meta output;
+- patch apply-mode labels in `patch_plan`, with no patch generation in P0.
+
+P2 execution replay and runtime-log validation must remain future or unknown
+unless explicit replay/runtime logs are provided. Do not claim runtime success.
+
+## Final JSON
+
+Return only JSON with:
+
+```json
+{
+  "stage": "10_porting_execution_assistant",
+  "status": "passed",
+  "summary": "plan-only execution assistant artifacts generated",
+  "execution_mode": "plan-only",
+  "patch_apply_mode": "none",
+  "artifact_root": "porting_knowledge_output/08_execution_assistant",
+  "input_files_read": [],
+  "output_files_written": [],
+  "blocking_issues": [],
+  "non_blocking_issues": [],
+  "next_stage_inputs": [],
+  "patch_plan_item_count": 0,
+  "external_dependency_followup_count": 0,
+  "uncertainty_count": 0
+}
+```
