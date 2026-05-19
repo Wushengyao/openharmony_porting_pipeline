@@ -64,5 +64,6 @@ codex exec \
   --output-schema "${SCHEMA}" \
   - < "${PROMPT}" > "${LOG}" 2>&1
 
+python3 "${SCRIPT_DIR}/normalize_meta_output_contract.py" --out "${OUT_DIR}"
 python3 "${SCRIPT_DIR}/validate_meta_output.py" --out "${OUT_DIR}"
 echo "Cross-scenario aggregation and LLM refinement finished. Output: ${OUT_DIR}"
