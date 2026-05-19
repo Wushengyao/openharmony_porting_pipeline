@@ -128,5 +128,6 @@ openharmony_porting_meta_output/meta_skill_pack/
 
 The validation transcript is retained as `_validate_meta_output.log` in the output directory.
 LLM refinement status is always retained as `_llm_refine_result.json`, `_llm_refine.ndjson`, and `_codex_logs/09_cross_scenario_refine.*`; deterministic runs write an explicit skip marker.
+During `--llm-refine`, the runner protects `cross_scenario_result.json` machine counts and restores deterministic output if the Codex refine process fails.
 
 The validator requires release-grade runbook sections and expanded Skill contracts, including applicability, non-applicability, inputs, outputs, workflow, evidence rules, failure handling, quality gates, examples, and anti-examples.

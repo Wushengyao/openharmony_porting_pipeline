@@ -81,6 +81,7 @@ Update or create:
 14. Installable skills must be written as `SKILL.md` files with frontmatter, input/output contract, case selector, method references, installed use, tool commands, failure handling, quality gates, and minimum test commands.
 15. Methodology runbooks must include applicability, inputs, outputs, workflow, evidence requirements, case selector, failure handling, quality gates, example, and anti-example sections.
 16. Retain LLM refinement status files even for deterministic-only runs: `_llm_refine_result.json`, `_llm_refine.ndjson`, and `_codex_logs/09_cross_scenario_refine.*`.
+17. Do not edit `cross_scenario_result.json`, `_llm_refine_result.json`, `_llm_refine.ndjson`, or `_validate_meta_output.log` directly; the runner owns those status, log, and count files.
 
 ## Validator Contract Terms
 
@@ -93,6 +94,7 @@ The final Markdown is validated by `tools/validate_meta_output.py`. Preserve the
 - Preserve `global_method_fragment_id` values when referencing method fragments; local `method_fragment_id` values are not globally unique across scenarios.
 - Keep evidence traceability compact: refer to `evidence_ref` values rather than pasting full evidence blobs into prose.
 - Write explicit `meta_method_to_case` and `meta_method_to_pattern` rows into `04_global_kb/evidence_trace_index.jsonl`.
+- Preserve `cross_scenario_result.json` machine counts exactly; do not replace it with a stage-result JSON object.
 - `meta_skill_pack/*/SKILL.md` files must keep YAML frontmatter with `name` and `description`.
 - Do not replace `universal_by_design` / `universal_from_evidence` with a bare `universal` label.
 - `02_patterns/conditional_patterns.md` must contain the exact heading `Cross-Scenario Conditional Methods` and the term `conditional_from_evidence`.

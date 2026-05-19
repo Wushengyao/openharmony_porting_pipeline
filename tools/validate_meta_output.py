@@ -217,6 +217,14 @@ def main() -> None:
         fail("cases.jsonl row count does not match cross_scenario_result.json case_count")
     if len(patterns) != int(result.get("pattern_candidate_count") or -1):
         fail("pattern_candidates.jsonl row count does not match cross_scenario_result.json pattern_candidate_count")
+    if len(fragments) != int(result.get("method_fragment_count") or -1):
+        fail("method_fragments.jsonl row count does not match cross_scenario_result.json method_fragment_count")
+    if len(anti_patterns) != int(result.get("anti_pattern_count") or -1):
+        fail("anti_patterns.jsonl row count does not match cross_scenario_result.json anti_pattern_count")
+    if len(meta_methods) != int(result.get("meta_method_count") or -1):
+        fail("meta_methods.jsonl row count does not match cross_scenario_result.json meta_method_count")
+    if len(conditional_methods) != int(result.get("conditional_method_count") or -1):
+        fail("conditional_methods.jsonl row count does not match cross_scenario_result.json conditional_method_count")
 
     case_ids: set[str] = set()
     for case in cases:

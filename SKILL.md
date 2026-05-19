@@ -64,6 +64,7 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
 - Keep case `scenario_type` values within the registry labels for that `scenario_id`; use `scenario_shape` for synthesized labels.
 - Keep `evidence_type` / `evidence_level` separate from `evidence_strength`.
 - Retain LLM refinement status files even when deterministic aggregation is used without `--llm-refine`.
+- During `--llm-refine`, protect `cross_scenario_result.json` machine counts and restore deterministic output if Codex refinement fails.
 - Use `porting_knowledge_output/` as the default output root unless the user specifies another directory.
 - Prefer the repository scripts over hand-written ad hoc extraction or validation.
 

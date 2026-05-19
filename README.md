@@ -91,6 +91,8 @@ Every cross-scenario aggregation retains LLM refinement status files. Determinis
 runs write `_llm_refine_result.json`, `_llm_refine.ndjson`, and a
 `_codex_logs/09_cross_scenario_refine.skipped.json` marker; `--llm-refine`
 overwrites those with the Codex refinement result and NDJSON log when available.
+The runner preserves `cross_scenario_result.json` machine counts across LLM
+refinement and restores deterministic output if the Codex refine process fails.
 
 See `docs/CROSS_SCENARIO_USAGE.md` for a compact usage guide.
 
