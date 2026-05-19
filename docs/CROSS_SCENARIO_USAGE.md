@@ -55,6 +55,15 @@ bash tools/run_cross_scenario_aggregator.sh \
   --out openharmony_porting_meta_output
 ```
 
+For shareable packages that should not expose absolute local paths:
+
+```bash
+bash tools/run_cross_scenario_aggregator.sh \
+  --input-root scenario_outputs \
+  --out openharmony_porting_meta_output \
+  --redact-local-paths
+```
+
 ## 4. Optional LLM Refinement
 
 ```bash
@@ -67,3 +76,9 @@ bash tools/run_cross_scenario_aggregator.sh \
 ## 5. Key Rule
 
 Single-scenario outputs may produce `universal_candidate`, but formal `universal` methods require at least three distinct scenarios and successful validation.
+
+## 6. Traceability Notes
+
+The aggregated `02_patterns/method_fragments.jsonl` includes `global_method_fragment_id` because single-scenario exporters may reuse local IDs such as `MF-CASE-001`.
+
+`04_global_kb/evidence_trace_index.jsonl` is intentionally slim: it uses `trace_id` and `evidence_ref` links into `04_global_kb/evidence_index.jsonl` instead of embedding full evidence in every trace row.

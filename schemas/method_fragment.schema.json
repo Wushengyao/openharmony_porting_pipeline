@@ -17,6 +17,7 @@
   "properties": {
     "schema_version": { "type": "integer", "const": 1 },
     "method_fragment_id": { "type": "string" },
+    "global_method_fragment_id": { "type": "string" },
     "scenario_id": { "type": "string" },
     "porting_phase": { "type": "string" },
     "statement": { "type": "string" },

@@ -75,6 +75,8 @@ The final Markdown is validated by `tools/validate_meta_output.py`. Preserve the
 - `02_patterns/anti_patterns.md` must contain the exact terms `dirty`, `binary`, `force-sync`, `.gitattributes`, and `RISC-V`.
 - `meta_report.md` must contain the exact reuse class terms `universal`, `universal_candidate`, `conditional`, `scenario_specific`, `risk_only`, and `anti_pattern`.
 - If the scenario count is less than 3, `02_patterns/universal_methods.md` must contain the exact heading or sentence `No Formal Universal Methods Promoted`.
+- Preserve `global_method_fragment_id` values when referencing method fragments; local `method_fragment_id` values are not globally unique across scenarios.
+- Keep evidence traceability compact: refer to `evidence_ref` values rather than pasting full evidence blobs into prose.
 
 These terms are contract markers, not optional wording. Do not replace them with synonyms such as "RISC-V Primary", "risk-only", or "none promoted".
 

@@ -98,6 +98,16 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def max_jsonl_line_length(path: Path) -> int:
+    require_file(path)
+    max_len = 0
+    with path.open(encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            if line.strip():
+                max_len = max(max_len, len(line.rstrip("\n")))
+    return max_len
+
+
 def require_terms(path: Path, terms: list[str]) -> None:
     text = path.read_text(encoding="utf-8", errors="ignore").lower()
     missing = [term for term in terms if term.lower() not in text]
@@ -150,6 +160,11 @@ def main() -> None:
     if scenario_count < 1:
         fail("scenario registry must contain at least one scenario")
     scenario_ids = {str(item.get("scenario_id")) for item in scenarios}
+    for item in scenarios:
+        scenario_id = str(item.get("scenario_id") or "")
+        for key in ["source_meta_dir_label", "source_meta_dir_relative", "source_output_label", "source_output_dir_relative"]:
+            if not str(item.get(key) or "").strip():
+                fail(f"scenario {scenario_id} missing registry portability field {key}")
 
     if len(cases) != int(result.get("case_count") or -1):
         fail("cases.jsonl row count does not match cross_scenario_result.json case_count")
@@ -194,10 +209,17 @@ def main() -> None:
             if case_id not in case_ids:
                 fail(f"pattern {pid} references unknown source_case_id {case_id}")
 
+    global_fragment_ids: set[str] = set()
     for fragment in fragments:
         fid = str(fragment.get("method_fragment_id") or "")
         if not fid:
             fail("method fragment missing method_fragment_id")
+        global_fid = str(fragment.get("global_method_fragment_id") or "")
+        if not global_fid:
+            fail(f"method fragment {fid} missing global_method_fragment_id")
+        if global_fid in global_fragment_ids:
+            fail(f"duplicate global_method_fragment_id: {global_fid}")
+        global_fragment_ids.add(global_fid)
         scenario_id = str(fragment.get("scenario_id") or "")
         if scenario_id not in scenario_ids:
             fail(f"method fragment {fid} references unknown scenario_id {scenario_id}")
@@ -221,12 +243,28 @@ def main() -> None:
             fail(f"missing required anti-pattern: {required}")
 
     trace_pattern_refs = set()
+    trace_ids: set[str] = set()
     for trace in evidence_traces:
+        trace_id = str(trace.get("trace_id") or "")
+        if not trace_id:
+            fail("evidence_trace_index row missing trace_id")
+        if trace_id in trace_ids:
+            fail(f"duplicate evidence trace_id: {trace_id}")
+        trace_ids.add(trace_id)
+        if "evidence" in trace:
+            fail(f"evidence_trace_index row {trace_id} embeds full evidence; use evidence_ref and 04_global_kb/evidence_index.jsonl instead")
         if trace.get("pattern_id"):
             trace_pattern_refs.add(str(trace.get("pattern_id")))
+        if trace.get("trace_type") in {"pattern_to_case", "method_to_case"} and not trace.get("evidence_ref"):
+            fail(f"evidence_trace_index row {trace_id} missing evidence_ref")
+        if trace.get("trace_type") in {"method_to_pattern", "method_to_case"} and not trace.get("global_method_fragment_id"):
+            fail(f"evidence_trace_index row {trace_id} missing global_method_fragment_id")
     for pattern in patterns:
         if pattern.get("source_case_ids") and str(pattern.get("pattern_id")) not in trace_pattern_refs:
             fail(f"pattern {pattern.get('pattern_id')} has source cases but no evidence_trace_index entry")
+    trace_max_len = max_jsonl_line_length(out / "04_global_kb/evidence_trace_index.jsonl")
+    if trace_max_len > 4096:
+        fail(f"evidence_trace_index.jsonl lines are too long ({trace_max_len} bytes max); use evidence_ref instead of embedded evidence")
 
     require_terms(
         out / "02_patterns/conditional_patterns.md",

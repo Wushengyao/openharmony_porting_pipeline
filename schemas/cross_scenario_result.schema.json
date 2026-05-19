@@ -9,8 +9,8 @@
     "case_count",
     "pattern_candidate_count",
     "anti_pattern_count",
-    "input_meta_dirs",
-    "output_dir"
+    "input_meta_labels",
+    "output_label"
   ],
   "properties": {
     "schema_version": { "type": "integer", "const": 1 },
@@ -20,6 +20,9 @@
     "case_count": { "type": "integer" },
     "pattern_candidate_count": { "type": "integer" },
     "anti_pattern_count": { "type": "integer" },
+    "method_fragment_count": { "type": "integer" },
+    "input_meta_labels": { "type": "array", "items": { "type": "string" } },
+    "output_label": { "type": "string" },
     "input_meta_dirs": { "type": "array", "items": { "type": "string" } },
     "output_dir": { "type": "string" }
   },

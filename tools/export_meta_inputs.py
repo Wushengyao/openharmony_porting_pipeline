@@ -223,6 +223,64 @@ def normalize_arch(value: Any) -> str:
     return aliases.get(text.lower(), text)
 
 
+def text_blob(*values: Any) -> str:
+    parts: list[str] = []
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, (dict, list, tuple)):
+            parts.append(json.dumps(value, ensure_ascii=False, sort_keys=True))
+        else:
+            parts.append(str(value))
+    return "\n".join(parts).lower()
+
+
+def infer_kernel(value: Any, *context: Any) -> str:
+    explicit = str(value or "").strip()
+    if explicit and explicit.lower() != "unknown":
+        return explicit
+    text = text_blob(*context)
+    kernels: list[str] = []
+    for pattern, label in [
+        (r"linux[-_ ]?5[._-]?10", "linux-5.10"),
+        (r"kernel[_/-]?5[._-]?10", "linux-5.10"),
+        (r"linux[-_ ]?6[._-]?6", "linux-6.6"),
+        (r"kernel[_/-]?6[._-]?6", "linux-6.6"),
+    ]:
+        if re.search(pattern, text) and label not in kernels:
+            kernels.append(label)
+    if len(kernels) == 1:
+        return kernels[0]
+    if len(kernels) > 1:
+        return "mixed: " + ", ".join(kernels)
+    if "linux" in text:
+        return "linux"
+    return "unknown"
+
+
+def infer_system_type(value: Any, *context: Any) -> str:
+    explicit = str(value or "").strip()
+    if explicit and explicit.lower() != "unknown":
+        return explicit
+    text = text_blob(*context)
+    if re.search(r"\briscv[_-]?rich\b|\brich\b", text):
+        return "standard_or_rich"
+    if re.search(r"\bstandard\b", text):
+        return "standard"
+    if re.search(r"(^|[^a-z0-9])small([^a-z0-9]|$)|_small_defconfig|small_defconfig", text):
+        return "small"
+    if re.search(r"(^|[^a-z0-9])mini([^a-z0-9]|$)", text):
+        return "mini"
+    return "unknown"
+
+
+def relative_to_cwd(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(Path.cwd().resolve()))
+    except Exception:
+        return str(path)
+
+
 def statistics_from_outputs(out: Path, stats: dict[str, Any]) -> dict[str, Any]:
     keys = [
         "repo_count",
@@ -335,10 +393,14 @@ def build_scenario_card(out: Path, task_profile: dict[str, Any], stats: dict[str
     }
     scenario_id = generate_scenario_id(card_seed)
     quality = final_audit_quality(out)
+    kernel = infer_kernel(first_value(task_profile.get("kernel"), task_profile.get("kernel_type")), task_profile)
+    system_type = infer_system_type(task_profile.get("system_type"), task_profile)
     card = {
         "schema_version": 1,
         "scenario_id": scenario_id,
         "source_output_dir": str(out),
+        "source_output_label": scenario_id,
+        "source_output_dir_relative": relative_to_cwd(out),
         "project_name": project_name,
         "openharmony_version": version,
         "scenario_type": scenario_type or ["unknown"],
@@ -348,8 +410,8 @@ def build_scenario_card(out: Path, task_profile: dict[str, Any], stats: dict[str
         "soc_vendor": str(first_value(task_profile.get("soc_vendor"), task_profile.get("vendor"))),
         "soc": str(first_value(task_profile.get("soc"), task_profile.get("chip"))),
         "board": str(first_value(task_profile.get("board"), task_profile.get("board_name"))),
-        "kernel": str(first_value(task_profile.get("kernel"), task_profile.get("kernel_type"))),
-        "system_type": str(first_value(task_profile.get("system_type"))),
+        "kernel": kernel,
+        "system_type": system_type,
         "primary_focus": focus,
         "statistics": statistics_from_outputs(out, stats),
         "validation_status": {

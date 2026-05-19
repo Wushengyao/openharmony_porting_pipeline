@@ -7,6 +7,7 @@ INPUT_ROOT=""
 OUT_DIR=""
 LLM_REFINE=0
 CODEX_MODEL_VALUE="${CODEX_MODEL:-}"
+REDACT_LOCAL_PATHS=0
 
 usage() {
   cat >&2 <<'EOF'
@@ -18,6 +19,7 @@ usage() {
   --input 可以指向 porting_knowledge_output 或其中的 07_meta_inputs。
   --input-root 会自动查找 */porting_knowledge_output/07_meta_inputs/scenario_card.yaml。
   --llm-refine 会在确定性聚合之后调用 Codex，基于 compact meta 输入精修方法论文本。
+  --redact-local-paths 会在 meta registry/result 中隐藏绝对本地路径，仅保留 label/relative 字段。
 EOF
 }
 
@@ -37,6 +39,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --llm-refine)
       LLM_REFINE=1
+      shift
+      ;;
+    --redact-local-paths)
+      REDACT_LOCAL_PATHS=1
       shift
       ;;
     --model)
@@ -76,6 +82,9 @@ for input in "${INPUTS[@]}"; do
 done
 if [[ -n "${INPUT_ROOT}" ]]; then
   ARGS+=(--input-root "${INPUT_ROOT}")
+fi
+if [[ "${REDACT_LOCAL_PATHS}" == "1" ]]; then
+  ARGS+=(--redact-local-paths)
 fi
 ARGS+=(--out "${OUT_DIR}")
 

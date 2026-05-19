@@ -100,6 +100,83 @@ def slugify(value: str) -> str:
     return re.sub(r"_+", "_", value).strip("_") or "unknown"
 
 
+def text_blob(*values: Any) -> str:
+    parts: list[str] = []
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, (dict, list, tuple)):
+            parts.append(json.dumps(value, ensure_ascii=False, sort_keys=True))
+        else:
+            parts.append(str(value))
+    return "\n".join(parts).lower()
+
+
+def safe_relative(path: Path, root: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(root.resolve()))
+    except Exception:
+        return path_label(path, str(path))
+
+
+def path_label(path: Path | str | None, fallback: str) -> str:
+    if not path:
+        return fallback
+    name = Path(str(path)).name
+    return name if name and name != "." else fallback
+
+
+def infer_kernel(card: dict[str, Any], cases: list[dict[str, Any]]) -> str:
+    explicit = str(card.get("kernel") or "").strip()
+    if explicit and explicit.lower() != "unknown":
+        return explicit
+    text = text_blob(card, cases)
+    kernels: list[str] = []
+    for pattern, label in [
+        (r"linux[-_ ]?5[._-]?10", "linux-5.10"),
+        (r"kernel[_/-]?5[._-]?10", "linux-5.10"),
+        (r"linux[-_ ]?6[._-]?6", "linux-6.6"),
+        (r"kernel[_/-]?6[._-]?6", "linux-6.6"),
+    ]:
+        if re.search(pattern, text) and label not in kernels:
+            kernels.append(label)
+    if len(kernels) == 1:
+        return kernels[0]
+    if len(kernels) > 1:
+        return "mixed: " + ", ".join(kernels)
+    if "linux" in text:
+        return "linux"
+    return "unknown"
+
+
+def infer_system_type(card: dict[str, Any], cases: list[dict[str, Any]]) -> str:
+    explicit = str(card.get("system_type") or "").strip()
+    if explicit and explicit.lower() != "unknown":
+        return explicit
+    text = text_blob(card, cases)
+    if re.search(r"\briscv[_-]?rich\b|\brich\b", text):
+        return "standard_or_rich"
+    if re.search(r"\bstandard\b", text):
+        return "standard"
+    if re.search(r"(^|[^a-z0-9])small([^a-z0-9]|$)|_small_defconfig|small_defconfig", text):
+        return "small"
+    if re.search(r"(^|[^a-z0-9])mini([^a-z0-9]|$)", text):
+        return "mini"
+    return "unknown"
+
+
+def global_method_fragment_id(fragment: dict[str, Any]) -> str:
+    scenario_id = str(fragment.get("scenario_id") or "unknown")
+    method_id = str(fragment.get("method_fragment_id") or "MF-UNKNOWN")
+    return f"{scenario_id}::{method_id}"
+
+
+def evidence_ref_for_case(case: dict[str, Any] | None, case_id: Any) -> str:
+    if case:
+        return str(case.get("evidence_ref") or f"case:{case.get('scenario_id')}::{case.get('case_id')}")
+    return f"case:unknown::{case_id}"
+
+
 def reset_dir(path: Path) -> None:
     if path.exists():
         shutil.rmtree(path)
@@ -181,11 +258,17 @@ def load_scenarios(meta_dirs: list[Path]) -> list[dict[str, Any]]:
     return scenarios
 
 
-def scenario_summary(card: dict[str, Any], meta_dir: Path) -> dict[str, Any]:
-    return {
+def scenario_summary(item: dict[str, Any], workspace_root: Path, redact_local_paths: bool = False) -> dict[str, Any]:
+    card = item["card"]
+    meta_dir = item["meta_dir"]
+    source_output_dir = card.get("source_output_dir")
+    source_output_label = str(card.get("source_output_label") or card.get("scenario_id") or path_label(source_output_dir, "unknown"))
+    summary = {
         "scenario_id": card.get("scenario_id"),
-        "source_meta_dir": str(meta_dir),
-        "source_output_dir": card.get("source_output_dir"),
+        "source_meta_dir_label": str(card.get("source_meta_dir_label") or f"{source_output_label}/07_meta_inputs"),
+        "source_meta_dir_relative": safe_relative(meta_dir, workspace_root),
+        "source_output_label": source_output_label,
+        "source_output_dir_relative": str(card.get("source_output_dir_relative") or safe_relative(Path(str(source_output_dir)), workspace_root) if source_output_dir else "unknown"),
         "project_name": card.get("project_name", "unknown"),
         "scenario_type": card.get("scenario_type", []),
         "runtime_arch": card.get("runtime_arch", "unknown"),
@@ -193,17 +276,24 @@ def scenario_summary(card: dict[str, Any], meta_dir: Path) -> dict[str, Any]:
         "soc_vendor": card.get("soc_vendor", "unknown"),
         "soc": card.get("soc", "unknown"),
         "board": card.get("board", "unknown"),
-        "kernel": card.get("kernel", "unknown"),
-        "system_type": card.get("system_type", "unknown"),
+        "kernel": infer_kernel(card, item["cases"]),
+        "system_type": infer_system_type(card, item["cases"]),
         "primary_focus": card.get("primary_focus", []),
         "validation_status": card.get("validation_status", {}),
         "statistics": card.get("statistics", {}),
         "quality": card.get("quality", {}),
     }
+    if not redact_local_paths:
+        summary["source_meta_dir"] = str(meta_dir)
+        summary["source_output_dir"] = source_output_dir
+    return {
+        key: value for key, value in summary.items() if value is not None
+    }
 
 
-def write_registry(out: Path, scenarios: list[dict[str, Any]]) -> None:
-    summaries = [scenario_summary(item["card"], item["meta_dir"]) for item in scenarios]
+def write_registry(out: Path, scenarios: list[dict[str, Any]], redact_local_paths: bool = False) -> None:
+    workspace_root = Path.cwd()
+    summaries = [scenario_summary(item, workspace_root, redact_local_paths) for item in scenarios]
     registry = {
         "schema_version": 1,
         "generated_at": now_iso(),
@@ -292,6 +382,15 @@ def dedupe_pattern_ids(patterns: list[dict[str, Any]], fragments: list[dict[str,
             changed = changed or mapped != pattern_id
         if changed:
             fragment["source_patterns"] = source_patterns
+
+
+def annotate_global_records(cases: list[dict[str, Any]], fragments: list[dict[str, Any]]) -> None:
+    for case in cases:
+        scenario_id = str(case.get("scenario_id") or "unknown")
+        case_id = str(case.get("case_id") or "CASE-UNKNOWN")
+        case.setdefault("evidence_ref", f"case:{scenario_id}::{case_id}")
+    for fragment in fragments:
+        fragment["global_method_fragment_id"] = global_method_fragment_id(fragment)
 
 
 def write_machine_readable_patterns(out: Path, patterns: list[dict[str, Any]], fragments: list[dict[str, Any]], anti_patterns: list[dict[str, Any]]) -> None:
@@ -520,6 +619,7 @@ def write_global_kb(out: Path, cases: list[dict[str, Any]], patterns: list[dict[
             {
                 "scenario_id": case.get("scenario_id"),
                 "case_id": case.get("case_id"),
+                "evidence_ref": case.get("evidence_ref"),
                 "source_case_path": case.get("source_case_path"),
                 "evidence": case.get("evidence", {}),
             }
@@ -528,25 +628,36 @@ def write_global_kb(out: Path, cases: list[dict[str, Any]], patterns: list[dict[
     traces = []
     cases_by_id = {case.get("case_id"): case for case in cases}
     patterns_by_id = {pattern.get("pattern_id"): pattern for pattern in patterns}
+    trace_seq = 0
+
+    def next_trace_id(prefix: str) -> str:
+        nonlocal trace_seq
+        trace_seq += 1
+        return f"TRACE-{prefix}-{trace_seq:05d}"
+
     for pattern in patterns:
         for case_id in pattern.get("source_case_ids") or []:
             case = cases_by_id.get(case_id)
             traces.append(
                 {
+                    "trace_id": next_trace_id("PATTERN-CASE"),
                     "trace_type": "pattern_to_case",
                     "pattern_id": pattern.get("pattern_id"),
                     "case_id": case_id,
                     "scenario_id": case.get("scenario_id") if case else pattern.get("scenario_id"),
-                    "evidence": case.get("evidence") if case else {},
+                    "evidence_ref": evidence_ref_for_case(case, case_id),
                 }
             )
     for fragment in fragments:
+        global_fragment_id = fragment.get("global_method_fragment_id") or global_method_fragment_id(fragment)
         for pattern_id in fragment.get("source_patterns") or []:
             pattern = patterns_by_id.get(pattern_id)
             traces.append(
                 {
+                    "trace_id": next_trace_id("METHOD-PATTERN"),
                     "trace_type": "method_to_pattern",
                     "method_fragment_id": fragment.get("method_fragment_id"),
+                    "global_method_fragment_id": global_fragment_id,
                     "pattern_id": pattern_id,
                     "scenario_id": fragment.get("scenario_id"),
                     "pattern_exists": bool(pattern),
@@ -556,12 +667,14 @@ def write_global_kb(out: Path, cases: list[dict[str, Any]], patterns: list[dict[
             case = cases_by_id.get(case_id)
             traces.append(
                 {
+                    "trace_id": next_trace_id("METHOD-CASE"),
                     "trace_type": "method_to_case",
                     "method_fragment_id": fragment.get("method_fragment_id"),
+                    "global_method_fragment_id": global_fragment_id,
                     "case_id": case_id,
                     "scenario_id": fragment.get("scenario_id"),
                     "case_exists": bool(case),
-                    "evidence": case.get("evidence") if case else {},
+                    "evidence_ref": evidence_ref_for_case(case, case_id),
                 }
             )
     write_jsonl(out / "04_global_kb/evidence_trace_index.jsonl", traces)
@@ -645,6 +758,7 @@ def main() -> None:
     parser.add_argument("--input", action="append", default=[], help="porting_knowledge_output or 07_meta_inputs path")
     parser.add_argument("--input-root", help="root containing */porting_knowledge_output/07_meta_inputs")
     parser.add_argument("--out", required=True, help="openharmony_porting_meta_output directory")
+    parser.add_argument("--redact-local-paths", action="store_true", help="omit absolute local source paths from scenario_registry.yaml and result JSON")
     args = parser.parse_args()
 
     meta_dirs = find_inputs(args.input, args.input_root)
@@ -669,8 +783,9 @@ def main() -> None:
         if case.get("reuse_level") == "universal":
             case["reuse_level"] = "universal_candidate"
     dedupe_pattern_ids(patterns, fragments)
+    annotate_global_records(cases, fragments)
 
-    write_registry(out, scenarios)
+    write_registry(out, scenarios, redact_local_paths=args.redact_local_paths)
     write_case_indexes(out, cases)
     write_machine_readable_patterns(out, patterns, fragments, anti_patterns)
     write_universal_methods(out, scenarios, fragments)
@@ -692,9 +807,12 @@ def main() -> None:
         "pattern_candidate_count": len(patterns),
         "anti_pattern_count": len(anti_patterns),
         "method_fragment_count": len(fragments),
-        "input_meta_dirs": [str(path) for path in meta_dirs],
-        "output_dir": str(out),
+        "input_meta_labels": [scenario_summary(scenario, Path.cwd(), redact_local_paths=True)["source_meta_dir_label"] for scenario in scenarios],
+        "output_label": out.name,
     }
+    if not args.redact_local_paths:
+        result["input_meta_dirs"] = [str(path) for path in meta_dirs]
+        result["output_dir"] = str(out)
     (out / "cross_scenario_result.json").write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(json.dumps(result, ensure_ascii=False))
 

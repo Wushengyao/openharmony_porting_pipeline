@@ -69,6 +69,15 @@ bash tools/run_cross_scenario_aggregator.sh \
   --out openharmony_porting_meta_output
 ```
 
+Hide absolute local source paths in shareable meta output:
+
+```bash
+bash tools/run_cross_scenario_aggregator.sh \
+  --input-root scenario_outputs \
+  --out openharmony_porting_meta_output \
+  --redact-local-paths
+```
+
 Optional LLM refinement after deterministic aggregation:
 
 ```bash
@@ -114,6 +123,14 @@ porting_knowledge_output/07_meta_inputs/
 ```
 
 The cross-scenario aggregator reads only these compact normalized inputs. If an input lacks `07_meta_inputs`, run Stage 08 first; the aggregator intentionally does not parse old Markdown-only outputs.
+
+Cross-scenario aggregation writes globally unique method fragment identifiers and slim evidence traces:
+
+```text
+02_patterns/method_fragments.jsonl        # includes global_method_fragment_id
+04_global_kb/evidence_index.jsonl         # full evidence by evidence_ref
+04_global_kb/evidence_trace_index.jsonl   # trace_id + evidence_ref links, no embedded evidence blobs
+```
 
 ## Operating Modes
 
