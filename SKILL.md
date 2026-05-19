@@ -58,6 +58,7 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
 - Preserve unknowns instead of inventing build, boot, runtime, provenance, or validation status.
 - Do not promote force-sync SDK commits, initial imports, `.gitattributes`-only commits, dirty workspace files, or binary imports into reusable source-fix cases.
 - In cross-scenario output, distinguish `universal_by_design` pipeline guardrails from `universal_from_evidence` case/pattern-derived methods; do not use a bare `universal` label.
+- Generate and validate cross-scenario `conditional` methods in `02_patterns/conditional_methods.jsonl` with `derivation=conditional_from_evidence` when evidence clusters span multiple scenarios.
 - Keep case `scenario_type` values within the registry labels for that `scenario_id`; use `scenario_shape` for synthesized labels.
 - Keep `evidence_type` / `evidence_level` separate from `evidence_strength`.
 - Use `porting_knowledge_output/` as the default output root unless the user specifies another directory.

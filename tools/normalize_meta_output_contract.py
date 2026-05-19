@@ -69,8 +69,8 @@ def normalize(out: Path) -> list[str]:
     if conditional.exists() and ensure_section(
         conditional,
         "Validator Terminology Guard",
-        "This output preserves the required architecture terms: `ARM-primary`, `RISC-V-primary`, and `heterogeneous_aux_core`.",
-        ["ARM-primary", "RISC-V-primary", "heterogeneous_aux_core"],
+        "This output preserves the required architecture and conditional method terms: `ARM-primary`, `RISC-V-primary`, `heterogeneous_aux_core`, `Cross-Scenario Conditional Methods`, and `conditional_from_evidence`.",
+        ["ARM-primary", "RISC-V-primary", "heterogeneous_aux_core", "Cross-Scenario Conditional Methods", "conditional_from_evidence"],
     ):
         changed.append(str(conditional))
 

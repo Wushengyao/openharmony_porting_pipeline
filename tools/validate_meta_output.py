@@ -25,6 +25,7 @@ REQUIRED_FILES = [
     "02_patterns/pattern_candidates.jsonl",
     "02_patterns/method_fragments.jsonl",
     "02_patterns/meta_methods.jsonl",
+    "02_patterns/conditional_methods.jsonl",
     "02_patterns/anti_patterns.jsonl",
     "02_patterns/universal_methods.md",
     "02_patterns/conditional_patterns.md",
@@ -187,6 +188,7 @@ def main() -> None:
     fragments = read_jsonl(out / "02_patterns/method_fragments.jsonl")
     meta_methods = read_jsonl(out / "02_patterns/meta_methods.jsonl")
     anti_patterns = read_jsonl(out / "02_patterns/anti_patterns.jsonl")
+    conditional_methods = read_jsonl(out / "02_patterns/conditional_methods.jsonl")
     evidence_traces = read_jsonl(out / "04_global_kb/evidence_trace_index.jsonl")
     scenario_count = int(registry.get("scenario_count") or 0)
     if scenario_count != int(result.get("scenario_count") or -1):
@@ -288,6 +290,9 @@ def main() -> None:
                 fail(f"method fragment {fid} references unknown source_pattern {pattern_id}")
 
     meta_method_ids: set[str] = set()
+    conditional_method_ids = {str(method.get("method_id") or "") for method in conditional_methods}
+    if len(conditional_methods) < 5:
+        fail(f"conditional_methods.jsonl must contain at least 5 cross-scenario conditional methods; found {len(conditional_methods)}")
     for method in meta_methods:
         method_id = str(method.get("method_id") or "")
         if not method_id:
@@ -329,6 +334,23 @@ def main() -> None:
                     method_vendors.add(vendor)
             if len(method_types) < 2 and len(method_vendors) < 2:
                 fail(f"meta method {method_id} universal_from_evidence requires at least 2 scenario_type values or 2 SoC/vendor values")
+        if promotion_level == "conditional":
+            if method_id not in conditional_method_ids:
+                fail(f"conditional meta method {method_id} missing from conditional_methods.jsonl")
+            if str(method.get("derivation") or "") != "conditional_from_evidence":
+                fail(f"conditional meta method {method_id} must set derivation=conditional_from_evidence")
+            if len(set(method_scenario_ids)) < 2:
+                fail(f"conditional meta method {method_id} requires at least 2 scenario_id values")
+            if len(supporting_cases) < 2:
+                fail(f"conditional meta method {method_id} requires at least 2 supporting cases")
+            if not listify(method.get("applicability")) or not listify(method.get("non_applicability")):
+                fail(f"conditional meta method {method_id} must include applicability and non_applicability")
+            if not listify(method.get("quality_gates")):
+                fail(f"conditional meta method {method_id} must include quality_gates")
+    for method in conditional_methods:
+        method_id = str(method.get("method_id") or "")
+        if method_id not in meta_method_ids:
+            fail(f"conditional method {method_id} missing from meta_methods.jsonl")
 
     anti_ids = {str(item.get("anti_pattern_id") or "") for item in anti_patterns}
     for required in [
@@ -368,7 +390,7 @@ def main() -> None:
 
     require_terms(
         out / "02_patterns/conditional_patterns.md",
-        ["ARM-primary", "RISC-V-primary", "heterogeneous_aux_core"],
+        ["ARM-primary", "RISC-V-primary", "heterogeneous_aux_core", "Cross-Scenario Conditional Methods", "conditional_from_evidence"],
     )
     require_terms(
         out / "02_patterns/anti_patterns.md",
@@ -386,11 +408,24 @@ def main() -> None:
     ]:
         path = out / rel
         text = path.read_text(encoding="utf-8", errors="ignore")
+        if path.stat().st_size < 3000:
+            fail(f"{path} is too short for release-grade Skill draft; expected at least 3000 bytes")
         if not text.startswith("---\n"):
             fail(f"{path} missing SKILL.md frontmatter")
-        for term in ["name:", "description:", "Input Contract", "Case Selector", "Failure Gates"]:
+        for term in ["name:", "description:", "Applicability", "Non-Applicability", "Input Contract", "Output Contract", "Workflow", "Case Selector", "Evidence Rules", "Failure Gates", "Quality Checklist", "Examples", "Anti-Examples"]:
             if term not in text:
                 fail(f"{path} missing required Skill contract term {term}")
+    for rel in [
+        "03_methodology/board_soc_porting_runbook.md",
+        "03_methodology/architecture_porting_runbook.md",
+        "03_methodology/driver_hdf_porting_runbook.md",
+        "03_methodology/binary_prebuilt_governance.md",
+        "03_methodology/dirty_workspace_governance.md",
+    ]:
+        path = out / rel
+        if path.stat().st_size < 1500:
+            fail(f"{path} is too short for runbook output; expected at least 1500 bytes")
+        require_terms(path, ["Applicability", "Inputs", "Outputs", "Workflow", "Evidence Requirements", "Case Selector", "Failure Handling", "Quality Gates", "Example", "Anti-Example"])
     if not os.access(out / "meta_skill_pack/install.sh", os.X_OK):
         fail("meta_skill_pack/install.sh must be executable")
     universal_text = (out / "02_patterns/universal_methods.md").read_text(encoding="utf-8", errors="ignore").lower()
@@ -401,7 +436,7 @@ def main() -> None:
     if scenario_count < 3 and "no formal universal methods promoted" not in universal_text:
         fail("universal_methods.md must not promote formal universal methods when scenario_count < 3")
 
-    print(f"[OK] meta output valid: scenarios={scenario_count} cases={len(cases)} patterns={len(patterns)} fragments={len(fragments)} meta_methods={len(meta_methods)} traces={len(evidence_traces)}")
+    print(f"[OK] meta output valid: scenarios={scenario_count} cases={len(cases)} patterns={len(patterns)} fragments={len(fragments)} meta_methods={len(meta_methods)} conditional_methods={len(conditional_methods)} traces={len(evidence_traces)}")
 
 
 if __name__ == "__main__":

@@ -16,9 +16,11 @@ Read only compact meta files:
 - `02_patterns/pattern_candidates.jsonl`
 - `02_patterns/method_fragments.jsonl`
 - `02_patterns/meta_methods.jsonl`
+- `02_patterns/conditional_methods.jsonl`
 - `02_patterns/anti_patterns.jsonl`
 - `02_patterns/universal_methods.md`
 - `02_patterns/conditional_patterns.md`
+- `02_patterns/conditional_methods.jsonl`
 - `02_patterns/case_inventory_by_scenario.md`
 - `02_patterns/scenario_specific_knowledge.md`
 - `02_patterns/anti_patterns.md`
@@ -64,7 +66,7 @@ Update or create:
 1. Do not use bare `promotion_level=universal`. Use `universal_by_design` for pipeline guardrails and `universal_from_evidence` for case/pattern-derived methods.
 2. Do not promote `universal_from_evidence` unless at least three distinct `scenario_id` values support it and it has at least two `source_case_ids` or `source_patterns`.
 3. Do not merge ARM-primary, RISC-V-primary, and heterogeneous auxiliary-core scenarios into one undifferentiated method.
-4. Each conditional pattern must include applicability and non-applicability.
+4. Generate cross-scenario `conditional` methods from evidence clusters when at least two scenarios and at least two source cases support the method; write them to `conditional_methods.jsonl` and `meta_methods.jsonl`.
 5. `case_inventory_by_scenario.md` may list all cases; `scenario_specific_knowledge.md` must list only exact `reuse_level=scenario_specific` cases.
 6. Anti-patterns must include risk, trigger condition and prevention.
 7. Preserve traceability: every method must refer to scenario IDs, pattern IDs, case IDs, or documented evidence class.
@@ -74,6 +76,7 @@ Update or create:
 11. Keep case `scenario_type` as a subset of the registry labels for that `scenario_id`; put synthesized labels in `scenario_shape`.
 12. Keep `evidence_type` and `evidence_level` in the canonical evidence-type enum, and keep strength in `evidence_strength`.
 13. Installable skills must be written as `SKILL.md` files with frontmatter, input/output contract, case selector, tool commands, failure handling, and quality gates.
+14. Methodology runbooks must include applicability, inputs, outputs, workflow, evidence requirements, case selector, failure handling, quality gates, example, and anti-example sections.
 
 ## Validator Contract Terms
 
@@ -87,6 +90,7 @@ The final Markdown is validated by `tools/validate_meta_output.py`. Preserve the
 - Keep evidence traceability compact: refer to `evidence_ref` values rather than pasting full evidence blobs into prose.
 - `meta_skill_pack/*/SKILL.md` files must keep YAML frontmatter with `name` and `description`.
 - Do not replace `universal_by_design` / `universal_from_evidence` with a bare `universal` label.
+- `02_patterns/conditional_patterns.md` must contain the exact heading `Cross-Scenario Conditional Methods` and the term `conditional_from_evidence`.
 
 These terms are contract markers, not optional wording. Do not replace them with synonyms such as "RISC-V Primary", "risk-only", or "none promoted".
 

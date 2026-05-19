@@ -25,8 +25,11 @@
     "applicability": { "type": "array", "items": { "type": "string" } },
     "non_applicability": { "type": "array", "items": { "type": "string" } },
     "evidence_strength": { "type": "string" },
+    "evidence_types": { "type": "array", "items": { "type": "string" } },
+    "derivation": { "type": "string" },
     "statement": { "type": "string" },
     "risks": { "type": "array", "items": { "type": "string" } },
+    "quality_gates": { "type": "array", "items": { "type": "string" } },
     "supporting_method_fragments": { "type": "array", "items": { "type": "string" } }
   },
   "additionalProperties": true

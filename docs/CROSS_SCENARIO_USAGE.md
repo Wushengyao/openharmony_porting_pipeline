@@ -89,6 +89,21 @@ The aggregator also normalizes case evidence fields:
 
 Case `scenario_type` values must be registry-defined labels for the same `scenario_id`; synthesized labels belong in `scenario_shape`.
 
+The aggregator generates machine-readable cross-scenario conditional methods:
+
+```text
+02_patterns/conditional_methods.jsonl
+```
+
+Each conditional method is also present in `02_patterns/meta_methods.jsonl` with:
+
+```text
+promotion_level: conditional
+derivation: conditional_from_evidence
+```
+
+Current deterministic clusters include HDF/audio, WiFi/SDIO/wireless, RISC-V build/runtime/product route, boot/firmware/provenance, and binary/dirty governance.
+
 ## 6. Traceability Notes
 
 The aggregated `02_patterns/method_fragments.jsonl` includes `global_method_fragment_id` because single-scenario exporters may reuse local IDs such as `MF-CASE-001`.
@@ -111,3 +126,5 @@ openharmony_porting_meta_output/meta_skill_pack/
 ```
 
 The validation transcript is retained as `_validate_meta_output.log` in the output directory.
+
+The validator requires release-grade runbook sections and expanded Skill contracts, including applicability, non-applicability, inputs, outputs, workflow, evidence rules, failure handling, quality gates, examples, and anti-examples.

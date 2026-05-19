@@ -78,6 +78,77 @@ PROMOTION_LEVELS = [
     "anti_pattern",
 ]
 
+CONDITIONAL_METHOD_SPECS = [
+    {
+        "method_id": "META-CONDITIONAL-HDF-AUDIO-CHAIN",
+        "title": "HDF/Audio Multi-Repo Enablement Chain",
+        "keywords": ["hdf", "audio", "alsa", "codec", "hcs", "hcb"],
+        "statement": "HDF/audio enablement is conditional reusable knowledge only when driver implementation, board or SoC binding, vendor/HCS/HCB or policy configuration, generated assets, and validation status are reviewed as one chain.",
+        "applicability": ["hdf_audio", "driver_hdf_porting", "board_vendor_audio_stack"],
+        "non_applicability": ["single codec patch without board/vendor config", "generated HCB or binary archive used as source proof"],
+        "quality_gates": [
+            "At least one source-level driver or HAL path is present.",
+            "At least one board/vendor/product configuration path is present.",
+            "Generated HDF assets and binary archives remain provenance or runtime-risk evidence.",
+        ],
+    },
+    {
+        "method_id": "META-CONDITIONAL-WIFI-SDIO-RUNTIME-CHAIN",
+        "title": "WiFi/SDIO/Wireless Runtime Chain",
+        "keywords": ["wifi", "sdio", "wireless", "bluetooth", "rfkill", "wlan"],
+        "statement": "Wireless bring-up cases are conditionally reusable when kernel driver options, SDIO or bus timing, board power/DTS binding, user-space service assumptions, product components, and runtime validation are tracked together.",
+        "applicability": ["wifi_sdio", "wireless_runtime", "driver_enablement"],
+        "non_applicability": ["binary-only module delivery", "single DTS or Kconfig change presented as full wireless enablement"],
+        "quality_gates": [
+            "Separate source driver fixes from delivered modules and firmware.",
+            "Keep runtime services and product components linked to board driver evidence.",
+            "Record suspend/resume and power-management assumptions as validation requirements.",
+        ],
+    },
+    {
+        "method_id": "META-CONDITIONAL-RISCV-BUILD-RUNTIME-ROUTE",
+        "title": "RISC-V Build, Runtime, Toolchain, And Product Route",
+        "keywords": ["riscv", "risc-v", "toolchain", "musl", "sdk", "runtime", "product", "board", "vendor"],
+        "required_scenario_type": "riscv_primary_distribution",
+        "match_mode": "riscv_route",
+        "statement": "RISC-V-primary distribution work is conditionally reusable when product identity, board/vendor binding, build variables, SDK/toolchain routes, musl/runtime namespace, and package/image rules are reviewed as one architecture route.",
+        "applicability": ["riscv_primary_distribution", "build_system_integration", "product_board_binding"],
+        "non_applicability": ["ARM-primary board ports", "auxiliary RISC-V firmware inside a non-RISC-V primary runtime"],
+        "quality_gates": [
+            "Require productdefine or product route evidence plus board/vendor evidence.",
+            "Require build/toolchain/runtime evidence before calling a fix architecture-level.",
+            "Treat whitelist-only or board-only accommodations as conditional board knowledge.",
+        ],
+    },
+    {
+        "method_id": "META-CONDITIONAL-BOOT-FIRMWARE-PROVENANCE",
+        "title": "Boot, Firmware, Partition, And Provenance Chain",
+        "keywords": ["boot", "firmware", "provenance", "partition", "uboot", "u-boot", "spl", "reboot"],
+        "match_mode": "boot_scope",
+        "statement": "Boot and firmware knowledge is conditionally reusable when editable boot configuration, partition/updater policy, firmware payloads, signing or regeneration path, and board-specific boot-stage assumptions are separated.",
+        "applicability": ["boot_firmware", "partitioning", "firmware_provenance"],
+        "non_applicability": ["binary boot asset treated as source fix", "initial import used as provenance proof"],
+        "quality_gates": [
+            "Distinguish text configuration from firmware payloads.",
+            "Record hash, provenance, license, and regeneration or signing status for binaries.",
+            "Keep validation unknown unless boot logs or board test records prove success.",
+        ],
+    },
+    {
+        "method_id": "META-CONDITIONAL-BINARY-DIRTY-GOVERNANCE",
+        "title": "Binary, Prebuilt, Generated Asset, And Dirty Workspace Governance",
+        "keywords": ["binary", "prebuilt", "dirty", "generated", ".ko", ".bin", ".o", ".a", "hcb"],
+        "statement": "Binary, prebuilt, generated-asset, and dirty workspace records are conditionally reusable as governance evidence, not as source fixes, until they have provenance, clean commit conversion, regeneration path, or validation evidence.",
+        "applicability": ["binary_prebuilt_governance", "dirty_workspace_governance", "risk_governance"],
+        "non_applicability": ["committed source fix proof", "formal universal source-porting method"],
+        "quality_gates": [
+            "Record path, hash, architecture, possible usage, and redistribution risk.",
+            "Keep dirty files separate from committed history.",
+            "Link generated assets back to their generator or mark provenance unknown.",
+        ],
+    },
+]
+
 
 def fail(message: str) -> None:
     print(f"[BLOCKED] {message}", file=sys.stderr)
@@ -577,7 +648,53 @@ def method_title(statement: str, fragments: list[dict[str, Any]]) -> str:
     return first_sentence[:80] or "Untitled Method"
 
 
-def build_meta_methods(scenarios: list[dict[str, Any]], fragments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def case_search_text(case: dict[str, Any]) -> str:
+    return text_blob(
+        case.get("case_id"),
+        case.get("title"),
+        case.get("porting_phase"),
+        case.get("subsystem"),
+        case.get("problem_type"),
+        case.get("rule"),
+    )
+
+
+def case_scope_text(case: dict[str, Any]) -> str:
+    return text_blob(
+        case.get("case_id"),
+        case.get("title"),
+        case.get("porting_phase"),
+        case.get("subsystem"),
+        case.get("problem_type"),
+    )
+
+
+def case_matches_conditional_spec(case: dict[str, Any], spec: dict[str, Any]) -> bool:
+    mode = str(spec.get("match_mode") or "")
+    if mode == "riscv_route":
+        scope = text_blob(case.get("case_id"), case.get("porting_phase"), case.get("subsystem"), case.get("problem_type"))
+        route_tokens = [
+            "build",
+            "toolchain",
+            "musl",
+            "sdk",
+            "product",
+            "vendor_product",
+            "product_board",
+            "board_soc",
+            "board_vendor",
+            "riscv64",
+            "riscv_build",
+        ]
+        return any(token in scope for token in route_tokens)
+    if mode == "boot_scope":
+        scope = case_scope_text(case)
+        return any(token in scope for token in ["boot", "firmware", "provenance", "partition", "reboot"])
+    text = case_search_text(case)
+    return any(str(keyword).lower() in text for keyword in spec.get("keywords", []))
+
+
+def build_universal_meta_methods(scenarios: list[dict[str, Any]], fragments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     used_ids: set[str] = set()
     for statement, rows in sorted(fragments_by_statement(fragments).items()):
@@ -629,9 +746,67 @@ def build_meta_methods(scenarios: list[dict[str, Any]], fragments: list[dict[str
     return records
 
 
-def write_universal_methods(out: Path, scenarios: list[dict[str, Any]], fragments: list[dict[str, Any]]) -> None:
-    meta_methods = build_meta_methods(scenarios, fragments)
+def build_conditional_methods(scenarios: list[dict[str, Any]], cases: list[dict[str, Any]], patterns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    scenario_type_by_id = {str(item["card"].get("scenario_id")): set(listify(item["card"].get("scenario_type"))) for item in scenarios}
+    pattern_ids_by_case_id: dict[str, set[str]] = defaultdict(set)
+    for pattern in patterns:
+        pattern_id = str(pattern.get("pattern_id") or "")
+        if not pattern_id:
+            continue
+        for case_id in pattern.get("source_case_ids") or []:
+            pattern_ids_by_case_id[str(case_id)].add(pattern_id)
+
+    records: list[dict[str, Any]] = []
+    for spec in CONDITIONAL_METHOD_SPECS:
+        selected: list[dict[str, Any]] = []
+        required_type = str(spec.get("required_scenario_type") or "")
+        for case in cases:
+            scenario_id = str(case.get("scenario_id") or "")
+            if required_type and required_type not in scenario_type_by_id.get(scenario_id, set()):
+                continue
+            if case_matches_conditional_spec(case, spec):
+                selected.append(case)
+        scenario_ids = sorted({str(case.get("scenario_id") or "unknown") for case in selected})
+        if len(selected) < 2 or len(scenario_ids) < 2:
+            continue
+        supporting_cases = sorted({str(case.get("case_id")) for case in selected if case.get("case_id")})
+        supporting_patterns = sorted({pattern_id for case_id in supporting_cases for pattern_id in pattern_ids_by_case_id.get(case_id, set())})
+        evidence_types = sorted({str(case.get("evidence_type") or case.get("evidence_level") or "unknown") for case in selected})
+        records.append(
+            {
+                "method_id": spec["method_id"],
+                "title": spec["title"],
+                "promotion_level": "conditional",
+                "derivation": "conditional_from_evidence",
+                "supporting_patterns": supporting_patterns,
+                "supporting_cases": supporting_cases,
+                "scenario_ids": scenario_ids,
+                "applicability": list(spec.get("applicability", [])),
+                "non_applicability": list(spec.get("non_applicability", [])),
+                "evidence_strength": "high" if len(scenario_ids) >= 3 else "medium_high",
+                "evidence_types": evidence_types,
+                "statement": spec["statement"],
+                "quality_gates": list(spec.get("quality_gates", [])),
+                "risks": [
+                    "over-generalizing vendor-specific behavior",
+                    "promoting dirty or binary records as source proof",
+                    "claiming validation from commit/file evidence alone",
+                ],
+            }
+        )
+    return records
+
+
+def build_meta_methods(scenarios: list[dict[str, Any]], fragments: list[dict[str, Any]], cases: list[dict[str, Any]], patterns: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    universal_methods = build_universal_meta_methods(scenarios, fragments)
+    conditional_methods = build_conditional_methods(scenarios, cases, patterns)
+    return universal_methods + conditional_methods, conditional_methods
+
+
+def write_universal_methods(out: Path, scenarios: list[dict[str, Any]], fragments: list[dict[str, Any]], cases: list[dict[str, Any]], patterns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    meta_methods, conditional_methods = build_meta_methods(scenarios, fragments, cases, patterns)
     write_jsonl(out / "02_patterns/meta_methods.jsonl", meta_methods)
+    write_jsonl(out / "02_patterns/conditional_methods.jsonl", conditional_methods)
     lines = [
         "# Universal Methods",
         "",
@@ -698,9 +873,10 @@ def write_universal_methods(out: Path, scenarios: list[dict[str, Any]], fragment
     else:
         lines.append("- No additional `universal_candidate` methods met the cross-scenario support threshold.")
     (out / "02_patterns/universal_methods.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return conditional_methods
 
 
-def write_conditional_patterns(out: Path, patterns: list[dict[str, Any]], cases: list[dict[str, Any]]) -> None:
+def write_conditional_patterns(out: Path, patterns: list[dict[str, Any]], cases: list[dict[str, Any]], conditional_methods: list[dict[str, Any]] | None = None) -> None:
     cases_by_id = {case.get("case_id"): case for case in cases}
     groups = {
         "ARM-primary board/SoC": [],
@@ -741,7 +917,31 @@ def write_conditional_patterns(out: Path, patterns: list[dict[str, Any]], cases:
         "",
         "Conditional patterns keep applicability and non-applicability explicit; they are not formal universal methods.",
         "",
+        "## Cross-Scenario Conditional Methods",
+        "",
     ]
+    if conditional_methods:
+        for method in conditional_methods:
+            lines.extend(
+                [
+                    f"### {method.get('method_id')}: {method.get('title')}",
+                    "",
+                    f"- promotion_level: `{method.get('promotion_level')}`",
+                    f"- derivation: `{method.get('derivation', 'conditional_from_evidence')}`",
+                    f"- Statement: {method.get('statement')}",
+                    f"- Scenario support: {', '.join(listify(method.get('scenario_ids')))}",
+                    f"- Supporting cases: {', '.join(listify(method.get('supporting_cases')))}",
+                    f"- Supporting patterns: {', '.join(listify(method.get('supporting_patterns'))) or 'none'}",
+                    f"- Applicability: {', '.join(listify(method.get('applicability')))}",
+                    f"- Non-applicability: {', '.join(listify(method.get('non_applicability')))}",
+                    "- Quality gates:",
+                ]
+            )
+            for gate in listify(method.get("quality_gates")):
+                lines.append(f"  - {gate}")
+            lines.append("")
+    else:
+        lines.extend(["- No cross-scenario conditional methods were generated.", ""])
     for title, rows in groups.items():
         lines.extend([f"## {title}", ""])
         if rows:
@@ -828,6 +1028,45 @@ def write_additional_pattern_views(out: Path, cases: list[dict[str, Any]], patte
     (out / "02_patterns/workaround_patterns.md").write_text("\n".join(workaround_lines) + "\n", encoding="utf-8")
 
 
+def runbook_doc(title: str, applicability: str, inputs: list[str], outputs: list[str], steps: list[str], evidence: list[str], selector: list[str], failures: list[str], gates: list[str], example: str, anti_example: str) -> list[str]:
+    lines = [
+        f"# {title}",
+        "",
+        "## Applicability",
+        "",
+        applicability,
+        "",
+        "## Inputs",
+        "",
+    ]
+    lines.extend(f"- {item}" for item in inputs)
+    lines.extend(["", "## Outputs", ""])
+    lines.extend(f"- {item}" for item in outputs)
+    lines.extend(["", "## Workflow", ""])
+    lines.extend(f"{idx}. {item}" for idx, item in enumerate(steps, start=1))
+    lines.extend(["", "## Evidence Requirements", ""])
+    lines.extend(f"- {item}" for item in evidence)
+    lines.extend(["", "## Case Selector", ""])
+    lines.extend(f"- {item}" for item in selector)
+    lines.extend(["", "## Failure Handling", ""])
+    lines.extend(f"- {item}" for item in failures)
+    lines.extend(["", "## Quality Gates", ""])
+    lines.extend(f"- {item}" for item in gates)
+    lines.extend(
+        [
+            "",
+            "## Example",
+            "",
+            example,
+            "",
+            "## Anti-Example",
+            "",
+            anti_example,
+        ]
+    )
+    return lines
+
+
 def write_methodology(out: Path, scenario_count: int, cases: list[dict[str, Any]]) -> None:
     phases = Counter(phase for case in cases for phase in listify(case.get("porting_phase")))
     subsystems = Counter(sub for case in cases for sub in listify(case.get("subsystem")))
@@ -851,31 +1090,101 @@ def write_methodology(out: Path, scenario_count: int, cases: list[dict[str, Any]
     (out / "03_methodology/openharmony_porting_general_method.md").write_text("\n".join(methodology) + "\n", encoding="utf-8")
 
     runbooks = {
-        "board_soc_porting_runbook.md": [
-            "# Board/SoC Porting Runbook",
-            "",
-            "Start by confirming board, SoC, runtime architecture, product path, vendor path, kernel type, and system type. Then trace product/board/vendor/SoC binding through BUILD.gn, productdefine, HDF/HCS/HCB, DTS, and vendor configuration evidence.",
-        ],
-        "architecture_porting_runbook.md": [
-            "# Architecture Porting Runbook",
-            "",
-            "Classify whether the scenario is ARM-primary, RISC-V-primary, or heterogeneous auxiliary-core before interpreting toolchain, firmware, and third_party changes. Do not treat auxiliary firmware as runtime architecture evidence.",
-        ],
-        "driver_hdf_porting_runbook.md": [
-            "# Driver/HDF Porting Runbook",
-            "",
-            "For HDF and driver enablement, require a chain across driver implementation, SoC/board binding, vendor HDF configuration, generated runtime assets, and verification logs. Isolated driver commits are conditional evidence only.",
-        ],
-        "binary_prebuilt_governance.md": [
-            "# Binary/Prebuilt Governance",
-            "",
-            "Record path, sha256, architecture, possible usage, source/provenance, redistribution risk, and runtime dependency. Binary imports are not source fixes and should not be merged into universal source-level methods.",
-        ],
-        "dirty_workspace_governance.md": [
-            "# Dirty Workspace Governance",
-            "",
-            "Dirty workspace records are local evidence. They can reveal ongoing work, generated outputs, or risks, but they must stay separate from committed history until converted to clean commits or documented patches.",
-        ],
+        "board_soc_porting_runbook.md": runbook_doc(
+            "Board/SoC Porting Runbook",
+            "Use this runbook for board product enablement, SoC BSP binding, vendor product configuration, kernel/DTS alignment, and board-specific HDF or driver chains.",
+            ["scenario_registry.yaml", "cases.jsonl filtered by product_board_binding or board/vendor subsystem", "pattern_candidates.jsonl for source case linkage"],
+            ["A scoped board/SoC binding checklist", "A list of source-backed cases and risk-only records", "Non-applicability notes for other architecture shapes"],
+            [
+                "Freeze scenario_id, scenario_type, board, SoC, vendor, runtime architecture, kernel, and system_type.",
+                "Select product, board, vendor, and SoC cases before selecting subsystem cases.",
+                "Trace BUILD.gn, productdefine, config.gni, config.json, DTS, HDF/HCS/HCB, and vendor policy files as one binding graph.",
+                "Attach dirty workspace and binary/prebuilt records as risks unless they are converted to clean commits or documented generated outputs.",
+                "Keep validation status separate from source evidence and record any missing build, boot, runtime, or test logs.",
+            ],
+            ["At least one product or vendor config path for a product binding claim.", "At least one board or SoC path for board/SoC binding.", "Evidence_ref links for every reusable case."],
+            ["scenario_type contains board_soc_arm_primary", "subsystem contains product_board_soc or product_board_vendor_binding", "problem_type contains product_config_alignment or board_soc_binding"],
+            ["If product and board paths disagree, keep the case conditional and document the conflict.", "If only binaries or generated files exist, classify as provenance or runtime risk.", "If validation logs are missing, keep validation unknown."],
+            ["No registry-external scenario_type labels.", "No single repo is treated as the whole board port.", "No auxiliary-core evidence is promoted as primary runtime architecture."],
+            "A T113-like board case should connect vendor config, board BUILD.gn, SoC defconfig or DTS, and subsystem HDF/audio/WiFi evidence before being used as reusable board guidance.",
+            "A single driver import or bootloader directory is not enough to claim a reusable board/SoC porting method.",
+        ),
+        "architecture_porting_runbook.md": runbook_doc(
+            "Architecture Porting Runbook",
+            "Use this runbook when a case touches ARM-primary versus RISC-V-primary scope, architecture toolchains, runtime routes, SDK/NDK paths, musl namespaces, or auxiliary RISC-V firmware.",
+            ["scenario_registry.yaml", "cases.jsonl filtered by scenario_type and architecture-related subsystems", "meta_methods.jsonl for universal_by_design and conditional architecture methods"],
+            ["Architecture scope decision", "Architecture route checklist", "Auxiliary-core non-promotion notes"],
+            [
+                "Read scenario_type from the registry and treat it as scope authority.",
+                "For RISC-V-primary work, require product route, build variables, toolchain/SDK paths, libc or musl runtime paths, and package/image rules.",
+                "For ARM-primary work, keep RISC-V coprocessor, DSP, ARISC, or firmware evidence in heterogeneous_aux_core scope.",
+                "Review third_party and prebuilts evidence for architecture-specific imports, whitelists, and runtime assumptions.",
+                "Document whether the rule is conditional, universal_candidate, or risk_only; do not use bare universal.",
+            ],
+            ["Registry scenario_type and runtime_arch.", "Source paths proving build/runtime changes.", "Evidence_strength and validation status kept separate."],
+            ["scenario_type contains riscv_primary_distribution", "subsystem contains riscv_build_toolchain_runtime or build_riscv", "rule mentions SDK, toolchain, musl, runtime, or product route"],
+            ["If ARM and RISC-V labels conflict, stop promotion and emit a scope conflict.", "If a change only touches a whitelist, classify as board-specific accommodation.", "If prebuilt toolchains are imported, require provenance governance."],
+            ["RISC-V-primary support spans build, runtime, product, and board/vendor evidence.", "Auxiliary firmware never proves RISC-V-primary OpenHarmony runtime.", "Validation pass is never inferred from source diffs."],
+            "A RISC-V board route can become a conditional method when product config, board/vendor config, build target, SDK/toolchain, and musl/runtime evidence all appear across multiple RISC-V-primary scenarios.",
+            "A C906 firmware blob inside an ARM-primary board is not evidence for RISC-V-primary OpenHarmony distribution support.",
+        ),
+        "driver_hdf_porting_runbook.md": runbook_doc(
+            "Driver/HDF Porting Runbook",
+            "Use this runbook for HDF, audio, camera/media, display/GPU, USB, WiFi, SDIO, kernel driver, HAL, and vendor policy integration.",
+            ["cases.jsonl filtered by hdf_integration or driver_enablement", "conditional_methods.jsonl for HDF/audio and WiFi/SDIO clusters", "evidence_trace_index.jsonl for pattern-to-case links"],
+            ["Driver/HDF chain map", "Generated asset and binary separation notes", "Runtime validation requirements"],
+            [
+                "Select all cases in the subsystem chain before interpreting any single driver patch.",
+                "Connect driver implementation, Kconfig/Makefile or BUILD.gn, board DTS, SoC glue, vendor HCS/HCB or policy, and product component wiring.",
+                "Separate source-level driver fixes from generated archives, firmware, modules, or local dirty files.",
+                "Map missing runtime validation into explicit test requirements instead of proof.",
+                "Promote only conditional methods unless cross-scenario source cases prove a broader method.",
+            ],
+            ["Driver or HAL source path.", "Board/SoC binding path.", "Vendor/product configuration path.", "Generated/binary asset risk record when present."],
+            ["subsystem contains hdf_audio, hdf_camera_media, wifi_sdio, network_wifi_sdio, display_gpu_g2d, usb_camera, or kernel_driver_dts_defconfig"],
+            ["If only generated HCB/HCS binary output is present, mark source proof missing.", "If a kernel fix lacks board/vendor binding, keep it subsystem-local.", "If runtime behavior is claimed, require logs or validation_status."],
+            ["Every conditional driver method has supporting_cases from at least two scenarios.", "Binary and dirty evidence stays risk-only.", "Non-applicability lists architecture or vendor limits."],
+            "An HDF audio case is useful when it links codec or driver source, board ALSA glue, vendor audio policy/HCS, product configuration, and validation requirements.",
+            "A codec patch alone, a delivered .ko file alone, or a generated HCB alone is not a full HDF/driver enablement method.",
+        ),
+        "binary_prebuilt_governance.md": runbook_doc(
+            "Binary/Prebuilt Governance",
+            "Use this runbook whenever firmware, boot assets, kernel modules, object archives, prebuilts, generated HDF assets, toolchains, or proprietary libraries appear.",
+            ["binary asset records from cases.jsonl", "evidence_index.jsonl", "risk_taxonomy.yaml", "anti_patterns.jsonl"],
+            ["Binary/prebuilt inventory", "Provenance and redistribution risk notes", "Regeneration or replacement requirements"],
+            [
+                "Record path, hash, architecture, possible usage, source or upstream origin, license, and redistribution status.",
+                "Identify whether the asset is source input, generated output, runtime dependency, firmware payload, or toolchain prebuilt.",
+                "Link the asset to source cases only as risk or dependency evidence unless source regeneration is proven.",
+                "For boot/firmware assets, separate partition policy and editable config from binary payload provenance.",
+                "Document validation requirements for runtime-loaded modules or firmware.",
+            ],
+            ["sha256 or equivalent stable identifier.", "Path and owning scenario_id.", "Usage and provenance status.", "Evidence_ref back to the case record."],
+            ["evidence_type is dirty_or_binary_only", "case evidence has binary_assets", "rule mentions firmware, prebuilt, generated, .ko, .bin, .o, .a, or hcb"],
+            ["If provenance is unknown, keep the record risk_only.", "If redistribution is unclear, block release-grade promotion.", "If generated output lacks generator path, require regeneration evidence."],
+            ["No binary import becomes a source fix.", "No initial import is treated as proof of origin.", "No runtime validation is inferred from asset presence."],
+            "A boot firmware record can support a conditional governance method when it lists the asset, hash, board boot stage, regeneration or signing status, and validation gap.",
+            "A committed proprietary library without source, license, or usage notes must not be promoted as reusable source-porting guidance.",
+        ),
+        "dirty_workspace_governance.md": runbook_doc(
+            "Dirty Workspace Governance",
+            "Use this runbook for uncommitted local modifications, generated outputs, local scripts, temporary build changes, and files that explain current porting state but are not clean source history.",
+            ["dirty file evidence embedded in cases.jsonl", "evidence_index.jsonl", "anti_patterns.jsonl", "scenario_registry.yaml"],
+            ["Dirty workspace inventory", "Conversion plan to clean evidence", "Risk-only or workaround classification"],
+            [
+                "List every dirty file with path, repo, relation, and associated case or subsystem.",
+                "Classify each record as local experiment, generated output, workaround, missing commit, or provenance risk.",
+                "Do not merge dirty files into committed history evidence; keep them attached as risk notes.",
+                "When a dirty change is required for a fix, create a clean patch or commit before promotion.",
+                "Re-run validation after dirty records are converted or intentionally excluded.",
+            ],
+            ["Dirty file path and repo.", "Reason for relation to the case.", "Conversion or exclusion decision.", "Validation status after conversion."],
+            ["case evidence has dirty_files", "rule mentions dirty, local, workaround, generated, or uncommitted"],
+            ["If dirty evidence conflicts with committed evidence, prefer committed evidence and record the conflict.", "If dirty files are generated, identify the generator.", "If dirty files are required but uncommitted, block reusable source-fix promotion."],
+            ["Dirty records are never counted as committed source proof.", "Workarounds remain workaround or risk_only until validated.", "Generated outputs are not accepted without generator traceability."],
+            "A local kernel build script change may explain why a board currently builds, but it remains dirty governance evidence until captured as a clean commit or documented patch.",
+            "Do not fold a dirty defconfig or generated binary into a conditional method as if it were reviewed source history.",
+        ),
     }
     for filename, lines in runbooks.items():
         (out / "03_methodology" / filename).write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -967,36 +1276,90 @@ def write_global_kb(out: Path, cases: list[dict[str, Any]], patterns: list[dict[
     )
 
 
-def generated_skill_doc(title: str, selector: str, focus: list[str], gates: list[str], scenario_count: int) -> str:
+def generated_skill_doc(
+    title: str,
+    selector: str,
+    focus: list[str],
+    gates: list[str],
+    scenario_count: int,
+    non_applicability: list[str] | None = None,
+    examples: list[str] | None = None,
+    anti_examples: list[str] | None = None,
+) -> str:
     lines = [
         f"# {title}",
         "",
         "This generated skill draft is evidence-bound. The installable Codex Skill package is emitted under `meta_skill_pack/`.",
         "",
+        "## Applicability",
+        "",
+        selector,
+        "",
+        "## Non-Applicability",
+        "",
+    ]
+    lines.extend(f"- {item}" for item in (non_applicability or ["Do not use this skill when the registry scope or evidence class does not match the selector.", "Do not use this skill to infer validation success without logs."]))
+    lines.extend([
+        "",
         "## Input Contract",
         "",
         "- `00_scenario_registry/scenario_registry.yaml` defines scenario IDs, scenario_type, runtime_arch, SoC/vendor, board, kernel, and validation status.",
         "- `01_normalized_cases/cases.jsonl` provides canonical `evidence_type`, `evidence_strength`, and registry-scoped `scenario_type` values.",
-        "- `02_patterns/meta_methods.jsonl`, `pattern_candidates.jsonl`, `anti_patterns.jsonl`, and `method_fragments.jsonl` provide promotion and traceability inputs.",
+        "- `02_patterns/meta_methods.jsonl`, `conditional_methods.jsonl`, `pattern_candidates.jsonl`, `anti_patterns.jsonl`, and `method_fragments.jsonl` provide promotion and traceability inputs.",
+        "- `04_global_kb/evidence_trace_index.jsonl` links methods and patterns back to compact evidence references.",
+        "",
+        "## Output Contract",
+        "",
+        "- A scoped answer that names the selected scenario_id, scenario_type, and evidence class.",
+        "- A case or method selection list with `case_id`, `pattern_id`, `method_id`, and `evidence_ref` where available.",
+        "- Explicit validation status for build, boot, runtime, and tests; unknown must remain unknown.",
+        "- Non-applicability notes when a rule is architecture-, board-, vendor-, or subsystem-specific.",
         "",
         "## Case Selector",
         "",
         selector,
         "",
-        "## Operating Steps",
+        "## Workflow",
         "",
         "1. Freeze scenario scope from the registry before reading cases.",
-        "2. Select cases by `scenario_type`, `applicability`, `porting_phase`, `subsystem`, and `problem_type`.",
-        "3. Follow evidence references into case or pattern records; keep dirty and binary records separate from committed source proof.",
-        "4. Apply anti-pattern checks before promoting a rule or using it as a reusable fix.",
-        "5. Preserve validation unknowns unless build, boot, runtime, or test logs prove success.",
+        "2. Select candidate cases by `scenario_type`, `applicability`, `porting_phase`, `subsystem`, and `problem_type`.",
+        "3. Prefer `conditional_methods.jsonl` for cross-scenario conditional rules before falling back to single-scenario pattern lists.",
+        "4. Follow evidence references into case or pattern records; keep dirty and binary records separate from committed source proof.",
+        "5. Apply anti-pattern checks before promoting a rule or using it as a reusable fix.",
+        "6. Preserve validation unknowns unless build, boot, runtime, or test logs prove success.",
+        "",
+        "## Evidence Rules",
+        "",
+        "- `evidence_type` and `evidence_level` must describe the evidence source class, not confidence.",
+        "- `evidence_strength` must describe confidence only.",
+        "- `universal_by_design` is a pipeline guardrail, not a source-fix method.",
+        "- `conditional` methods require explicit applicability and non-applicability.",
+        "- Dirty files, binaries, prebuilts, generated assets, and initial imports are risk or provenance records until source/regeneration evidence exists.",
         "",
         "## Focus Areas",
         "",
-    ]
+    ])
     lines.extend(f"- {item}" for item in focus)
     lines.extend(["", "## Failure Gates", ""])
     lines.extend(f"- {item}" for item in gates)
+    lines.extend(
+        [
+            "",
+            "## Quality Checklist",
+            "",
+            "- Scenario labels are registry-defined; synthesized labels stay in `scenario_shape`.",
+            "- Every reusable statement names supporting cases, patterns, or method fragments.",
+            "- Cross-scenario methods list scenario support and non-applicability.",
+            "- Binary and dirty evidence are not counted as committed source proof.",
+            "- Validation claims are backed by logs or explicit validation_status fields.",
+            "",
+            "## Examples",
+            "",
+        ]
+    )
+    lines.extend(f"- {item}" for item in (examples or ["Select a conditional method, list supporting case IDs, and keep validation unknown when logs are absent."]))
+    lines.extend(["", "## Anti-Examples", ""])
+    lines.extend(f"- {item}" for item in (anti_examples or ["Do not treat a single generated file, binary asset, or dirty workspace edit as a reusable source fix."]))
     lines.extend(
         [
             "",
@@ -1014,7 +1377,17 @@ def generated_skill_doc(title: str, selector: str, focus: list[str], gates: list
 
 
 def skill_pack_doc(name: str, description: str, selector: str, focus: list[str], gates: list[str], scenario_count: int) -> str:
-    body = generated_skill_doc(name.replace("_", " ").title(), selector, focus, gates, scenario_count)
+    spec = skill_specs().get(name, {})
+    body = generated_skill_doc(
+        name.replace("_", " ").title(),
+        selector,
+        focus,
+        gates,
+        scenario_count,
+        list(spec.get("non_applicability", [])),
+        list(spec.get("examples", [])),
+        list(spec.get("anti_examples", [])),
+    )
     return "\n".join(
         [
             "---",
@@ -1042,6 +1415,18 @@ def skill_specs() -> dict[str, dict[str, Any]]:
                 "Do not infer build, boot, runtime, or test pass from commit/file/diff evidence alone.",
                 "Do not use generated single-scenario skill text as promotion evidence.",
             ],
+            "non_applicability": [
+                "Single board debugging where no cross-scenario method or promotion decision is needed.",
+                "Runtime validation claims without validation_status or logs.",
+            ],
+            "examples": [
+                "Use `META-CONDITIONAL-HDF-AUDIO-CHAIN` when several scenarios show HDF/audio cases with driver and vendor configuration evidence.",
+                "Use `universal_by_design` methods only as guardrails before selecting conditional source methods.",
+            ],
+            "anti_examples": [
+                "Do not call evidence-class separation a case-derived source fix.",
+                "Do not merge ARM-primary and RISC-V-primary evidence into an unlabeled universal rule.",
+            ],
         },
         "arm_primary_board_soc": {
             "description": "Review ARM-primary OpenHarmony board/SoC porting cases with auxiliary-core separation.",
@@ -1055,6 +1440,18 @@ def skill_specs() -> dict[str, dict[str, Any]]:
                 "Do not collapse `heterogeneous_aux_core` into RISC-V-primary runtime scope.",
                 "Do not treat binary boot assets as source fixes.",
                 "Require registry-defined scenario_type labels only.",
+            ],
+            "non_applicability": [
+                "RISC-V-primary distribution route work without ARM-primary board scope.",
+                "Auxiliary firmware analysis that lacks board/product binding evidence.",
+            ],
+            "examples": [
+                "Select T113 board cases by `board_soc_arm_primary`, then link product/vendor config to HDF, WiFi, DTS, or boot cases.",
+                "Keep a synthesized shape such as ARM-primary plus auxiliary core in `scenario_shape`, not as a new registry type.",
+            ],
+            "anti_examples": [
+                "Do not treat an auxiliary RISC-V firmware blob as the OpenHarmony runtime architecture.",
+                "Do not call a single board DTS patch the full board/SoC port.",
             ],
         },
         "riscv_primary_distribution": {
@@ -1070,6 +1467,18 @@ def skill_specs() -> dict[str, dict[str, Any]]:
                 "Do not mix evidence_type and evidence_strength vocabularies.",
                 "Keep dirty scripts and prebuilts as risk records until committed or validated.",
             ],
+            "non_applicability": [
+                "ARM-primary board ports with only auxiliary RISC-V firmware.",
+                "Binary-only toolchain or firmware imports without source route evidence.",
+            ],
+            "examples": [
+                "Use the RISC-V build/runtime conditional method when product, board/vendor, build variables, SDK/toolchain, and musl/runtime cases line up.",
+                "Classify whitelist-only fixes as conditional board accommodations unless more architecture evidence exists.",
+            ],
+            "anti_examples": [
+                "Do not infer RISC-V runtime support from a prebuilt toolchain alone.",
+                "Do not promote one SoC vendor workaround as a general RISC-V distribution rule.",
+            ],
         },
         "heterogeneous_aux_core": {
             "description": "Review auxiliary-core evidence inside non-RISC-V-primary OpenHarmony scenarios.",
@@ -1083,6 +1492,18 @@ def skill_specs() -> dict[str, dict[str, Any]]:
                 "Do not classify auxiliary RISC-V firmware as RISC-V-primary OpenHarmony runtime.",
                 "Do not convert firmware presence into build/boot/runtime validation.",
                 "Keep scenario_shape separate from registry-defined scenario_type.",
+            ],
+            "non_applicability": [
+                "Primary RISC-V OpenHarmony distribution porting.",
+                "Board/SoC product binding that does not involve auxiliary-core evidence.",
+            ],
+            "examples": [
+                "Record C906, DSP, ARISC, or other coprocessor evidence as auxiliary scope when the primary runtime remains ARM.",
+                "Attach auxiliary firmware assets to binary/prebuilt governance until provenance and validation are known.",
+            ],
+            "anti_examples": [
+                "Do not move a board into RISC-V-primary scope because an auxiliary firmware file is RISC-V.",
+                "Do not treat firmware presence as proof of runtime feature validation.",
             ],
         },
     }
@@ -1103,6 +1524,9 @@ def write_generated_skills(out: Path, scenario_count: int) -> None:
             list(spec["focus"]),
             list(spec["gates"]),
             scenario_count,
+            list(spec.get("non_applicability", [])),
+            list(spec.get("examples", [])),
+            list(spec.get("anti_examples", [])),
         )
         (out / "05_generated_skills" / filenames[name]).write_text(text, encoding="utf-8")
 
@@ -1133,6 +1557,7 @@ def write_meta_skill_pack(out: Path, scenario_count: int) -> None:
         "- `scenario_type` in cases must be a subset of the registry scenario_type for the same scenario_id.\n"
         "- `evidence_type` and `evidence_level` use evidence source enums; `evidence_strength` uses strength enums.\n"
         "- `promotion_level` distinguishes `universal_by_design` from `universal_from_evidence`.\n"
+        "- Cross-scenario conditional methods use `promotion_level=conditional` and `derivation=conditional_from_evidence`.\n"
         "- `scenario_shape` may hold synthesized labels, but registry-defined `scenario_type` must remain canonical.\n",
         encoding="utf-8",
     )
@@ -1149,6 +1574,9 @@ def write_meta_skill_pack(out: Path, scenario_count: int) -> None:
                     "supporting_cases": {"type": "array", "items": {"type": "string"}},
                     "scenario_ids": {"type": "array", "items": {"type": "string"}},
                     "statement": {"type": "string"},
+                    "derivation": {"type": "string"},
+                    "evidence_types": {"type": "array", "items": {"type": "string"}},
+                    "quality_gates": {"type": "array", "items": {"type": "string"}},
                 },
                 "additionalProperties": True,
             },
@@ -1187,7 +1615,7 @@ done
     install.chmod(0o755)
 
 
-def write_meta_report(out: Path, scenarios: list[dict[str, Any]], cases: list[dict[str, Any]], patterns: list[dict[str, Any]], anti_patterns: list[dict[str, Any]]) -> None:
+def write_meta_report(out: Path, scenarios: list[dict[str, Any]], cases: list[dict[str, Any]], patterns: list[dict[str, Any]], anti_patterns: list[dict[str, Any]], conditional_methods: list[dict[str, Any]]) -> None:
     reuse_counts = Counter(str(case.get("reuse_level") or "unknown") for case in cases)
     scenario_count = len(scenarios)
     evidence_strength = "multi_scenario" if scenario_count >= 2 else "single_scenario"
@@ -1199,6 +1627,7 @@ def write_meta_report(out: Path, scenarios: list[dict[str, Any]], cases: list[di
         f"- Normalized cases: `{len(cases)}`",
         f"- Pattern candidates: `{len(patterns)}`",
         f"- Anti-pattern records: `{len(anti_patterns)}`",
+        f"- Conditional methods: `{len(conditional_methods)}`",
         f"- evidence_strength: `{evidence_strength}`",
         "",
         "## Promotion Classes",
@@ -1233,6 +1662,7 @@ def write_meta_report(out: Path, scenarios: list[dict[str, Any]], cases: list[di
             "- Installable drafts are under `meta_skill_pack/`.",
             "- Human-readable generated skill notes remain under `05_generated_skills/`.",
             "- Full case inventory is under `02_patterns/case_inventory_by_scenario.md`; `scenario_specific_knowledge.md` is reserved for exact `reuse_level=scenario_specific` cases.",
+            "- Cross-scenario conditional methods are under `02_patterns/conditional_methods.jsonl` and summarized in `02_patterns/conditional_patterns.md`.",
         ]
     )
     (out / "meta_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -1275,8 +1705,8 @@ def main() -> None:
     write_registry(out, scenarios, redact_local_paths=args.redact_local_paths)
     write_case_indexes(out, cases)
     write_machine_readable_patterns(out, patterns, fragments, anti_patterns)
-    write_universal_methods(out, scenarios, fragments)
-    write_conditional_patterns(out, patterns, cases)
+    conditional_methods = write_universal_methods(out, scenarios, fragments, cases, patterns)
+    write_conditional_patterns(out, patterns, cases, conditional_methods)
     write_scenario_specific(out, cases)
     write_anti_patterns(out, anti_patterns)
     write_additional_pattern_views(out, cases, patterns)
@@ -1284,7 +1714,7 @@ def main() -> None:
     write_global_kb(out, cases, patterns, fragments, anti_patterns)
     write_generated_skills(out, len(scenarios))
     write_meta_skill_pack(out, len(scenarios))
-    write_meta_report(out, scenarios, cases, patterns, anti_patterns)
+    write_meta_report(out, scenarios, cases, patterns, anti_patterns, conditional_methods)
 
     result = {
         "schema_version": 1,
@@ -1295,6 +1725,8 @@ def main() -> None:
         "pattern_candidate_count": len(patterns),
         "anti_pattern_count": len(anti_patterns),
         "method_fragment_count": len(fragments),
+        "meta_method_count": len(read_jsonl(out / "02_patterns/meta_methods.jsonl")),
+        "conditional_method_count": len(conditional_methods),
         "input_meta_labels": [scenario_summary(scenario, Path.cwd(), redact_local_paths=True)["source_meta_dir_label"] for scenario in scenarios],
         "output_label": out.name,
     }
