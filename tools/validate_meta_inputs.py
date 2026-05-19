@@ -96,6 +96,41 @@ def is_missing(value: Any) -> bool:
     return value is None or value == "" or value == []
 
 
+def listify(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    if isinstance(value, tuple):
+        return [str(item) for item in value if str(item).strip()]
+    text = str(value).strip()
+    return [text] if text else []
+
+
+def validate_scope_tokens(scenario_card: dict[str, Any], cases: list[dict[str, Any]], method_fragments: list[dict[str, Any]]) -> None:
+    scenario_type = set(listify(scenario_card.get("scenario_type")))
+    riscv_primary = "riscv_primary_distribution" in scenario_type
+    arm_primary = "board_soc_arm_primary" in scenario_type
+    if riscv_primary and not arm_primary:
+        for case in cases:
+            applicability = set(listify(case.get("applicability")))
+            if "arm_primary_board_soc" in applicability:
+                fail(f"RISC-V primary case has ARM-primary applicability token: {case.get('case_id')}")
+        for fragment in method_fragments:
+            preconditions = set(listify(fragment.get("preconditions")))
+            if "arm_primary_board_soc" in preconditions:
+                fail(f"RISC-V primary method fragment has ARM-primary precondition: {fragment.get('method_fragment_id')}")
+    if arm_primary and not riscv_primary:
+        for case in cases:
+            applicability = set(listify(case.get("applicability")))
+            if "riscv_primary_distribution" in applicability:
+                fail(f"ARM-primary case has RISC-V-primary applicability token: {case.get('case_id')}")
+        for fragment in method_fragments:
+            preconditions = set(listify(fragment.get("preconditions")))
+            if "riscv_primary_distribution" in preconditions:
+                fail(f"ARM-primary method fragment has RISC-V-primary precondition: {fragment.get('method_fragment_id')}")
+
+
 def validate_runtime_status_not_inferred(validation: dict[str, Any]) -> None:
     for key in ["build", "boot"]:
         value = validation.get(key, {})
@@ -137,6 +172,7 @@ def main() -> None:
     anti_patterns = read_jsonl(meta / "anti_patterns.jsonl")
     method_fragments = read_jsonl(meta / "method_fragments.jsonl")
     require_file(meta / "meta_input_audit.md")
+    validate_scope_tokens(scenario_card, cases, method_fragments)
 
     scenario_id = str(scenario_card.get("scenario_id") or "")
     if not scenario_id:

@@ -541,8 +541,6 @@ def infer_tokens(text: str, filename: str) -> dict[str, list[str] | str]:
 
     if "risc-v" in lower or "riscv" in lower:
         applicability.append("riscv_context")
-    if "arm" in lower or "t113" in lower:
-        applicability.append("arm_primary_board_soc")
     if not phases:
         phases.append("knowledge_extraction")
     if not subsystems:
@@ -555,6 +553,64 @@ def infer_tokens(text: str, filename: str) -> dict[str, list[str] | str]:
         "problem_type": problem_types,
         "applicability": applicability,
     }
+
+
+def scenario_applicability(card: dict[str, Any]) -> list[str]:
+    scenario_type = listify(card.get("scenario_type"))
+    tokens: list[str] = []
+    if "riscv_primary_distribution" in scenario_type:
+        tokens.extend(["riscv_primary_distribution", "riscv_primary_runtime"])
+    if "board_soc_arm_primary" in scenario_type:
+        tokens.append("arm_primary_board_soc")
+    if "heterogeneous_aux_core" in scenario_type:
+        tokens.append("heterogeneous_aux_core")
+    runtime = str(card.get("runtime_arch") or card.get("runtime_core") or "").lower()
+    if "riscv" in runtime and "riscv_primary_distribution" in scenario_type:
+        tokens.append("riscv_context")
+    result: list[str] = []
+    for token in tokens:
+        if token not in result:
+            result.append(token)
+    return result
+
+
+def infer_scope_tokens_from_section(text: str) -> list[str]:
+    lower = text.lower()
+    tokens: list[str] = []
+    if "risc-v" in lower or "riscv" in lower:
+        tokens.append("riscv_context")
+    if "riscv-primary" in lower or "risc-v-primary" in lower or "risc-v primary" in lower or "riscv primary" in lower:
+        tokens.append("riscv_primary_distribution")
+    if "arm-primary" in lower or "arm primary" in lower or "arm board" in lower or "t113" in lower:
+        tokens.append("arm_primary_board_soc")
+    result: list[str] = []
+    for token in tokens:
+        if token not in result:
+            result.append(token)
+    return result
+
+
+def sanitize_scope_tokens(tokens: list[str], card: dict[str, Any], *, allow_cross_arch: bool = False) -> list[str]:
+    scenario_type = listify(card.get("scenario_type"))
+    result: list[str] = []
+    for token in tokens:
+        if (
+            token == "arm_primary_board_soc"
+            and "riscv_primary_distribution" in scenario_type
+            and "board_soc_arm_primary" not in scenario_type
+            and not allow_cross_arch
+        ):
+            continue
+        if (
+            token == "riscv_primary_distribution"
+            and "board_soc_arm_primary" in scenario_type
+            and "riscv_primary_distribution" not in scenario_type
+            and not allow_cross_arch
+        ):
+            continue
+        if token not in result:
+            result.append(token)
+    return result
 
 
 def evidence_level(evidence: dict[str, Any]) -> str:
@@ -669,6 +725,22 @@ def normalize_cases(out: Path, card: dict[str, Any], audit_notes: list[str]) -> 
             confidence,
             evidence_type_value,
         )
+        applicability = listify(frontmatter.get("applicability"))
+        if not applicability:
+            applicability = scenario_applicability(card)
+            for token in inferred["applicability"]:
+                if token not in applicability:
+                    applicability.append(token)
+            for token in infer_scope_tokens_from_section(section_text(body, "Applicability")):
+                if token not in applicability:
+                    applicability.append(token)
+        applicability = sanitize_scope_tokens(applicability, card)
+        non_applicability = listify(frontmatter.get("non_applicability"))
+        if not non_applicability:
+            non_applicability = infer_scope_tokens_from_section(section_text(body, "Non-Applicability"))
+            if not non_applicability and "board_soc_arm_primary" in card.get("scenario_type", []):
+                non_applicability = ["riscv_primary_distribution"]
+        non_applicability = [token for token in non_applicability if token not in applicability]
         row = {
             "schema_version": 1,
             "case_id": case_id,
@@ -683,8 +755,8 @@ def normalize_cases(out: Path, card: dict[str, Any], audit_notes: list[str]) -> 
             "evidence_level": str(first_value(frontmatter.get("evidence_level"), evidence_level(evidence))),
             "evidence_type": evidence_type_value,
             "evidence_strength": evidence_strength_value,
-            "applicability": listify(first_value(frontmatter.get("applicability"), inferred["applicability"], default=[])),
-            "non_applicability": listify(first_value(frontmatter.get("non_applicability"), ["riscv_primary_distribution"] if "board_soc_arm_primary" in card.get("scenario_type", []) else [], default=[])),
+            "applicability": applicability,
+            "non_applicability": non_applicability,
             "evidence": evidence,
             "rule": rule,
             "risks": listify(frontmatter.get("risks")),
