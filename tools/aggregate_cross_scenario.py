@@ -80,16 +80,31 @@ PROMOTION_LEVELS = [
 
 CONDITIONAL_METHOD_SPECS = [
     {
-        "method_id": "META-CONDITIONAL-HDF-AUDIO-CHAIN",
-        "title": "HDF/Audio Multi-Repo Enablement Chain",
+        "method_id": "META-CONDITIONAL-HDF-DRIVER-MULTIREPO-CHAIN",
+        "title": "HDF Driver Multi-Repo Enablement Chain",
         "keywords": ["hdf", "audio", "alsa", "codec", "hcs", "hcb"],
-        "statement": "HDF/audio enablement is conditional reusable knowledge only when driver implementation, board or SoC binding, vendor/HCS/HCB or policy configuration, generated assets, and validation status are reviewed as one chain.",
-        "applicability": ["hdf_audio", "driver_hdf_porting", "board_vendor_audio_stack"],
-        "non_applicability": ["single codec patch without board/vendor config", "generated HCB or binary archive used as source proof"],
+        "match_mode": "hdf_driver",
+        "exclude_keywords": ["camera", "media", "v4l2", "usb camera", "usb_camera"],
+        "statement": "HDF driver enablement is conditional reusable knowledge only when driver implementation, board or SoC binding, vendor/HCS/HCB or policy configuration, generated assets, and validation status are reviewed as one chain.",
+        "applicability": ["hdf_driver_porting", "hdf_audio", "board_vendor_driver_stack"],
+        "non_applicability": ["camera/media HDF chains that require V4L2 or USB-host handling", "single codec patch without board/vendor config", "generated HCB or binary archive used as source proof"],
         "quality_gates": [
             "At least one source-level driver or HAL path is present.",
             "At least one board/vendor/product configuration path is present.",
             "Generated HDF assets and binary archives remain provenance or runtime-risk evidence.",
+        ],
+    },
+    {
+        "method_id": "META-CONDITIONAL-MEDIA-CAMERA-HDF-CHAIN",
+        "title": "Media/Camera HDF And V4L2 Enablement Chain",
+        "keywords": ["camera", "media", "v4l2", "usb camera", "usb_camera"],
+        "statement": "Camera/media HDF enablement is conditional reusable knowledge when HDF camera capability, V4L2 or USB-host plumbing, board/product configuration, and runtime validation requirements are traced together.",
+        "applicability": ["media_camera_hdf", "usb_camera", "v4l2_driver_stack"],
+        "non_applicability": ["audio-only HDF chains", "single media codec config without driver or board binding", "camera feature claims without runtime validation evidence"],
+        "quality_gates": [
+            "Separate camera/media capability configuration from audio HDF policy.",
+            "Require driver, bus or host controller, and board/product wiring before reuse.",
+            "Keep runtime validation unknown unless camera device enumeration or capture logs exist.",
         ],
     },
     {
@@ -135,16 +150,31 @@ CONDITIONAL_METHOD_SPECS = [
         ],
     },
     {
-        "method_id": "META-CONDITIONAL-BINARY-DIRTY-GOVERNANCE",
-        "title": "Binary, Prebuilt, Generated Asset, And Dirty Workspace Governance",
-        "keywords": ["binary", "prebuilt", "dirty", "generated", ".ko", ".bin", ".o", ".a", "hcb"],
-        "statement": "Binary, prebuilt, generated-asset, and dirty workspace records are conditionally reusable as governance evidence, not as source fixes, until they have provenance, clean commit conversion, regeneration path, or validation evidence.",
-        "applicability": ["binary_prebuilt_governance", "dirty_workspace_governance", "risk_governance"],
-        "non_applicability": ["committed source fix proof", "formal universal source-porting method"],
+        "method_id": "META-CONDITIONAL-BINARY-PREBUILT-PROVENANCE",
+        "title": "Binary, Prebuilt, Generated Asset, And Firmware Provenance",
+        "keywords": ["binary", "prebuilt", "firmware", "generated", "provenance", ".ko", ".bin", ".o", ".a", "hcb", ".so"],
+        "match_mode": "binary_provenance",
+        "statement": "Binary, prebuilt, generated-asset, and firmware records are conditionally reusable as provenance evidence, not as source fixes, until source origin, license, regeneration path, architecture, and validation status are documented.",
+        "applicability": ["binary_prebuilt_provenance", "firmware_governance", "generated_asset_governance"],
+        "non_applicability": ["dirty workspace workflow governance", "committed source fix proof", "formal universal source-porting method"],
         "quality_gates": [
             "Record path, hash, architecture, possible usage, and redistribution risk.",
-            "Keep dirty files separate from committed history.",
             "Link generated assets back to their generator or mark provenance unknown.",
+            "Keep validation unknown unless boot or runtime logs prove the asset is used successfully.",
+        ],
+    },
+    {
+        "method_id": "META-CONDITIONAL-DIRTY-WORKSPACE-GOVERNANCE",
+        "title": "Dirty Workspace And Local Patch Governance",
+        "keywords": ["dirty", "workspace", "workaround", "local", "generated"],
+        "match_mode": "dirty_workspace",
+        "statement": "Dirty workspace and local patch records are conditionally reusable only as workflow governance until they are converted into clean commits, linked to evidence_refs, and revalidated against build, boot, or runtime expectations.",
+        "applicability": ["dirty_workspace_governance", "local_patch_governance", "risk_governance"],
+        "non_applicability": ["binary provenance without local workspace changes", "clean committed source history", "formal universal source-porting method"],
+        "quality_gates": [
+            "Keep dirty files separate from committed history.",
+            "Classify each dirty record as experiment, generated output, workaround, missing commit, or risk.",
+            "Require a clean patch or commit before promoting dirty evidence into reusable source guidance.",
         ],
     },
 ]
@@ -649,13 +679,23 @@ def method_title(statement: str, fragments: list[dict[str, Any]]) -> str:
 
 
 def case_search_text(case: dict[str, Any]) -> str:
+    evidence = case.get("evidence") if isinstance(case.get("evidence"), dict) else {}
+    binary_assets = evidence.get("binary_assets") if isinstance(evidence.get("binary_assets"), list) else []
+    dirty_files = evidence.get("dirty_files") if isinstance(evidence.get("dirty_files"), list) else []
+    binary_paths = [asset.get("path") for asset in binary_assets if isinstance(asset, dict)]
+    dirty_paths = [item.get("file_path") for item in dirty_files if isinstance(item, dict)]
     return text_blob(
         case.get("case_id"),
         case.get("title"),
         case.get("porting_phase"),
         case.get("subsystem"),
         case.get("problem_type"),
+        case.get("evidence_type"),
+        case.get("evidence_level"),
+        case.get("reuse_level"),
         case.get("rule"),
+        binary_paths,
+        dirty_paths,
     )
 
 
@@ -671,6 +711,12 @@ def case_scope_text(case: dict[str, Any]) -> str:
 
 def case_matches_conditional_spec(case: dict[str, Any], spec: dict[str, Any]) -> bool:
     mode = str(spec.get("match_mode") or "")
+    text = case_search_text(case)
+    if any(str(keyword).lower() in text for keyword in spec.get("exclude_keywords", [])):
+        return False
+    if mode == "hdf_driver":
+        scope = case_scope_text(case)
+        return any(token in scope for token in ["hdf", "hcs", "hcb"])
     if mode == "riscv_route":
         scope = text_blob(case.get("case_id"), case.get("porting_phase"), case.get("subsystem"), case.get("problem_type"))
         route_tokens = [
@@ -690,7 +736,15 @@ def case_matches_conditional_spec(case: dict[str, Any], spec: dict[str, Any]) ->
     if mode == "boot_scope":
         scope = case_scope_text(case)
         return any(token in scope for token in ["boot", "firmware", "provenance", "partition", "reboot"])
-    text = case_search_text(case)
+    if mode == "binary_provenance":
+        evidence = case.get("evidence") if isinstance(case.get("evidence"), dict) else {}
+        has_binary_assets = bool(evidence.get("binary_assets"))
+        return has_binary_assets or any(str(keyword).lower() in text for keyword in spec.get("keywords", []))
+    if mode == "dirty_workspace":
+        evidence = case.get("evidence") if isinstance(case.get("evidence"), dict) else {}
+        has_dirty_files = bool(evidence.get("dirty_files"))
+        scope = text_blob(case.get("case_id"), case.get("title"), case.get("porting_phase"), case.get("subsystem"), case.get("problem_type"), case.get("reuse_level"), case.get("rule"))
+        return has_dirty_files or any(str(keyword).lower() in scope for keyword in spec.get("keywords", []))
     return any(str(keyword).lower() in text for keyword in spec.get("keywords", []))
 
 
@@ -1131,7 +1185,7 @@ def write_methodology(out: Path, scenario_count: int, cases: list[dict[str, Any]
         "driver_hdf_porting_runbook.md": runbook_doc(
             "Driver/HDF Porting Runbook",
             "Use this runbook for HDF, audio, camera/media, display/GPU, USB, WiFi, SDIO, kernel driver, HAL, and vendor policy integration.",
-            ["cases.jsonl filtered by hdf_integration or driver_enablement", "conditional_methods.jsonl for HDF/audio and WiFi/SDIO clusters", "evidence_trace_index.jsonl for pattern-to-case links"],
+            ["cases.jsonl filtered by hdf_integration or driver_enablement", "conditional_methods.jsonl for HDF driver, media/camera HDF, and WiFi/SDIO clusters", "evidence_trace_index.jsonl for pattern-to-case and meta-method links"],
             ["Driver/HDF chain map", "Generated asset and binary separation notes", "Runtime validation requirements"],
             [
                 "Select all cases in the subsystem chain before interpreting any single driver patch.",
@@ -1190,7 +1244,7 @@ def write_methodology(out: Path, scenario_count: int, cases: list[dict[str, Any]
         (out / "03_methodology" / filename).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def write_global_kb(out: Path, cases: list[dict[str, Any]], patterns: list[dict[str, Any]], fragments: list[dict[str, Any]], anti_patterns: list[dict[str, Any]]) -> None:
+def write_global_kb(out: Path, cases: list[dict[str, Any]], patterns: list[dict[str, Any]], fragments: list[dict[str, Any]], anti_patterns: list[dict[str, Any]], meta_methods: list[dict[str, Any]]) -> None:
     evidence_rows = []
     for case in cases:
         evidence_rows.append(
@@ -1255,6 +1309,35 @@ def write_global_kb(out: Path, cases: list[dict[str, Any]], patterns: list[dict[
                     "evidence_ref": evidence_ref_for_case(case, case_id),
                 }
             )
+    for method in meta_methods:
+        method_id = str(method.get("method_id") or "")
+        if not method_id:
+            continue
+        for pattern_id in method.get("supporting_patterns") or []:
+            pattern = patterns_by_id.get(pattern_id)
+            traces.append(
+                {
+                    "trace_id": next_trace_id("META-METHOD-PATTERN"),
+                    "trace_type": "meta_method_to_pattern",
+                    "meta_method_id": method_id,
+                    "pattern_id": pattern_id,
+                    "scenario_id": pattern.get("scenario_id") if pattern else None,
+                    "pattern_exists": bool(pattern),
+                }
+            )
+        for case_id in method.get("supporting_cases") or []:
+            case = cases_by_id.get(case_id)
+            traces.append(
+                {
+                    "trace_id": next_trace_id("META-METHOD-CASE"),
+                    "trace_type": "meta_method_to_case",
+                    "meta_method_id": method_id,
+                    "case_id": case_id,
+                    "scenario_id": case.get("scenario_id") if case else None,
+                    "case_exists": bool(case),
+                    "evidence_ref": evidence_ref_for_case(case, case_id),
+                }
+            )
     write_jsonl(out / "04_global_kb/evidence_trace_index.jsonl", traces)
     (out / "04_global_kb/path_module_ontology.md").write_text(
         "# Path / Module Ontology\n\n- `device/board`: board binding and hardware configuration.\n- `device/soc`: SoC BSP, UAPI, drivers and platform glue.\n- `vendor`: product/vendor configuration and generated HDF assets.\n- `drivers`: HDF and kernel-facing driver code.\n- `third_party`: imported runtime/build dependencies and architecture compatibility work.\n- `prebuilts`: toolchain/runtime prebuilts requiring provenance governance.\n",
@@ -1285,6 +1368,7 @@ def generated_skill_doc(
     non_applicability: list[str] | None = None,
     examples: list[str] | None = None,
     anti_examples: list[str] | None = None,
+    method_refs: list[str] | None = None,
 ) -> str:
     lines = [
         f"# {title}",
@@ -1307,6 +1391,8 @@ def generated_skill_doc(
         "- `01_normalized_cases/cases.jsonl` provides canonical `evidence_type`, `evidence_strength`, and registry-scoped `scenario_type` values.",
         "- `02_patterns/meta_methods.jsonl`, `conditional_methods.jsonl`, `pattern_candidates.jsonl`, `anti_patterns.jsonl`, and `method_fragments.jsonl` provide promotion and traceability inputs.",
         "- `04_global_kb/evidence_trace_index.jsonl` links methods and patterns back to compact evidence references.",
+        "- `meta_skill_pack/references/conditional_method_index.md` maps installable skills to conditional method IDs.",
+        "- `meta_skill_pack/examples/case_selector_examples.yaml` provides minimal selector examples.",
         "",
         "## Output Contract",
         "",
@@ -1318,6 +1404,24 @@ def generated_skill_doc(
         "## Case Selector",
         "",
         selector,
+        "",
+        "## Method References",
+        "",
+    ])
+    lines.extend(f"- `{item}`" for item in (method_refs or ["02_patterns/meta_methods.jsonl", "02_patterns/conditional_methods.jsonl"]))
+    lines.extend([
+        "",
+        "## Cross-Scenario Relationship",
+        "",
+        "- Single-scenario pipeline runs produce `07_meta_inputs`; the cross-scenario aggregator normalizes and promotes those compact records.",
+        "- This skill uses cross-scenario methods only after checking registry scope, case selectors, and evidence trace rows.",
+        "- When installed outside the output tree, keep a copy of the meta output path or pass it explicitly in the task request.",
+        "",
+        "## Installed Use",
+        "",
+        "- Install with `bash meta_skill_pack/install.sh` from a generated meta output directory.",
+        "- Invoke the installed skill by naming the task scope and the meta output directory in the Codex request.",
+        "- Re-run validation after editing any generated Skill, reference, schema, or conditional method file.",
         "",
         "## Workflow",
         "",
@@ -1370,6 +1474,14 @@ def generated_skill_doc(
             "bash tools/run_cross_scenario_aggregator.sh --input <porting_knowledge_output> --out <openharmony_porting_meta_output>",
             "```",
             "",
+            "## Minimum Test Commands",
+            "",
+            "```bash",
+            "test -x <openharmony_porting_meta_output>/meta_skill_pack/install.sh",
+            "python3 tools/validate_meta_output.py --out <openharmony_porting_meta_output>",
+            "python3 -m json.tool <openharmony_porting_meta_output>/meta_skill_pack/schemas/meta_method.schema.json >/dev/null",
+            "```",
+            "",
             f"Current scenario count at generation time: `{scenario_count}`.",
         ]
     )
@@ -1387,6 +1499,7 @@ def skill_pack_doc(name: str, description: str, selector: str, focus: list[str],
         list(spec.get("non_applicability", [])),
         list(spec.get("examples", [])),
         list(spec.get("anti_examples", [])),
+        list(spec.get("method_refs", [])),
     )
     return "\n".join(
         [
@@ -1420,12 +1533,19 @@ def skill_specs() -> dict[str, dict[str, Any]]:
                 "Runtime validation claims without validation_status or logs.",
             ],
             "examples": [
-                "Use `META-CONDITIONAL-HDF-AUDIO-CHAIN` when several scenarios show HDF/audio cases with driver and vendor configuration evidence.",
+                "Use `META-CONDITIONAL-HDF-DRIVER-MULTIREPO-CHAIN` when several scenarios show HDF driver cases with driver and vendor configuration evidence.",
                 "Use `universal_by_design` methods only as guardrails before selecting conditional source methods.",
             ],
             "anti_examples": [
                 "Do not call evidence-class separation a case-derived source fix.",
                 "Do not merge ARM-primary and RISC-V-primary evidence into an unlabeled universal rule.",
+            ],
+            "method_refs": [
+                "META-CONDITIONAL-HDF-DRIVER-MULTIREPO-CHAIN",
+                "META-CONDITIONAL-WIFI-SDIO-RUNTIME-CHAIN",
+                "META-CONDITIONAL-RISCV-BUILD-RUNTIME-ROUTE",
+                "META-CONDITIONAL-BINARY-PREBUILT-PROVENANCE",
+                "META-CONDITIONAL-DIRTY-WORKSPACE-GOVERNANCE",
             ],
         },
         "arm_primary_board_soc": {
@@ -1453,6 +1573,13 @@ def skill_specs() -> dict[str, dict[str, Any]]:
                 "Do not treat an auxiliary RISC-V firmware blob as the OpenHarmony runtime architecture.",
                 "Do not call a single board DTS patch the full board/SoC port.",
             ],
+            "method_refs": [
+                "META-CONDITIONAL-HDF-DRIVER-MULTIREPO-CHAIN",
+                "META-CONDITIONAL-WIFI-SDIO-RUNTIME-CHAIN",
+                "META-CONDITIONAL-BOOT-FIRMWARE-PROVENANCE",
+                "META-CONDITIONAL-BINARY-PREBUILT-PROVENANCE",
+                "META-CONDITIONAL-DIRTY-WORKSPACE-GOVERNANCE",
+            ],
         },
         "riscv_primary_distribution": {
             "description": "Review RISC-V-primary OpenHarmony distribution porting cases.",
@@ -1478,6 +1605,13 @@ def skill_specs() -> dict[str, dict[str, Any]]:
             "anti_examples": [
                 "Do not infer RISC-V runtime support from a prebuilt toolchain alone.",
                 "Do not promote one SoC vendor workaround as a general RISC-V distribution rule.",
+            ],
+            "method_refs": [
+                "META-CONDITIONAL-RISCV-BUILD-RUNTIME-ROUTE",
+                "META-CONDITIONAL-WIFI-SDIO-RUNTIME-CHAIN",
+                "META-CONDITIONAL-MEDIA-CAMERA-HDF-CHAIN",
+                "META-CONDITIONAL-BINARY-PREBUILT-PROVENANCE",
+                "META-CONDITIONAL-DIRTY-WORKSPACE-GOVERNANCE",
             ],
         },
         "heterogeneous_aux_core": {
@@ -1505,6 +1639,11 @@ def skill_specs() -> dict[str, dict[str, Any]]:
                 "Do not move a board into RISC-V-primary scope because an auxiliary firmware file is RISC-V.",
                 "Do not treat firmware presence as proof of runtime feature validation.",
             ],
+            "method_refs": [
+                "META-CONDITIONAL-BOOT-FIRMWARE-PROVENANCE",
+                "META-CONDITIONAL-BINARY-PREBUILT-PROVENANCE",
+                "META-CONDITIONAL-DIRTY-WORKSPACE-GOVERNANCE",
+            ],
         },
     }
 
@@ -1531,7 +1670,7 @@ def write_generated_skills(out: Path, scenario_count: int) -> None:
         (out / "05_generated_skills" / filenames[name]).write_text(text, encoding="utf-8")
 
 
-def write_meta_skill_pack(out: Path, scenario_count: int) -> None:
+def write_meta_skill_pack(out: Path, scenario_count: int, conditional_methods: list[dict[str, Any]]) -> None:
     pack = out / "meta_skill_pack"
     specs = skill_specs()
     for name, spec in specs.items():
@@ -1550,17 +1689,42 @@ def write_meta_skill_pack(out: Path, scenario_count: int) -> None:
         )
     references = pack / "references"
     schemas = pack / "schemas"
+    examples = pack / "examples"
     references.mkdir(parents=True, exist_ok=True)
     schemas.mkdir(parents=True, exist_ok=True)
+    examples.mkdir(parents=True, exist_ok=True)
     (references / "meta_output_contract.md").write_text(
         "# Meta Output Contract\n\n"
         "- `scenario_type` in cases must be a subset of the registry scenario_type for the same scenario_id.\n"
         "- `evidence_type` and `evidence_level` use evidence source enums; `evidence_strength` uses strength enums.\n"
         "- `promotion_level` distinguishes `universal_by_design` from `universal_from_evidence`.\n"
         "- Cross-scenario conditional methods use `promotion_level=conditional` and `derivation=conditional_from_evidence`.\n"
+        "- `evidence_trace_index.jsonl` includes explicit `meta_method_to_case` and `meta_method_to_pattern` rows for machine audit.\n"
         "- `scenario_shape` may hold synthesized labels, but registry-defined `scenario_type` must remain canonical.\n",
         encoding="utf-8",
     )
+    method_index_lines = [
+        "# Conditional Method Index",
+        "",
+        "This reference maps generated installable Skills to conditional methods in `../../02_patterns/conditional_methods.jsonl`.",
+        "",
+    ]
+    method_refs_by_skill = {name: set(list(spec.get("method_refs", []))) for name, spec in specs.items()}
+    for method in conditional_methods:
+        method_id = str(method.get("method_id") or "")
+        method_index_lines.extend(
+            [
+                f"## {method_id}",
+                "",
+                f"- Title: {method.get('title')}",
+                f"- Scenario IDs: {', '.join(listify(method.get('scenario_ids')))}",
+                f"- Supporting cases: {', '.join(listify(method.get('supporting_cases')))}",
+                f"- Supporting patterns: {', '.join(listify(method.get('supporting_patterns')))}",
+                f"- Skill refs: {', '.join(sorted(name for name, refs in method_refs_by_skill.items() if method_id in refs)) or 'unassigned'}",
+                "",
+            ]
+        )
+    (references / "conditional_method_index.md").write_text("\n".join(method_index_lines), encoding="utf-8")
     (schemas / "meta_method.schema.json").write_text(
         json.dumps(
             {
@@ -1586,10 +1750,96 @@ def write_meta_skill_pack(out: Path, scenario_count: int) -> None:
         + "\n",
         encoding="utf-8",
     )
+    (schemas / "case_selector.schema.json").write_text(
+        json.dumps(
+            {
+                "type": "object",
+                "required": ["scenario_type", "selectors"],
+                "properties": {
+                    "scenario_type": {"type": "array", "items": {"type": "string"}},
+                    "selectors": {
+                        "type": "object",
+                        "properties": {
+                            "subsystem": {"type": "array", "items": {"type": "string"}},
+                            "problem_type": {"type": "array", "items": {"type": "string"}},
+                            "method_refs": {"type": "array", "items": {"type": "string"}},
+                        },
+                        "additionalProperties": True,
+                    },
+                    "required_evidence": {"type": "array", "items": {"type": "string"}},
+                    "validation_required_for_claims": {"type": "array", "items": {"type": "string"}},
+                },
+                "additionalProperties": True,
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (schemas / "scenario_registry.schema.json").write_text(
+        json.dumps(
+            {
+                "type": "object",
+                "required": ["scenarios"],
+                "properties": {
+                    "scenarios": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["scenario_id", "scenario_type"],
+                            "properties": {
+                                "scenario_id": {"type": "string"},
+                                "scenario_type": {"type": "array", "items": {"type": "string"}},
+                                "scenario_shape": {"type": "array", "items": {"type": "string"}},
+                                "runtime_arch": {"type": "string"},
+                                "soc_vendor": {"type": "string"},
+                                "board": {"type": "string"},
+                                "validation_status": {"type": "object"},
+                            },
+                            "additionalProperties": True,
+                        },
+                    }
+                },
+                "additionalProperties": True,
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (examples / "case_selector_examples.yaml").write_text(
+        "universal_openharmony_porting:\n"
+        "  scenario_type: [board_soc_arm_primary, riscv_primary_distribution]\n"
+        "  selectors:\n"
+        "    method_refs: [META-CONDITIONAL-HDF-DRIVER-MULTIREPO-CHAIN, META-CONDITIONAL-WIFI-SDIO-RUNTIME-CHAIN]\n"
+        "  required_evidence: [supporting_cases, supporting_patterns, evidence_ref]\n"
+        "arm_primary_board_soc:\n"
+        "  scenario_type: [board_soc_arm_primary]\n"
+        "  selectors:\n"
+        "    subsystem: [hdf_audio, kernel_wifi_build, boot_firmware]\n"
+        "    method_refs: [META-CONDITIONAL-HDF-DRIVER-MULTIREPO-CHAIN, META-CONDITIONAL-BOOT-FIRMWARE-PROVENANCE]\n"
+        "riscv_primary_distribution:\n"
+        "  scenario_type: [riscv_primary_distribution]\n"
+        "  selectors:\n"
+        "    problem_type: [riscv_build, product_board_binding, camera_usb_host_integration]\n"
+        "    method_refs: [META-CONDITIONAL-RISCV-BUILD-RUNTIME-ROUTE, META-CONDITIONAL-MEDIA-CAMERA-HDF-CHAIN]\n"
+        "heterogeneous_aux_core:\n"
+        "  scenario_type: [heterogeneous_aux_core]\n"
+        "  selectors:\n"
+        "    subsystem: [boot_firmware]\n"
+        "    method_refs: [META-CONDITIONAL-BINARY-PREBUILT-PROVENANCE]\n",
+        encoding="utf-8",
+    )
     (pack / "README.md").write_text(
         "# OpenHarmony Porting Meta Skill Pack\n\n"
         "Installable Codex Skill drafts generated from cross-scenario OpenHarmony porting evidence.\n\n"
-        "Run `bash install.sh` from this directory to copy the skill folders into `${CODEX_HOME:-$HOME/.codex}/skills`.\n",
+        "Run `bash install.sh` from this directory to copy the skill folders into `${CODEX_HOME:-$HOME/.codex}/skills`.\n\n"
+        "References:\n\n"
+        "- `references/conditional_method_index.md` maps skills to conditional method IDs.\n"
+        "- `schemas/*.schema.json` documents the expected method, registry, and selector contracts.\n"
+        "- `examples/case_selector_examples.yaml` gives minimal selector templates.\n",
         encoding="utf-8",
     )
     install = pack / "install.sh"
@@ -1604,9 +1854,10 @@ mkdir -p "${DEST}"
 for skill in universal_openharmony_porting arm_primary_board_soc riscv_primary_distribution heterogeneous_aux_core; do
   mkdir -p "${DEST}/${skill}"
   cp -R "${SCRIPT_DIR}/${skill}/." "${DEST}/${skill}/"
-  mkdir -p "${DEST}/${skill}/references" "${DEST}/${skill}/schemas"
+  mkdir -p "${DEST}/${skill}/references" "${DEST}/${skill}/schemas" "${DEST}/${skill}/examples"
   cp -R "${SCRIPT_DIR}/references/." "${DEST}/${skill}/references/"
   cp -R "${SCRIPT_DIR}/schemas/." "${DEST}/${skill}/schemas/"
+  cp -R "${SCRIPT_DIR}/examples/." "${DEST}/${skill}/examples/"
   echo "installed ${skill} -> ${DEST}/${skill}"
 done
 """,
@@ -1668,6 +1919,33 @@ def write_meta_report(out: Path, scenarios: list[dict[str, Any]], cases: list[di
     (out / "meta_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def write_refine_placeholders(out: Path) -> None:
+    log_dir = out / "_codex_logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    result = {
+        "status": "skipped",
+        "summary": "LLM refinement was not requested; deterministic cross-scenario aggregation output is retained.",
+        "input_files_read": [],
+        "output_files_written": [
+            "_llm_refine_result.json",
+            "_llm_refine.ndjson",
+            "_codex_logs/09_cross_scenario_refine.skipped.json",
+        ],
+        "blocking_issues": [],
+        "non_blocking_issues": ["Run run_cross_scenario_aggregator.sh with --llm-refine to request Codex text refinement."],
+        "next_stage_inputs": ["openharmony_porting_meta_output"],
+        "generated_at": now_iso(),
+    }
+    (out / "_llm_refine_result.json").write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    event = {
+        "event": "llm_refine_skipped",
+        "reason": "--llm-refine not requested",
+        "generated_at": result["generated_at"],
+    }
+    (out / "_llm_refine.ndjson").write_text(json.dumps(event, ensure_ascii=False) + "\n", encoding="utf-8")
+    (log_dir / "09_cross_scenario_refine.skipped.json").write_text(json.dumps(event, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", action="append", default=[], help="porting_knowledge_output or 07_meta_inputs path")
@@ -1706,15 +1984,17 @@ def main() -> None:
     write_case_indexes(out, cases)
     write_machine_readable_patterns(out, patterns, fragments, anti_patterns)
     conditional_methods = write_universal_methods(out, scenarios, fragments, cases, patterns)
+    meta_methods = read_jsonl(out / "02_patterns/meta_methods.jsonl")
     write_conditional_patterns(out, patterns, cases, conditional_methods)
     write_scenario_specific(out, cases)
     write_anti_patterns(out, anti_patterns)
     write_additional_pattern_views(out, cases, patterns)
     write_methodology(out, len(scenarios), cases)
-    write_global_kb(out, cases, patterns, fragments, anti_patterns)
+    write_global_kb(out, cases, patterns, fragments, anti_patterns, meta_methods)
     write_generated_skills(out, len(scenarios))
-    write_meta_skill_pack(out, len(scenarios))
+    write_meta_skill_pack(out, len(scenarios), conditional_methods)
     write_meta_report(out, scenarios, cases, patterns, anti_patterns, conditional_methods)
+    write_refine_placeholders(out)
 
     result = {
         "schema_version": 1,

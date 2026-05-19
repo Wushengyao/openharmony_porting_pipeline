@@ -59,6 +59,8 @@ Update or create:
 - `05_generated_skills/heterogeneous_aux_core_skill.md`
 - `meta_skill_pack/*/SKILL.md`
 - `meta_skill_pack/references/meta_output_contract.md`
+- `meta_skill_pack/references/conditional_method_index.md`
+- `meta_skill_pack/examples/case_selector_examples.yaml`
 - `meta_report.md`
 
 ## Rules
@@ -67,16 +69,18 @@ Update or create:
 2. Do not promote `universal_from_evidence` unless at least three distinct `scenario_id` values support it and it has at least two `source_case_ids` or `source_patterns`.
 3. Do not merge ARM-primary, RISC-V-primary, and heterogeneous auxiliary-core scenarios into one undifferentiated method.
 4. Generate cross-scenario `conditional` methods from evidence clusters when at least two scenarios and at least two source cases support the method; write them to `conditional_methods.jsonl` and `meta_methods.jsonl`.
-5. `case_inventory_by_scenario.md` may list all cases; `scenario_specific_knowledge.md` must list only exact `reuse_level=scenario_specific` cases.
-6. Anti-patterns must include risk, trigger condition and prevention.
-7. Preserve traceability: every method must refer to scenario IDs, pattern IDs, case IDs, or documented evidence class.
-8. Do not use single-scenario `generated_skill.md` as proof for universal methods.
-9. If information conflicts across scenarios, document the conflict and turn it into a conditional rule rather than smoothing it out.
-10. Do not claim build/boot/runtime/test validation unless validation_status or logs prove it.
-11. Keep case `scenario_type` as a subset of the registry labels for that `scenario_id`; put synthesized labels in `scenario_shape`.
-12. Keep `evidence_type` and `evidence_level` in the canonical evidence-type enum, and keep strength in `evidence_strength`.
-13. Installable skills must be written as `SKILL.md` files with frontmatter, input/output contract, case selector, tool commands, failure handling, and quality gates.
-14. Methodology runbooks must include applicability, inputs, outputs, workflow, evidence requirements, case selector, failure handling, quality gates, example, and anti-example sections.
+5. Keep conditional method boundaries precise: split HDF driver from media/camera HDF, and split binary/prebuilt provenance from dirty workspace governance.
+6. `case_inventory_by_scenario.md` may list all cases; `scenario_specific_knowledge.md` must list only exact `reuse_level=scenario_specific` cases.
+7. Anti-patterns must include risk, trigger condition and prevention.
+8. Preserve traceability: every method must refer to scenario IDs, pattern IDs, case IDs, or documented evidence class; every meta method with supporting cases or patterns must have `meta_method_to_case` and `meta_method_to_pattern` trace rows.
+9. Do not use single-scenario `generated_skill.md` as proof for universal methods.
+10. If information conflicts across scenarios, document the conflict and turn it into a conditional rule rather than smoothing it out.
+11. Do not claim build/boot/runtime/test validation unless validation_status or logs prove it.
+12. Keep case `scenario_type` as a subset of the registry labels for that `scenario_id`; put synthesized labels in `scenario_shape`.
+13. Keep `evidence_type` and `evidence_level` in the canonical evidence-type enum, and keep strength in `evidence_strength`.
+14. Installable skills must be written as `SKILL.md` files with frontmatter, input/output contract, case selector, method references, installed use, tool commands, failure handling, quality gates, and minimum test commands.
+15. Methodology runbooks must include applicability, inputs, outputs, workflow, evidence requirements, case selector, failure handling, quality gates, example, and anti-example sections.
+16. Retain LLM refinement status files even for deterministic-only runs: `_llm_refine_result.json`, `_llm_refine.ndjson`, and `_codex_logs/09_cross_scenario_refine.*`.
 
 ## Validator Contract Terms
 
@@ -88,6 +92,7 @@ The final Markdown is validated by `tools/validate_meta_output.py`. Preserve the
 - If the scenario count is less than 3, `02_patterns/universal_methods.md` must contain the exact heading or sentence `No Formal Universal Methods Promoted`.
 - Preserve `global_method_fragment_id` values when referencing method fragments; local `method_fragment_id` values are not globally unique across scenarios.
 - Keep evidence traceability compact: refer to `evidence_ref` values rather than pasting full evidence blobs into prose.
+- Write explicit `meta_method_to_case` and `meta_method_to_pattern` rows into `04_global_kb/evidence_trace_index.jsonl`.
 - `meta_skill_pack/*/SKILL.md` files must keep YAML frontmatter with `name` and `description`.
 - Do not replace `universal_by_design` / `universal_from_evidence` with a bare `universal` label.
 - `02_patterns/conditional_patterns.md` must contain the exact heading `Cross-Scenario Conditional Methods` and the term `conditional_from_evidence`.

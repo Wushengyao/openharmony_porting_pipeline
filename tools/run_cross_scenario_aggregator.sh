@@ -91,6 +91,8 @@ ARGS+=(--out "${OUT_DIR}")
 echo "[INFO] aggregating cross-scenario meta output: ${OUT_DIR}" >&2
 python3 "${SCRIPT_DIR}/aggregate_cross_scenario.py" "${ARGS[@]}"
 if [[ "${LLM_REFINE}" == "1" ]]; then
+  CODEX_LOG_DIR="${OUT_DIR}/_codex_logs"
+  mkdir -p "${CODEX_LOG_DIR}"
   if ! command -v codex >/dev/null 2>&1; then
     echo "[WARN] --llm-refine requested but codex is not in PATH; skip LLM refinement" >&2
   else
@@ -99,6 +101,7 @@ if [[ "${LLM_REFINE}" == "1" ]]; then
     RESULT="${OUT_DIR}/_llm_refine_result.json"
     LOG="${OUT_DIR}/_llm_refine.ndjson"
     mkdir -p "${OUT_DIR}"
+    rm -f "${CODEX_LOG_DIR}/09_cross_scenario_refine.skipped.json"
     BASE_ARGS=(--cd "$(pwd)" --sandbox workspace-write --skip-git-repo-check --ephemeral --json)
     if [[ -n "${CODEX_MODEL_VALUE}" ]]; then
       BASE_ARGS+=(--model "${CODEX_MODEL_VALUE}")
@@ -112,6 +115,7 @@ if [[ "${LLM_REFINE}" == "1" ]]; then
       - < "${PROMPT}" > "${LOG}" 2>&1 || {
         echo "[WARN] LLM refinement failed; deterministic meta output is preserved. See ${LOG}" >&2
       }
+    cp "${LOG}" "${CODEX_LOG_DIR}/09_cross_scenario_refine.ndjson"
     python3 "${SCRIPT_DIR}/normalize_meta_output_contract.py" --out "${OUT_DIR}"
   fi
 fi

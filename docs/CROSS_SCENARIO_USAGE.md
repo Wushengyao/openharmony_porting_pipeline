@@ -102,13 +102,13 @@ promotion_level: conditional
 derivation: conditional_from_evidence
 ```
 
-Current deterministic clusters include HDF/audio, WiFi/SDIO/wireless, RISC-V build/runtime/product route, boot/firmware/provenance, and binary/dirty governance.
+Current deterministic clusters include HDF driver, media/camera HDF, WiFi/SDIO/wireless, RISC-V build/runtime/product route, boot/firmware/provenance, binary/prebuilt provenance, and dirty workspace governance.
 
 ## 6. Traceability Notes
 
 The aggregated `02_patterns/method_fragments.jsonl` includes `global_method_fragment_id` because single-scenario exporters may reuse local IDs such as `MF-CASE-001`.
 
-`04_global_kb/evidence_trace_index.jsonl` is intentionally slim: it uses `trace_id` and `evidence_ref` links into `04_global_kb/evidence_index.jsonl` instead of embedding full evidence in every trace row.
+`04_global_kb/evidence_trace_index.jsonl` is intentionally slim: it uses `trace_id` and `evidence_ref` links into `04_global_kb/evidence_index.jsonl` instead of embedding full evidence in every trace row. It includes explicit `meta_method_to_case` and `meta_method_to_pattern` rows so machine audits do not have to infer meta-method support from `meta_methods.jsonl` alone.
 
 ## 7. Installable Meta Skill Pack
 
@@ -122,9 +122,11 @@ openharmony_porting_meta_output/meta_skill_pack/
 |-- heterogeneous_aux_core/SKILL.md
 |-- references/
 |-- schemas/
+|-- examples/
 `-- install.sh
 ```
 
 The validation transcript is retained as `_validate_meta_output.log` in the output directory.
+LLM refinement status is always retained as `_llm_refine_result.json`, `_llm_refine.ndjson`, and `_codex_logs/09_cross_scenario_refine.*`; deterministic runs write an explicit skip marker.
 
 The validator requires release-grade runbook sections and expanded Skill contracts, including applicability, non-applicability, inputs, outputs, workflow, evidence rules, failure handling, quality gates, examples, and anti-examples.

@@ -87,6 +87,11 @@ bash tools/run_cross_scenario_aggregator.sh \
   --llm-refine
 ```
 
+Every cross-scenario aggregation retains LLM refinement status files. Deterministic
+runs write `_llm_refine_result.json`, `_llm_refine.ndjson`, and a
+`_codex_logs/09_cross_scenario_refine.skipped.json` marker; `--llm-refine`
+overwrites those with the Codex refinement result and NDJSON log when available.
+
 See `docs/CROSS_SCENARIO_USAGE.md` for a compact usage guide.
 
 The default output directory is:
@@ -131,6 +136,10 @@ Cross-scenario aggregation writes globally unique method fragment identifiers an
 04_global_kb/evidence_index.jsonl         # full evidence by evidence_ref
 04_global_kb/evidence_trace_index.jsonl   # trace_id + evidence_ref links, no embedded evidence blobs
 ```
+
+The trace index includes direct `meta_method_to_case` and
+`meta_method_to_pattern` rows for every meta method with supporting cases or
+patterns.
 
 ## Operating Modes
 

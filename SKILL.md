@@ -59,8 +59,11 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
 - Do not promote force-sync SDK commits, initial imports, `.gitattributes`-only commits, dirty workspace files, or binary imports into reusable source-fix cases.
 - In cross-scenario output, distinguish `universal_by_design` pipeline guardrails from `universal_from_evidence` case/pattern-derived methods; do not use a bare `universal` label.
 - Generate and validate cross-scenario `conditional` methods in `02_patterns/conditional_methods.jsonl` with `derivation=conditional_from_evidence` when evidence clusters span multiple scenarios.
+- Keep conditional method boundaries precise: HDF driver, media/camera HDF, binary/prebuilt provenance, and dirty workspace governance are separate clusters.
+- Preserve direct machine traceability from meta methods to source support by emitting `meta_method_to_case` and `meta_method_to_pattern` rows.
 - Keep case `scenario_type` values within the registry labels for that `scenario_id`; use `scenario_shape` for synthesized labels.
 - Keep `evidence_type` / `evidence_level` separate from `evidence_strength`.
+- Retain LLM refinement status files even when deterministic aggregation is used without `--llm-refine`.
 - Use `porting_knowledge_output/` as the default output root unless the user specifies another directory.
 - Prefer the repository scripts over hand-written ad hoc extraction or validation.
 

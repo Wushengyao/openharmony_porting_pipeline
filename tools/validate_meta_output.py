@@ -52,11 +52,17 @@ REQUIRED_FILES = [
     "meta_skill_pack/README.md",
     "meta_skill_pack/install.sh",
     "meta_skill_pack/references/meta_output_contract.md",
+    "meta_skill_pack/references/conditional_method_index.md",
     "meta_skill_pack/schemas/meta_method.schema.json",
+    "meta_skill_pack/schemas/case_selector.schema.json",
+    "meta_skill_pack/schemas/scenario_registry.schema.json",
+    "meta_skill_pack/examples/case_selector_examples.yaml",
     "meta_skill_pack/universal_openharmony_porting/SKILL.md",
     "meta_skill_pack/arm_primary_board_soc/SKILL.md",
     "meta_skill_pack/riscv_primary_distribution/SKILL.md",
     "meta_skill_pack/heterogeneous_aux_core/SKILL.md",
+    "_llm_refine_result.json",
+    "_llm_refine.ndjson",
     "meta_report.md",
     "cross_scenario_result.json",
 ]
@@ -365,6 +371,8 @@ def main() -> None:
             fail(f"missing required anti-pattern: {required}")
 
     trace_pattern_refs = set()
+    meta_case_traces: set[tuple[str, str]] = set()
+    meta_pattern_traces: set[tuple[str, str]] = set()
     trace_ids: set[str] = set()
     for trace in evidence_traces:
         trace_id = str(trace.get("trace_id") or "")
@@ -377,13 +385,36 @@ def main() -> None:
             fail(f"evidence_trace_index row {trace_id} embeds full evidence; use evidence_ref and 04_global_kb/evidence_index.jsonl instead")
         if trace.get("pattern_id"):
             trace_pattern_refs.add(str(trace.get("pattern_id")))
-        if trace.get("trace_type") in {"pattern_to_case", "method_to_case"} and not trace.get("evidence_ref"):
+        trace_type = str(trace.get("trace_type") or "")
+        if trace_type in {"pattern_to_case", "method_to_case", "meta_method_to_case"} and not trace.get("evidence_ref"):
             fail(f"evidence_trace_index row {trace_id} missing evidence_ref")
-        if trace.get("trace_type") in {"method_to_pattern", "method_to_case"} and not trace.get("global_method_fragment_id"):
+        if trace_type in {"method_to_pattern", "method_to_case"} and not trace.get("global_method_fragment_id"):
             fail(f"evidence_trace_index row {trace_id} missing global_method_fragment_id")
+        if trace_type in {"meta_method_to_case", "meta_method_to_pattern"}:
+            meta_method_id = str(trace.get("meta_method_id") or "")
+            if meta_method_id not in meta_method_ids:
+                fail(f"evidence_trace_index row {trace_id} references unknown meta_method_id {meta_method_id}")
+            if trace_type == "meta_method_to_case":
+                case_id = str(trace.get("case_id") or "")
+                if case_id not in case_ids:
+                    fail(f"evidence_trace_index row {trace_id} references unknown case_id {case_id}")
+                meta_case_traces.add((meta_method_id, case_id))
+            if trace_type == "meta_method_to_pattern":
+                pattern_id = str(trace.get("pattern_id") or "")
+                if pattern_id not in pattern_ids:
+                    fail(f"evidence_trace_index row {trace_id} references unknown pattern_id {pattern_id}")
+                meta_pattern_traces.add((meta_method_id, pattern_id))
     for pattern in patterns:
         if pattern.get("source_case_ids") and str(pattern.get("pattern_id")) not in trace_pattern_refs:
             fail(f"pattern {pattern.get('pattern_id')} has source cases but no evidence_trace_index entry")
+    for method in meta_methods:
+        method_id = str(method.get("method_id") or "")
+        for case_id in listify(method.get("supporting_cases")):
+            if (method_id, case_id) not in meta_case_traces:
+                fail(f"meta method {method_id} missing meta_method_to_case trace for {case_id}")
+        for pattern_id in listify(method.get("supporting_patterns")):
+            if (method_id, pattern_id) not in meta_pattern_traces:
+                fail(f"meta method {method_id} missing meta_method_to_pattern trace for {pattern_id}")
     trace_max_len = max_jsonl_line_length(out / "04_global_kb/evidence_trace_index.jsonl")
     if trace_max_len > 4096:
         fail(f"evidence_trace_index.jsonl lines are too long ({trace_max_len} bytes max); use evidence_ref instead of embedded evidence")
@@ -412,7 +443,7 @@ def main() -> None:
             fail(f"{path} is too short for release-grade Skill draft; expected at least 3000 bytes")
         if not text.startswith("---\n"):
             fail(f"{path} missing SKILL.md frontmatter")
-        for term in ["name:", "description:", "Applicability", "Non-Applicability", "Input Contract", "Output Contract", "Workflow", "Case Selector", "Evidence Rules", "Failure Gates", "Quality Checklist", "Examples", "Anti-Examples"]:
+        for term in ["name:", "description:", "Applicability", "Non-Applicability", "Input Contract", "Output Contract", "Workflow", "Case Selector", "Method References", "Cross-Scenario Relationship", "Installed Use", "Evidence Rules", "Failure Gates", "Quality Checklist", "Examples", "Anti-Examples", "Minimum Test Commands"]:
             if term not in text:
                 fail(f"{path} missing required Skill contract term {term}")
     for rel in [
@@ -428,6 +459,8 @@ def main() -> None:
         require_terms(path, ["Applicability", "Inputs", "Outputs", "Workflow", "Evidence Requirements", "Case Selector", "Failure Handling", "Quality Gates", "Example", "Anti-Example"])
     if not os.access(out / "meta_skill_pack/install.sh", os.X_OK):
         fail("meta_skill_pack/install.sh must be executable")
+    if not any((out / "_codex_logs").glob("09_cross_scenario_refine.*")):
+        fail("_codex_logs must retain 09_cross_scenario_refine.* LLM refinement log or skip marker")
     universal_text = (out / "02_patterns/universal_methods.md").read_text(encoding="utf-8", errors="ignore").lower()
     if "### universal:" in universal_text or "promotion_level: universal\n" in universal_text:
         fail("universal_methods.md must use universal_by_design or universal_from_evidence, not bare universal")
