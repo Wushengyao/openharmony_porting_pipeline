@@ -103,6 +103,7 @@ if [[ "${LLM_REFINE}" == "1" ]]; then
       - < "${PROMPT}" > "${LOG}" 2>&1 || {
         echo "[WARN] LLM refinement failed; deterministic meta output is preserved. See ${LOG}" >&2
       }
+    python3 "${SCRIPT_DIR}/normalize_meta_output_contract.py" --out "${OUT_DIR}"
   fi
 fi
 echo "[INFO] validating meta output: ${OUT_DIR}" >&2
