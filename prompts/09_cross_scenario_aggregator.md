@@ -67,6 +67,17 @@ Update or create:
 9. If information conflicts across scenarios, document the conflict and turn it into a conditional rule rather than smoothing it out.
 10. Do not claim build/boot/runtime/test validation unless validation_status or logs prove it.
 
+## Validator Contract Terms
+
+The final Markdown is validated by `tools/validate_meta_output.py`. Preserve these exact terms even when the surrounding prose is refined:
+
+- `02_patterns/conditional_patterns.md` must contain the exact terms `ARM-primary`, `RISC-V-primary`, and `heterogeneous_aux_core`.
+- `02_patterns/anti_patterns.md` must contain the exact terms `dirty`, `binary`, `force-sync`, `.gitattributes`, and `RISC-V`.
+- `meta_report.md` must contain the exact reuse class terms `universal`, `universal_candidate`, `conditional`, `scenario_specific`, `risk_only`, and `anti_pattern`.
+- If the scenario count is less than 3, `02_patterns/universal_methods.md` must contain the exact heading or sentence `No Formal Universal Methods Promoted`.
+
+These terms are contract markers, not optional wording. Do not replace them with synonyms such as "RISC-V Primary", "risk-only", or "none promoted".
+
 ## Final JSON
 
 Return JSON conforming to `stage_result.schema.json` with status, summary, input_files_read, output_files_written, blocking_issues, non_blocking_issues, and next_stage_inputs.
