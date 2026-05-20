@@ -19,6 +19,8 @@ DEFAULT_ARTIFACT_ROOT = "08_execution_assistant"
 
 REQUIRED_FILES = [
     "target_profile.yaml",
+    "meta_knowledge_digest.yaml",
+    "meta_knowledge_digest.md",
     "source_tree_survey.yaml",
     "source_tree_survey.md",
     "gap_analysis.yaml",
@@ -37,6 +39,7 @@ REQUIRED_FILES = [
 
 ARTIFACT_CONTRACTS = {
     "target_profile.yaml": ("target_profile", "requirements"),
+    "meta_knowledge_digest.yaml": ("meta_knowledge_digest", "selected_methods"),
     "source_tree_survey.yaml": ("source_tree_survey", "items"),
     "gap_analysis.yaml": ("gap_analysis", "gaps"),
     "porting_plan.yaml": ("porting_plan", "phases"),
@@ -176,6 +179,9 @@ def validate_nested_evidence(value: Any, context: str) -> None:
     if isinstance(value, dict):
         evidence_bearing_keys = [
             "requirement_id",
+            "method_id",
+            "case_id",
+            "action_id",
             "survey_id",
             "gap_id",
             "phase_id",
@@ -230,6 +236,19 @@ def validate_target_profile(path: Path, data: dict[str, Any]) -> None:
     for idx, req in enumerate(requirements):
         if isinstance(req, dict):
             validate_evidence_refs(req, f"target_profile.yaml.requirements[{idx}]")
+
+
+def validate_meta_knowledge_digest(path: Path, data: dict[str, Any]) -> None:
+    for key in ["selected_methods", "deferred_methods", "selected_cases", "action_bias"]:
+        if key not in data:
+            fail(f"meta_knowledge_digest.yaml missing {key}")
+        if not isinstance(data.get(key), list):
+            fail(f"meta_knowledge_digest.yaml {key} must be a list")
+    for key in ["selected_methods", "deferred_methods", "selected_cases", "action_bias"]:
+        for idx, item in enumerate(data.get(key) or []):
+            if not isinstance(item, dict):
+                fail(f"meta_knowledge_digest.yaml {key}[{idx}] must be a mapping")
+            validate_evidence_refs(item, f"meta_knowledge_digest.yaml.{key}[{idx}]")
 
 
 def validate_patch_plan(path: Path, md_path: Path, artifact_dir: Path) -> None:
@@ -347,6 +366,8 @@ def main() -> None:
         validate_contract(path, data, artifact_type, list_key)
         if rel == "target_profile.yaml":
             validate_target_profile(path, data)
+        elif rel == "meta_knowledge_digest.yaml":
+            validate_meta_knowledge_digest(path, data)
 
     validate_patch_plan(artifact_dir / "patch_plan.yaml", artifact_dir / "patch_plan.md", artifact_dir)
     validate_build_acceptance(artifact_dir / "build_acceptance.yaml", artifact_dir / "build_acceptance.md")

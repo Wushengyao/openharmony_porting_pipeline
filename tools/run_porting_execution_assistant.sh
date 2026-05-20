@@ -111,6 +111,49 @@ fi
 if [[ -z "${META_OUTPUT}" && -d "${WORKSPACE_ROOT}/openharmony_porting_meta_output" ]]; then
   META_OUTPUT="${WORKSPACE_ROOT}/openharmony_porting_meta_output"
 fi
+META_OUTPUT_INPUT="${META_OUTPUT}"
+if [[ -n "${META_OUTPUT}" && -f "${META_OUTPUT}" ]]; then
+  case "${META_OUTPUT}" in
+    *.zip)
+      META_CACHE_PARENT="${OUT_DIR}/_meta_output_cache"
+      mkdir -p "${META_CACHE_PARENT}"
+      META_OUTPUT="$(
+        python3 - "${META_OUTPUT_INPUT}" "${META_CACHE_PARENT}" <<'PY'
+import shutil
+import sys
+import zipfile
+from pathlib import Path
+
+zip_path = Path(sys.argv[1]).resolve()
+cache_parent = Path(sys.argv[2]).resolve()
+cache_dir = cache_parent / zip_path.stem
+tmp_dir = cache_parent / f".{zip_path.stem}.extracting"
+if tmp_dir.exists():
+    shutil.rmtree(tmp_dir)
+tmp_dir.mkdir(parents=True, exist_ok=True)
+with zipfile.ZipFile(zip_path) as archive:
+    archive.extractall(tmp_dir)
+candidates = [
+    path
+    for path in tmp_dir.rglob("*")
+    if path.is_dir()
+    and ((path / "cross_scenario_result.json").is_file() or (path / "02_patterns").is_dir())
+]
+root = sorted(candidates, key=lambda item: len(item.parts))[0] if candidates else tmp_dir
+if cache_dir.exists():
+    shutil.rmtree(cache_dir)
+shutil.move(str(root), str(cache_dir))
+shutil.rmtree(tmp_dir, ignore_errors=True)
+print(cache_dir)
+PY
+      )"
+      ;;
+    *)
+      echo "--meta-output must be a directory or .zip file: ${META_OUTPUT}" >&2
+      exit 2
+      ;;
+  esac
+fi
 
 LOG_DIR="${OUT_DIR}/_codex_stage_logs"
 RESULT_DIR="${OUT_DIR}/_stage_results"
@@ -189,6 +232,9 @@ log_msg INFO "workspace=${WORKSPACE_ROOT}"
 log_msg INFO "output_dir=${OUT_DIR}"
 log_msg INFO "artifact_dir=${ARTIFACT_DIR}"
 log_msg INFO "source_output=${SOURCE_OUTPUT}"
+if [[ -n "${META_OUTPUT_INPUT}" && "${META_OUTPUT_INPUT}" != "${META_OUTPUT}" ]]; then
+  log_msg INFO "meta_output_input=${META_OUTPUT_INPUT}"
+fi
 log_msg INFO "meta_output=${META_OUTPUT:-<none>}"
 log_msg INFO "target_profile_seed=${TARGET_PROFILE_SEED:-<none>}"
 log_msg INFO "build_log=${BUILD_LOG:-<none>}"

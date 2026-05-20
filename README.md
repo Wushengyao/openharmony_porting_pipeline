@@ -102,7 +102,8 @@ scenario output and, optionally, cross-scenario meta output are available:
 ```bash
 bash tools/run_porting_execution_assistant.sh \
   --source-output /path/to/ohos/porting_knowledge_output \
-  --meta-output /path/to/openharmony_porting_meta_output \
+  --meta-output /path/to/openharmony_porting_meta_output_or_zip \
+  --target-profile /path/to/target_profile_seed.yaml \
   /path/to/ohos
 ```
 
@@ -112,6 +113,8 @@ writes plan-only execution artifacts under:
 ```text
 /path/to/ohos/porting_knowledge_output/08_execution_assistant/
 ├── target_profile.yaml
+├── meta_knowledge_digest.yaml
+├── meta_knowledge_digest.md
 ├── source_tree_survey.yaml
 ├── source_tree_survey.md
 ├── gap_analysis.yaml
@@ -136,6 +139,8 @@ P0 execution-assistant guardrails:
   build scripts already present in the workspace;
 - vendor/third-party BSP, bootloader, firmware, prebuilt, closed driver, and
   signing/packaging tool needs go to `external_dependency_followup`;
+- cross-scenario meta methods and target-matching cases are summarized in
+  `meta_knowledge_digest` before they influence porting plans;
 - unknown requirements and uncertain changes go to `uncertainty_ledger`;
 - build success must not be promoted to boot/runtime/test success;
 - every recommendation must carry evidence references to user requirements,

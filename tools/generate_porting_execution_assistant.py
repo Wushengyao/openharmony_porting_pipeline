@@ -22,6 +22,8 @@ STAGE = "10_porting_execution_assistant"
 
 REQUIRED_FILES = [
     "target_profile.yaml",
+    "meta_knowledge_digest.yaml",
+    "meta_knowledge_digest.md",
     "source_tree_survey.yaml",
     "source_tree_survey.md",
     "gap_analysis.yaml",
@@ -80,6 +82,23 @@ def read_jsonl_ids(path: Path, id_key: str) -> list[str]:
         if isinstance(value, str) and value:
             ids.append(value)
     return ids
+
+
+def read_jsonl_records(path: Path) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    if not path.is_file():
+        return records
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            data = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(data, dict):
+            records.append(data)
+    return records
 
 
 def read_target_seed(path: Path | None) -> dict[str, Any]:
@@ -147,6 +166,232 @@ def clean_str(value: Any, default: str = "unknown") -> str:
         if text:
             return text
     return default
+
+
+def string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, (tuple, set)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value).strip()
+    return [text] if text else []
+
+
+def unique(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(item for item in values if item))
+
+
+def record_text(record: dict[str, Any]) -> str:
+    return json.dumps(record, ensure_ascii=False, sort_keys=True).lower()
+
+
+def case_evidence_ref(record: dict[str, Any]) -> str:
+    ref = clean_str(record.get("evidence_ref"), "")
+    if ref:
+        return ref
+    scenario_id = clean_str(record.get("scenario_id"), "unknown")
+    case_id = clean_str(record.get("case_id"), "unknown")
+    return f"case:{scenario_id}::{case_id}"
+
+
+def case_repo_paths(record: dict[str, Any], limit: int = 8) -> list[str]:
+    evidence = record.get("evidence")
+    if not isinstance(evidence, dict):
+        return []
+    paths: list[str] = []
+    for commit in evidence.get("commits") or []:
+        if isinstance(commit, dict):
+            path = clean_str(commit.get("repo_path"), "")
+            if path:
+                paths.append(path)
+    for asset in evidence.get("binary_assets") or []:
+        if isinstance(asset, dict):
+            path = clean_str(asset.get("path") or asset.get("repo_path"), "")
+            if path:
+                paths.append(path)
+    return unique(paths)[:limit]
+
+
+def load_meta_knowledge(meta_output: Path | None, target: dict[str, str], seed: dict[str, Any]) -> dict[str, Any]:
+    digest = artifact_base("meta_knowledge_digest")
+    scenario_types = string_list(seed.get("scenario_type"))
+    target_terms = unique(
+        [
+            target.get("product", ""),
+            target.get("board", ""),
+            target.get("soc", ""),
+            target.get("vendor", ""),
+            target.get("architecture", ""),
+            clean_str(seed.get("soc_vendor"), ""),
+            "riscv" if "riscv" in target.get("architecture", "").lower() else "",
+        ]
+    )
+    target_terms = [term.lower() for term in target_terms if term and term != "unknown"]
+    identity_priority_terms = [
+        term
+        for term in [
+            clean_str(target.get("product"), ""),
+            clean_str(target.get("board"), ""),
+            clean_str(target.get("soc"), ""),
+            clean_str(target.get("vendor"), ""),
+            clean_str(seed.get("soc_vendor"), ""),
+        ]
+        if term and term != "unknown"
+    ]
+    identity_priority_terms = [term.lower() for term in unique(identity_priority_terms)]
+    preferred_method_ids = {
+        "META-UNIVERSAL_BY_DESIGN_VALIDATION_SEPARATION",
+        "META-UNIVERSAL_BY_DESIGN_EVIDENCE_CLASS_SEPARATION",
+        "META-UNIVERSAL_BY_DESIGN_SCENARIO_SCOPE_AUTHORITY",
+        "META-CONDITIONAL-RISCV-BUILD-RUNTIME-ROUTE",
+        "META-CONDITIONAL-BOOT-FIRMWARE-PROVENANCE",
+        "META-CONDITIONAL-BINARY-PREBUILT-PROVENANCE",
+        "META-CONDITIONAL-DIRTY-WORKSPACE-GOVERNANCE",
+    }
+    deferred_method_ids = {
+        "META-CONDITIONAL-HDF-DRIVER-MULTIREPO-CHAIN",
+        "META-CONDITIONAL-WIFI-SDIO-RUNTIME-CHAIN",
+        "META-CONDITIONAL-MEDIA-CAMERA-HDF-CHAIN",
+    }
+    digest.update(
+        {
+            "meta_output": str(meta_output) if meta_output else "unknown",
+            "target_terms": target_terms,
+            "target_scenario_types": scenario_types,
+            "selected_methods": [],
+            "deferred_methods": [],
+            "selected_cases": [],
+            "action_bias": [],
+            "meta_status": "missing",
+        }
+    )
+    if not meta_output or not meta_output.exists():
+        return digest
+
+    meta_methods = read_jsonl_records(meta_output / "02_patterns/meta_methods.jsonl")
+    conditional_methods = read_jsonl_records(meta_output / "02_patterns/conditional_methods.jsonl")
+    cases = read_jsonl_records(meta_output / "01_normalized_cases/cases.jsonl")
+    digest["meta_status"] = "loaded"
+
+    selected_methods: list[dict[str, Any]] = []
+    deferred_methods: list[dict[str, Any]] = []
+    seen_selected_method_ids: set[str] = set()
+    seen_deferred_method_ids: set[str] = set()
+    for record in meta_methods + conditional_methods:
+        method_id = clean_str(record.get("method_id"), "")
+        if not method_id:
+            continue
+        applicability = string_list(record.get("applicability"))
+        method_text = record_text(record)
+        scenario_match = bool(set(applicability) & set(scenario_types))
+        target_match = any(term in method_text for term in target_terms)
+        selected = method_id in preferred_method_ids or method_id.startswith("META-UNIVERSAL_BY_DESIGN") or scenario_match or target_match
+        slim = {
+            "method_id": method_id,
+            "title": clean_str(record.get("title"), method_id),
+            "promotion_level": clean_str(record.get("promotion_level")),
+            "applicability": applicability,
+            "evidence_strength": clean_str(record.get("evidence_strength")),
+            "statement": clean_str(record.get("statement"), ""),
+            "quality_gates": string_list(record.get("quality_gates"))[:5],
+            "risks": string_list(record.get("risks"))[:5],
+            "supporting_cases": string_list(record.get("supporting_cases"))[:8],
+            "selection_reason": "preferred_target_route" if method_id in preferred_method_ids else ("scenario_or_target_match" if selected else "deferred_feature_scope"),
+            "evidence_refs": [f"meta_method:{method_id}"],
+        }
+        if method_id in deferred_method_ids:
+            if method_id not in seen_deferred_method_ids:
+                deferred_methods.append(slim)
+                seen_deferred_method_ids.add(method_id)
+        elif selected:
+            if method_id not in seen_selected_method_ids:
+                selected_methods.append(slim)
+                seen_selected_method_ids.add(method_id)
+
+    scored_cases: list[tuple[int, dict[str, Any]]] = []
+    for record in cases:
+        text = record_text(record)
+        identity_text = " ".join(
+            str(record.get(key) or "")
+            for key in ["case_id", "title", "scenario_id", "source_case_path"]
+        ).lower()
+        case_scenario_types = string_list(record.get("scenario_type"))
+        non_applicability = string_list(record.get("non_applicability"))
+        score = 0
+        if set(case_scenario_types) & set(scenario_types):
+            score += 5
+        for term in identity_priority_terms:
+            if term and term in identity_text:
+                score += 8
+        for term in target_terms:
+            if term and term in text:
+                score += 2
+        if "riscv" in text and any("riscv" in item for item in scenario_types + target_terms):
+            score += 2
+        if "rvbook" in text:
+            score += 2
+        if set(non_applicability) & set(scenario_types):
+            score -= 6
+        if score <= 0:
+            continue
+        scored_cases.append((score, record))
+    scored_cases.sort(key=lambda item: (-item[0], clean_str(item[1].get("case_id"))))
+
+    selected_cases: list[dict[str, Any]] = []
+    seen_cases: set[str] = set()
+    for score, record in scored_cases:
+        case_id = clean_str(record.get("case_id"), "")
+        if not case_id or case_id in seen_cases:
+            continue
+        seen_cases.add(case_id)
+        selected_cases.append(
+            {
+                "case_id": case_id,
+                "title": clean_str(record.get("title"), case_id),
+                "scenario_id": clean_str(record.get("scenario_id")),
+                "scenario_type": string_list(record.get("scenario_type")),
+                "subsystem": string_list(record.get("subsystem")),
+                "porting_phase": string_list(record.get("porting_phase")),
+                "problem_type": string_list(record.get("problem_type")),
+                "reuse_level": clean_str(record.get("reuse_level")),
+                "evidence_strength": clean_str(record.get("evidence_strength")),
+                "rule": clean_str(record.get("rule"), ""),
+                "repo_paths": case_repo_paths(record),
+                "source_case_path": clean_str(record.get("source_case_path"), ""),
+                "score": score,
+                "evidence_refs": [case_evidence_ref(record)],
+            }
+        )
+        if len(selected_cases) >= 10:
+            break
+
+    selected_refs = [ref for item in selected_methods + selected_cases for ref in item.get("evidence_refs", [])]
+    digest["selected_methods"] = selected_methods[:10]
+    digest["deferred_methods"] = deferred_methods[:8]
+    digest["selected_cases"] = selected_cases
+    digest["action_bias"] = [
+        {
+            "action_id": "META-ACTION-001",
+            "area": "product_board_binding",
+            "recommendation": "Prioritize product/vendor, board, and SoC binding before feature-specific HDF or runtime service work.",
+            "evidence_refs": unique(selected_refs + ["meta_method:META-UNIVERSAL_BY_DESIGN_SCENARIO_SCOPE_AUTHORITY"])[:8],
+        },
+        {
+            "action_id": "META-ACTION-002",
+            "area": "riscv_build_runtime",
+            "recommendation": "Treat build target routing, Rust/NDK pathing, musl runtime behavior, and RISC-V architecture flags as a connected route.",
+            "evidence_refs": unique(selected_refs + ["meta_method:META-CONDITIONAL-RISCV-BUILD-RUNTIME-ROUTE"])[:8],
+        },
+        {
+            "action_id": "META-ACTION-003",
+            "area": "external_dependency_governance",
+            "recommendation": "Inventory BSP, bootloader, firmware, prebuilts, closed drivers, and signing or packaging tools before promoting binary-dependent work as source implementation.",
+            "evidence_refs": unique(selected_refs + ["meta_method:META-CONDITIONAL-BINARY-PREBUILT-PROVENANCE"])[:8],
+        },
+    ]
+    return digest
 
 
 def seed_ref(path: Path | None, workspace: Path) -> str:
@@ -349,6 +594,26 @@ def main() -> None:
             target[key] = value.strip()
     target_supplied = any(value != "unknown" for value in target.values()) and bool(target_seed)
     visibility = target_visibility(workspace, target, target_seed) if target_supplied else {}
+    meta_knowledge_digest = load_meta_knowledge(meta_output, target, target_seed)
+    selected_method_ids = [item["method_id"] for item in meta_knowledge_digest.get("selected_methods", [])]
+    selected_case_ids = [item["case_id"] for item in meta_knowledge_digest.get("selected_cases", [])]
+    selected_case_refs = [
+        ref
+        for item in meta_knowledge_digest.get("selected_cases", [])
+        for ref in item.get("evidence_refs", [])
+    ]
+    product_case_refs = [
+        ref
+        for item in meta_knowledge_digest.get("selected_cases", [])
+        if any("product" in value or "board" in value or "soc" in value for value in item.get("subsystem", []) + item.get("porting_phase", []))
+        for ref in item.get("evidence_refs", [])
+    ]
+    riscv_case_refs = [
+        ref
+        for item in meta_knowledge_digest.get("selected_cases", [])
+        if any("riscv" in value for value in item.get("subsystem", []) + item.get("problem_type", []) + item.get("scenario_type", []))
+        for ref in item.get("evidence_refs", [])
+    ]
 
     target_profile = artifact_base("target_profile")
     target_profile.update(
@@ -363,6 +628,11 @@ def main() -> None:
                 "build_log": str(build_log_path) if build_log_path else "unknown",
                 "detected_source_product_candidate": detected_product,
                 "target_source_visibility": visibility if visibility else "unknown",
+                "meta_knowledge_digest": {
+                    "status": meta_knowledge_digest.get("meta_status", "unknown"),
+                    "selected_method_count": len(meta_knowledge_digest.get("selected_methods", [])),
+                    "selected_case_count": len(meta_knowledge_digest.get("selected_cases", [])),
+                },
             },
             "requirements": [
                 {
@@ -382,6 +652,12 @@ def main() -> None:
                     "description": "Keep execution assistance plan-only: no source edits, no patch files, no external dependency artifacts, and no boot/runtime/test status claims.",
                     "source": "meta_method",
                     "evidence_refs": [meta_ref, f"meta_method:{evidence_method}"],
+                },
+                {
+                    "requirement_id": "REQ-004",
+                    "description": "Use cross-scenario meta methods and matching cases as execution guidance, while keeping selected cases conditional and evidence-bound.",
+                    "source": "meta_output" if meta_knowledge_digest.get("meta_status") == "loaded" else "unknown",
+                    "evidence_refs": (selected_case_refs[:3] or [f"meta_method:{scope_method}", target_seed_ref]),
                 },
             ],
         }
@@ -456,6 +732,22 @@ def main() -> None:
             "observation": f"Target identity is supplied by seed as `{target['product']}`/`{target['board']}`/`{target['soc']}`/`{target['vendor']}`/`{target['architecture']}`; source-tree visibility is a separate check.",
             "evidence_refs": [target_seed_ref, f"meta_method:{scope_method}"],
         },
+        {
+            "survey_id": "SURVEY-008",
+            "topic": "other",
+            "status": "found" if meta_knowledge_digest.get("meta_status") == "loaded" else "unknown",
+            "paths": [
+                str(meta_output / rel_path)
+                for rel_path in [
+                    "02_patterns/meta_methods.jsonl",
+                    "02_patterns/conditional_methods.jsonl",
+                    "01_normalized_cases/cases.jsonl",
+                ]
+                if meta_output and (meta_output / rel_path).exists()
+            ],
+            "observation": f"Meta selector loaded {len(selected_method_ids)} method(s) and {len(selected_case_ids)} target-relevant case(s) for `{target['product']}`/`{target['soc']}` execution planning.",
+            "evidence_refs": (selected_case_refs[:3] or [f"meta_method:{scope_method}", target_seed_ref]),
+        },
     ]
     source_tree_survey = artifact_base("source_tree_survey")
     source_tree_survey["items"] = survey_items
@@ -467,7 +759,7 @@ def main() -> None:
             "severity": "blocker",
             "description": f"Target identity is supplied by seed as `{target['product']}`/`{target['board']}`/`{target['soc']}`/`{target['vendor']}`/`{target['architecture']}`, but target product config is not visible in the current source tree.",
             "owner_hint": "source_patch",
-            "evidence_refs": [target_seed_ref, workspace_ref, f"meta_method:{scope_method}", f"meta_method:{riscv_method}"],
+            "evidence_refs": unique([target_seed_ref, workspace_ref, f"meta_method:{scope_method}", f"meta_method:{riscv_method}"] + product_case_refs[:2]),
             "uncertainty_refs": ["UNC-001"],
         },
         {
@@ -476,7 +768,7 @@ def main() -> None:
             "severity": "blocker",
             "description": f"Target board/SoC configuration paths for `{target['board']}` and `{target['soc']}` are not visible under device/board or device/soc; reference HiHope/Rockchip/Hisilicon paths must not be treated as the target.",
             "owner_hint": "source_patch",
-            "evidence_refs": [target_seed_ref, product_ref, f"meta_method:{scope_method}", f"meta_method:{riscv_method}"],
+            "evidence_refs": unique([target_seed_ref, product_ref, f"meta_method:{scope_method}", f"meta_method:{riscv_method}"] + product_case_refs[:2]),
             "uncertainty_refs": ["UNC-002"],
         },
         {
@@ -485,7 +777,7 @@ def main() -> None:
             "severity": "high",
             "description": f"Target kernel branch, DTS, defconfig, and TH1520/RVBook kernel binding are not visible in the current OpenHarmony source tree.",
             "owner_hint": "vendor_or_third_party",
-            "evidence_refs": [target_seed_ref, workspace_ref, f"meta_method:{riscv_method}", f"meta_method:{boot_method}"],
+            "evidence_refs": unique([target_seed_ref, workspace_ref, f"meta_method:{riscv_method}", f"meta_method:{boot_method}"] + riscv_case_refs[:2]),
             "uncertainty_refs": ["UNC-003"],
         },
         {
@@ -494,7 +786,7 @@ def main() -> None:
             "severity": "high",
             "description": f"The RISC-V `{target['architecture']}` build/product route cannot be accepted until `{target['product']}` is product-visible; source-output absence limits evidence depth but is not the product-visibility blocker.",
             "owner_hint": "source_patch",
-            "evidence_refs": [target_seed_ref, build_ref, f"meta_method:{riscv_method}", f"meta_method:{validation_method}"],
+            "evidence_refs": unique([target_seed_ref, build_ref, f"meta_method:{riscv_method}", f"meta_method:{validation_method}"] + riscv_case_refs[:2]),
             "uncertainty_refs": ["UNC-004"],
         },
         {
@@ -620,8 +912,9 @@ def main() -> None:
         {
             "phases": phases,
             "case_selector": {
-                "selected_cases": [],
-                "selected_meta_methods": [
+                "selected_cases": selected_case_ids,
+                "selected_meta_methods": selected_method_ids
+                or [
                     mid
                     for mid in [
                         validation_method,
@@ -635,7 +928,7 @@ def main() -> None:
                     if mid in meta_methods or mid in conditional_methods or mid.startswith("META-UNIVERSAL")
                 ],
                 "candidate_feature_methods_deferred": [hdf_method, wifi_method, media_method],
-                "selection_note": "The target is RISC-V primary by seed, so the RISC-V build/runtime/product route is selected. Feature-specific HDF/WiFi/media methods are deferred until target product, board, SoC, and feature evidence are visible. No single-scenario cases were selected because source-output lacks Stage 04-07 case artifacts.",
+                "selection_note": f"The target is RISC-V primary by seed, so the RISC-V build/runtime/product route is selected. Meta digest selected {len(selected_case_ids)} target-relevant case(s). Feature-specific HDF/WiFi/media methods are deferred until target product, board, SoC, and feature evidence are visible.",
             },
         }
     )
@@ -656,8 +949,8 @@ def main() -> None:
                     "risk_level": "medium",
                     "apply_mode": "manual_review",
                     "auto_generate": False,
-                    "rationale": f"P0 may plan product visibility work for `{target['product']}`, but must not generate a diff until productdefine/vendor ownership and target source evidence are confirmed.",
-                    "evidence_refs": [target_seed_ref, product_ref, f"meta_method:{scope_method}", f"meta_method:{riscv_method}"],
+                    "rationale": f"P0 may plan product visibility work for `{target['product']}`, but must not generate a diff until productdefine/vendor ownership and target source evidence are confirmed. The selected meta cases make this a binding-layer task, not a standalone product file guess.",
+                    "evidence_refs": unique([target_seed_ref, product_ref, f"meta_method:{scope_method}", f"meta_method:{riscv_method}"] + product_case_refs[:3]),
                     "blocked_by_external_dependency": False,
                     "proposed_paths": [
                         f"productdefine/common/products/{target['product']}.json",
@@ -678,7 +971,7 @@ def main() -> None:
                     "apply_mode": "manual_review",
                     "auto_generate": False,
                     "rationale": "Board, SoC, kernel, DTS, defconfig, and RISC-V toolchain routing cross multiple ownership boundaries and require target-specific evidence before a patch can be generated.",
-                    "evidence_refs": [target_seed_ref, product_ref, f"meta_method:{riscv_method}", f"meta_method:{boot_method}"],
+                    "evidence_refs": unique([target_seed_ref, product_ref, f"meta_method:{riscv_method}", f"meta_method:{boot_method}"] + product_case_refs[:2] + riscv_case_refs[:2]),
                     "blocked_by_external_dependency": False,
                     "proposed_paths": [
                         f"device/board/{target['vendor']}/{target['board']}/config.gni",
@@ -694,7 +987,7 @@ def main() -> None:
                     "apply_mode": "none",
                     "auto_generate": False,
                     "rationale": "Binary and external dependency artifacts require provenance, licensing, hash, regeneration, signing, and board-validation decisions outside automatic patch generation.",
-                    "evidence_refs": [target_seed_ref, workspace_ref, f"meta_method:{binary_method}", f"meta_method:{boot_method}"],
+                    "evidence_refs": unique([target_seed_ref, workspace_ref, f"meta_method:{binary_method}", f"meta_method:{boot_method}"] + selected_case_refs[:2]),
                     "blocked_by_external_dependency": True,
                 },
             ],
@@ -738,14 +1031,14 @@ def main() -> None:
             "category": "bsp",
             "why_needed": f"TH1520/RVBook board support package ownership, source branch, and baseline hardware assumptions are not established in the current source tree.",
             "next_action": f"Collect the `{target['vendor']}`/`{target['board']}` BSP source, ownership, license, and mapping to `{target['soc']}` before planning source patches.",
-            "evidence_refs": [target_seed_ref, workspace_ref, f"meta_method:{riscv_method}", f"meta_method:{binary_method}"],
+            "evidence_refs": unique([target_seed_ref, workspace_ref, f"meta_method:{riscv_method}", f"meta_method:{binary_method}"] + product_case_refs[:2]),
         },
         {
             "dependency_id": "DEP-002",
             "category": "bootloader",
             "why_needed": f"OpenSBI/U-Boot/bootloader requirements, partition flow, and board boot evidence for `{target['board']}` are not present in the inputs.",
             "next_action": "Collect OpenSBI, U-Boot, bootloader source or release notes, partition layout, and board boot logs before integration.",
-            "evidence_refs": [target_seed_ref, workspace_ref, f"meta_method:{boot_method}", f"meta_method:{validation_method}"],
+            "evidence_refs": unique([target_seed_ref, workspace_ref, f"meta_method:{boot_method}", f"meta_method:{validation_method}"] + selected_case_refs[:2]),
         },
         {
             "dependency_id": "DEP-003",
@@ -759,7 +1052,7 @@ def main() -> None:
             "category": "prebuilt",
             "why_needed": f"RISC-V toolchain, SDK, kernel module, and board library prebuilts for `{target['architecture']}` cannot be inferred from generic directory presence.",
             "next_action": "Create a prebuilt inventory with path, hash, license, upstream/source route, and regeneration status.",
-            "evidence_refs": [target_seed_ref, workspace_ref, f"meta_method:{riscv_method}", f"meta_method:{binary_method}"],
+            "evidence_refs": unique([target_seed_ref, workspace_ref, f"meta_method:{riscv_method}", f"meta_method:{binary_method}"] + riscv_case_refs[:2]),
         },
         {
             "dependency_id": "DEP-005",
@@ -777,7 +1070,22 @@ def main() -> None:
         },
     ]
     external_dependency_followup = artifact_base("external_dependency_followup")
-    external_dependency_followup.update({"coverage": coverage, "items": external_items})
+    external_dependency_followup.update(
+        {
+            "target_dependency_summary": {
+                "product": target["product"],
+                "board": target["board"],
+                "soc": target["soc"],
+                "soc_vendor": clean_str(target_seed.get("soc_vendor")),
+                "board_vendor": target["vendor"],
+                "architecture": target["architecture"],
+                "summary": "Vendor/BSP and binary-dependent work is reportable now, but implementation remains blocked until target product/board/SoC source visibility and provenance evidence exist.",
+                "evidence_refs": unique([target_seed_ref, f"meta_method:{binary_method}", f"meta_method:{boot_method}"] + selected_case_refs[:4]),
+            },
+            "coverage": coverage,
+            "items": external_items,
+        }
+    )
 
     uncertainties = [
         ("UNC-001", "target_source_visibility", f"Target identity is supplied by seed, but `{target['product']}` product config is not visible in the current source tree.", "Add or point to productdefine/vendor product configuration for the target."),
@@ -805,6 +1113,7 @@ def main() -> None:
 
     artifacts: dict[str, dict[str, Any]] = {
         "target_profile.yaml": target_profile,
+        "meta_knowledge_digest.yaml": meta_knowledge_digest,
         "source_tree_survey.yaml": source_tree_survey,
         "gap_analysis.yaml": gap_analysis,
         "porting_plan.yaml": porting_plan,
@@ -816,6 +1125,28 @@ def main() -> None:
     for name, data in artifacts.items():
         dump_yaml(artifact_root / name, data)
 
+    write_text(
+        artifact_root / "meta_knowledge_digest.md",
+        "# Meta Knowledge Digest\n\n"
+        f"- Status: `{meta_knowledge_digest.get('meta_status', 'unknown')}`\n"
+        f"- Selected methods: {len(meta_knowledge_digest.get('selected_methods', []))}\n"
+        f"- Selected cases: {len(meta_knowledge_digest.get('selected_cases', []))}\n\n"
+        "## Methods\n\n"
+        + "\n".join(
+            f"- {item['method_id']}: {item['title']}"
+            for item in meta_knowledge_digest.get("selected_methods", [])
+        )
+        + "\n\n## Cases\n\n"
+        + "\n".join(
+            f"- {item['case_id']}: {item['title']} ({', '.join(item.get('repo_paths', [])[:4]) or 'no repo path'})"
+            for item in meta_knowledge_digest.get("selected_cases", [])
+        )
+        + "\n\n## Action Bias\n\n"
+        + "\n".join(
+            f"- {item['action_id']} `{item['area']}`: {item['recommendation']}"
+            for item in meta_knowledge_digest.get("action_bias", [])
+        ),
+    )
     write_text(
         artifact_root / "source_tree_survey.md",
         "# Source Tree Survey\n\n"
@@ -851,6 +1182,8 @@ def main() -> None:
     write_text(
         artifact_root / "external_dependency_followup.md",
         "# External Dependency Follow-Up\n\n"
+        f"- Target: `{target['product']}` / `{target['board']}` / `{target['soc']}` / `{target['vendor']}` / `{target['architecture']}`\n"
+        f"- Vendor dependency summary: {external_dependency_followup['target_dependency_summary']['summary']}\n\n"
         + "\n".join(f"- {item['dependency_id']} `{item['category']}`: {item['why_needed']}" for item in external_items),
     )
     write_text(
@@ -867,6 +1200,10 @@ def main() -> None:
             for path in [
                 "02_patterns/meta_methods.jsonl",
                 "02_patterns/conditional_methods.jsonl",
+                "01_normalized_cases/cases.jsonl",
+                "03_methodology/architecture_porting_runbook.md",
+                "03_methodology/board_soc_porting_runbook.md",
+                "03_methodology/binary_prebuilt_governance.md",
                 "meta_skill_pack/references/conditional_method_index.md",
                 "meta_report.md",
             ]
@@ -890,7 +1227,7 @@ def main() -> None:
     result = {
         "stage": STAGE,
         "status": "partial" if non_blocking else "passed",
-        "summary": "Deterministic plan-only execution package generated; target profile seed was consumed and target source visibility/build acceptance were kept separate.",
+        "summary": f"Deterministic plan-only execution package generated; target seed and meta knowledge were consumed, with {len(selected_method_ids)} selected method(s) and {len(selected_case_ids)} selected case(s). Target source visibility/build acceptance remain separate.",
         "execution_mode": args.execution_mode,
         "patch_apply_mode": args.patch_apply_mode,
         "artifact_root": str(artifact_root),

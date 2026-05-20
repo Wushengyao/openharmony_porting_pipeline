@@ -40,7 +40,8 @@ Run the plan-only execution assistant after the evidence pipeline:
 ```bash
 bash /home/ve/.codex/skills/openharmony_porting_pipeline/tools/run_porting_execution_assistant.sh \
   --source-output /path/to/ohos/porting_knowledge_output \
-  --meta-output /path/to/openharmony_porting_meta_output \
+  --meta-output /path/to/openharmony_porting_meta_output_or_zip \
+  --target-profile /path/to/target_profile_seed.yaml \
   /path/to/ohos
 ```
 

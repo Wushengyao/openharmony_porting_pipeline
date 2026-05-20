@@ -18,7 +18,8 @@ The runner exports:
 - `PORTING_EXECUTION_ARTIFACT_DIR`: default
   `porting_knowledge_output/08_execution_assistant/`.
 - `PORTING_EXECUTION_SOURCE_OUTPUT`: existing single-scenario pipeline output.
-- `PORTING_EXECUTION_META_OUTPUT`: optional cross-scenario meta output.
+- `PORTING_EXECUTION_META_OUTPUT`: optional normalized cross-scenario meta
+  output directory; the runner may derive it from a user-supplied `.zip`.
 - `PORTING_EXECUTION_TARGET_PROFILE_SEED`: optional user-provided target profile
   seed YAML.
 - `PORTING_EXECUTION_BUILD_LOG`: optional existing build log for triage.
@@ -31,6 +32,8 @@ If an environment variable is unset, use the default path above or write
 Create all files under `PORTING_EXECUTION_ARTIFACT_DIR`:
 
 - `target_profile.yaml`
+- `meta_knowledge_digest.yaml`
+- `meta_knowledge_digest.md`
 - `source_tree_survey.yaml`
 - `source_tree_survey.md`
 - `gap_analysis.yaml`
@@ -108,6 +111,8 @@ inputs only:
 - `02_patterns/conditional_methods.jsonl`
 - `02_patterns/method_fragments.jsonl`
 - `02_patterns/anti_patterns.jsonl`
+- `01_normalized_cases/cases.jsonl`
+- `01_normalized_cases/cases_by_subsystem/*.jsonl`
 - `03_methodology/*.md`
 - `04_global_kb/problem_taxonomy.yaml`
 - `04_global_kb/risk_taxonomy.yaml`
@@ -174,6 +179,54 @@ requirements:
     source: user_requirement|task_profile|operator_context|unknown
     evidence_refs: [...]
 ```
+
+### meta_knowledge_digest.yaml
+
+Use:
+
+```yaml
+artifact_type: meta_knowledge_digest
+meta_output: <path or unknown>
+target_terms: []
+target_scenario_types: []
+meta_status: loaded|missing|unknown
+selected_methods:
+  - method_id: <meta method id>
+    title: <title>
+    applicability: []
+    evidence_strength: <strength or unknown>
+    statement: <short statement>
+    quality_gates: []
+    risks: []
+    supporting_cases: []
+    selection_reason: <why this method applies>
+    evidence_refs: [...]
+deferred_methods: []
+selected_cases:
+  - case_id: <case id>
+    title: <title>
+    scenario_id: <scenario id>
+    scenario_type: []
+    subsystem: []
+    porting_phase: []
+    problem_type: []
+    reuse_level: <reuse level>
+    evidence_strength: <strength>
+    rule: <case rule>
+    repo_paths: []
+    source_case_path: <path>
+    evidence_refs: [...]
+action_bias:
+  - action_id: META-ACTION-001
+    area: product_board_binding|riscv_build_runtime|external_dependency_governance|unknown
+    recommendation: <execution guidance>
+    evidence_refs: [...]
+```
+
+Select only meta methods and cases whose applicability matches the target seed,
+architecture, product/board/SoC/vendor terms, or universal guardrails. Keep HDF,
+WiFi, media/camera, audio, and display feature methods in `deferred_methods`
+until target product/board/SoC paths and feature requirements are visible.
 
 ### source_tree_survey.yaml
 
