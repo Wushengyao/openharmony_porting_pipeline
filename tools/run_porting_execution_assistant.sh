@@ -216,14 +216,47 @@ fi
 
 rm -f "${PENDING_RESULT}"
 START_EPOCH="$(date +%s)"
-if codex exec \
-  "${CODEX_BASE_ARGS[@]}" \
-  "${EXTRA_ARGS[@]}" \
-  --output-last-message "${PENDING_RESULT}" \
-  --output-schema "${SCHEMA}" \
-  - < "${PROMPT}" > "${LOG}" 2>&1; then
-  END_EPOCH="$(date +%s)"
-  log_msg INFO "${STAGE}: codex exec completed in $((END_EPOCH - START_EPOCH))s"
+if [[ "${DETERMINISTIC_PORTING_EXECUTION_ASSISTANT:-0}" == "1" ]]; then
+  log_msg INFO "${STAGE}: using deterministic generate_porting_execution_assistant.py"
+  DET_ARGS=(
+    --workspace "${WORKSPACE_ROOT}"
+    --out "${OUT_DIR}"
+    --artifact-root "${ARTIFACT_DIR}"
+    --source-output "${SOURCE_OUTPUT}"
+    --stage-result "${PENDING_RESULT}"
+    --execution-mode "${EXECUTION_MODE}"
+    --patch-apply-mode "${PATCH_APPLY_MODE}"
+  )
+  if [[ -n "${META_OUTPUT}" ]]; then
+    DET_ARGS+=(--meta-output "${META_OUTPUT}")
+  fi
+  if [[ -n "${TARGET_PROFILE_SEED}" ]]; then
+    DET_ARGS+=(--target-profile "${TARGET_PROFILE_SEED}")
+  fi
+  if [[ -n "${BUILD_LOG}" ]]; then
+    DET_ARGS+=(--build-log "${BUILD_LOG}")
+  fi
+  if python3 "${TOOLS_DIR}/generate_porting_execution_assistant.py" "${DET_ARGS[@]}" > "${LOG}" 2>&1; then
+    END_EPOCH="$(date +%s)"
+    log_msg INFO "${STAGE}: deterministic generation completed in $((END_EPOCH - START_EPOCH))s"
+  else
+    RC=$?
+    END_EPOCH="$(date +%s)"
+    log_msg ERROR "${STAGE}: deterministic generation failed with exit_code=${RC} after $((END_EPOCH - START_EPOCH))s"
+    log_file_state ndjson_log "${LOG}"
+    log_file_state pending_result "${PENDING_RESULT}"
+    tail -n 120 "${LOG}" | tee -a "${PIPELINE_LOG}" || true
+    archive_failed_attempt
+    exit "${RC}"
+  fi
+elif codex exec \
+    "${CODEX_BASE_ARGS[@]}" \
+    "${EXTRA_ARGS[@]}" \
+    --output-last-message "${PENDING_RESULT}" \
+    --output-schema "${SCHEMA}" \
+    - < "${PROMPT}" > "${LOG}" 2>&1; then
+    END_EPOCH="$(date +%s)"
+    log_msg INFO "${STAGE}: codex exec completed in $((END_EPOCH - START_EPOCH))s"
 else
   RC=$?
   END_EPOCH="$(date +%s)"

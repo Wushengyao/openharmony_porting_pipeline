@@ -85,7 +85,10 @@
     "output_files_written",
     "blocking_issues",
     "non_blocking_issues",
-    "next_stage_inputs"
+    "next_stage_inputs",
+    "patch_plan_item_count",
+    "external_dependency_followup_count",
+    "uncertainty_count"
   ],
   "additionalProperties": false
 }
