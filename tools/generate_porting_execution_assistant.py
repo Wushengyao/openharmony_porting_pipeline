@@ -24,6 +24,8 @@ REQUIRED_FILES = [
     "target_profile.yaml",
     "meta_knowledge_digest.yaml",
     "meta_knowledge_digest.md",
+    "implementation_readiness.yaml",
+    "implementation_readiness.md",
     "source_tree_survey.yaml",
     "source_tree_survey.md",
     "gap_analysis.yaml",
@@ -36,6 +38,7 @@ REQUIRED_FILES = [
     "build_acceptance.md",
     "external_dependency_followup.yaml",
     "external_dependency_followup.md",
+    "porting_completion_summary.md",
     "uncertainty_ledger.yaml",
     "uncertainty_ledger.md",
 ]
@@ -1087,6 +1090,81 @@ def main() -> None:
         }
     )
 
+    implementation_items = [
+        {
+            "item_id": "IMPL-001",
+            "area": "product_config",
+            "implementation_class": "source_compile_file",
+            "target_paths": [
+                f"productdefine/common/products/{target['product']}.json",
+                f"vendor/{target['vendor']}/{target['product']}/config.json",
+                f"vendor/{target['vendor']}/{target['product']}/ohos.build",
+            ],
+            "current_status": "missing_in_workspace" if not target_product_paths else "visible_in_workspace",
+            "execution_decision": "plan_ready_not_applied" if not target_product_paths else "ready_for_build_triage",
+            "why_not_completed": "" if target_product_paths else "The target product is seed-confirmed but not visible in productdefine/vendor paths; generating a config without source ownership would overstate evidence.",
+            "next_action": "Create or import product/vendor configuration from target source evidence, then re-run build-only triage.",
+            "evidence_refs": unique([target_seed_ref, product_ref, f"meta_method:{scope_method}", f"meta_method:{riscv_method}"] + product_case_refs[:3]),
+        },
+        {
+            "item_id": "IMPL-002",
+            "area": "board_soc_config",
+            "implementation_class": "source_compile_file",
+            "target_paths": [
+                f"device/board/{target['vendor']}/{target['board']}/config.gni",
+                f"device/board/{target['vendor']}/{target['board']}/device.gni",
+                f"device/soc/{clean_str(target_seed.get('soc_vendor'), target['vendor'])}/{target['soc']}/soc.gni",
+            ],
+            "current_status": "missing_in_workspace" if not (target_board_paths or target_soc_paths) else "partially_visible",
+            "execution_decision": "manual_review_required",
+            "why_not_completed": "Board, SoC, DTS, defconfig, and kernel binding require target-specific BSP/source evidence before automatic implementation.",
+            "next_action": "Import or point to RVBook/TH1520 board and SoC source configuration, then split compile-file skeleton from kernel/BSP payloads.",
+            "evidence_refs": unique([target_seed_ref, f"meta_method:{scope_method}", f"meta_method:{riscv_method}", f"meta_method:{boot_method}"] + product_case_refs[:3]),
+        },
+        {
+            "item_id": "IMPL-003",
+            "area": "riscv_build_runtime",
+            "implementation_class": "source_compile_file",
+            "target_paths": ["build", "third_party/musl"],
+            "current_status": "meta_case_identified",
+            "execution_decision": "requires_diff_or_source_review",
+            "why_not_completed": "Meta cases identify the connected RISC-V build/Rust/NDK/musl route, but the meta package does not include source diffs that can be safely applied to this workspace.",
+            "next_action": "Compare target RVBook source diffs or compact raw records against this workspace before generating implementation patches.",
+            "evidence_refs": unique([target_seed_ref, f"meta_method:{riscv_method}"] + riscv_case_refs[:4]),
+        },
+        {
+            "item_id": "IMPL-004",
+            "area": "feature_driver_runtime",
+            "implementation_class": "source_compile_file",
+            "target_paths": ["drivers", "drivers/peripheral", "device/board", "device/soc", "vendor"],
+            "current_status": "deferred_until_base_binding",
+            "execution_decision": "defer_feature_specific_source_work",
+            "why_not_completed": "Display/GPU/G2D, HDF audio, USB camera, and WiFi cases are target-relevant, but feature work must wait until product/board/SoC and kernel routes are visible.",
+            "next_action": "After base binding is visible, select required target features and promote each feature chain with driver, board, product, binary, and validation evidence.",
+            "evidence_refs": unique([target_seed_ref, f"meta_method:{hdf_method}", f"meta_method:{wifi_method}", f"meta_method:{media_method}"] + selected_case_refs[:5]),
+        },
+        {
+            "item_id": "IMPL-005",
+            "area": "vendor_binary_dependency",
+            "implementation_class": "external_binary_dependency",
+            "target_paths": ["prebuilts", "vendor", "device/board", "kernel"],
+            "current_status": "report_only",
+            "execution_decision": "do_not_generate_binary_artifacts",
+            "why_not_completed": "BSP, bootloader, firmware, prebuilts, closed drivers, and signing/packaging tools require provenance, license, hash, source/regeneration, and board validation evidence.",
+            "next_action": "Complete external dependency inventory before any binary-dependent integration is marked implementation-complete.",
+            "evidence_refs": unique([target_seed_ref, f"meta_method:{binary_method}", f"meta_method:{boot_method}"] + selected_case_refs[:4]),
+        },
+    ]
+    implementation_readiness = artifact_base("implementation_readiness")
+    implementation_readiness.update(
+        {
+            "target": target,
+            "overall_status": "blocked_before_source_implementation" if not target_product_paths else "ready_for_build_only_triage",
+            "completion_claim": "not_complete",
+            "items": implementation_items,
+        }
+    )
+
     uncertainties = [
         ("UNC-001", "target_source_visibility", f"Target identity is supplied by seed, but `{target['product']}` product config is not visible in the current source tree.", "Add or point to productdefine/vendor product configuration for the target."),
         ("UNC-002", "board_soc_visibility", f"Target board `{target['board']}` and SoC `{target['soc']}` are not visible in the current source-tree survey.", "Add or point to device/board and device/soc configuration paths for the target."),
@@ -1114,6 +1192,7 @@ def main() -> None:
     artifacts: dict[str, dict[str, Any]] = {
         "target_profile.yaml": target_profile,
         "meta_knowledge_digest.yaml": meta_knowledge_digest,
+        "implementation_readiness.yaml": implementation_readiness,
         "source_tree_survey.yaml": source_tree_survey,
         "gap_analysis.yaml": gap_analysis,
         "porting_plan.yaml": porting_plan,
@@ -1145,6 +1224,16 @@ def main() -> None:
         + "\n".join(
             f"- {item['action_id']} `{item['area']}`: {item['recommendation']}"
             for item in meta_knowledge_digest.get("action_bias", [])
+        ),
+    )
+    write_text(
+        artifact_root / "implementation_readiness.md",
+        "# Implementation Readiness\n\n"
+        f"- Overall status: `{implementation_readiness['overall_status']}`\n"
+        f"- Completion claim: `{implementation_readiness['completion_claim']}`\n\n"
+        + "\n".join(
+            f"- {item['item_id']} `{item['area']}`: {item['execution_decision']} - {item['why_not_completed'] or 'ready for the next build-only step'}"
+            for item in implementation_items
         ),
     )
     write_text(
@@ -1185,6 +1274,25 @@ def main() -> None:
         f"- Target: `{target['product']}` / `{target['board']}` / `{target['soc']}` / `{target['vendor']}` / `{target['architecture']}`\n"
         f"- Vendor dependency summary: {external_dependency_followup['target_dependency_summary']['summary']}\n\n"
         + "\n".join(f"- {item['dependency_id']} `{item['category']}`: {item['why_needed']}" for item in external_items),
+    )
+    write_text(
+        artifact_root / "porting_completion_summary.md",
+        "# Porting Completion Summary\n\n"
+        f"- Target: `{target['product']}` / `{target['board']}` / `{target['soc']}` / `{target['vendor']}` / `{target['architecture']}`\n"
+        f"- Meta knowledge: {len(selected_method_ids)} selected method(s), {len(selected_case_ids)} selected case(s)\n"
+        f"- Source implementation status: `{implementation_readiness['overall_status']}`\n"
+        f"- Build acceptance: `{build_acceptance['status']}` / `{build_acceptance['acceptance_level']}`\n"
+        "- Boot/runtime/device/test status: `unknown`\n\n"
+        "## Implementable Source And Compile Files\n\n"
+        + "\n".join(
+            f"- {item['item_id']} `{item['area']}`: {item['execution_decision']}; paths={', '.join(item['target_paths'][:4])}"
+            for item in implementation_items
+            if item["implementation_class"] == "source_compile_file"
+        )
+        + "\n\n## Vendor And Binary Dependencies\n\n"
+        + "\n".join(f"- {item['dependency_id']} `{item['category']}`: {item['next_action']}" for item in external_items)
+        + "\n\n## Current Completion Judgment\n\n"
+        "The port is not implementation-complete in this workspace. The next reliable move is to make the target product/board/SoC visible from source evidence, then run build-only triage for the seed product.",
     )
     write_text(
         artifact_root / "uncertainty_ledger.md",

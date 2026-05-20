@@ -80,6 +80,9 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
 - The execution assistant is a post-pipeline layer. It defaults to plan-only,
   must not auto-generate high-risk patches or external dependency artifacts,
   and must not infer boot/runtime/test pass from build pass.
+- Use `implementation_readiness` and `porting_completion_summary` to separate
+  source/compile files that are ready to implement from vendor/BSP/binary
+  dependencies and incomplete validation states.
 
 Cross-scenario aggregation now emits `meta_skill_pack/` with installable
 `SKILL.md` drafts plus `_validate_meta_output.log` for the validation transcript.

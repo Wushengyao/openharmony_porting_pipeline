@@ -115,6 +115,8 @@ writes plan-only execution artifacts under:
 ├── target_profile.yaml
 ├── meta_knowledge_digest.yaml
 ├── meta_knowledge_digest.md
+├── implementation_readiness.yaml
+├── implementation_readiness.md
 ├── source_tree_survey.yaml
 ├── source_tree_survey.md
 ├── gap_analysis.yaml
@@ -127,6 +129,7 @@ writes plan-only execution artifacts under:
 ├── build_acceptance.md
 ├── external_dependency_followup.yaml
 ├── external_dependency_followup.md
+├── porting_completion_summary.md
 ├── uncertainty_ledger.yaml
 └── uncertainty_ledger.md
 ```
@@ -141,6 +144,8 @@ P0 execution-assistant guardrails:
   signing/packaging tool needs go to `external_dependency_followup`;
 - cross-scenario meta methods and target-matching cases are summarized in
   `meta_knowledge_digest` before they influence porting plans;
+- source/compile implementation readiness and current completion judgment are
+  separated from external binary dependency follow-up;
 - unknown requirements and uncertain changes go to `uncertainty_ledger`;
 - build success must not be promoted to boot/runtime/test success;
 - every recommendation must carry evidence references to user requirements,

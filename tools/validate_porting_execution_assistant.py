@@ -21,6 +21,8 @@ REQUIRED_FILES = [
     "target_profile.yaml",
     "meta_knowledge_digest.yaml",
     "meta_knowledge_digest.md",
+    "implementation_readiness.yaml",
+    "implementation_readiness.md",
     "source_tree_survey.yaml",
     "source_tree_survey.md",
     "gap_analysis.yaml",
@@ -33,6 +35,7 @@ REQUIRED_FILES = [
     "build_acceptance.md",
     "external_dependency_followup.yaml",
     "external_dependency_followup.md",
+    "porting_completion_summary.md",
     "uncertainty_ledger.yaml",
     "uncertainty_ledger.md",
 ]
@@ -40,6 +43,7 @@ REQUIRED_FILES = [
 ARTIFACT_CONTRACTS = {
     "target_profile.yaml": ("target_profile", "requirements"),
     "meta_knowledge_digest.yaml": ("meta_knowledge_digest", "selected_methods"),
+    "implementation_readiness.yaml": ("implementation_readiness", "items"),
     "source_tree_survey.yaml": ("source_tree_survey", "items"),
     "gap_analysis.yaml": ("gap_analysis", "gaps"),
     "porting_plan.yaml": ("porting_plan", "phases"),
@@ -182,6 +186,7 @@ def validate_nested_evidence(value: Any, context: str) -> None:
             "method_id",
             "case_id",
             "action_id",
+            "item_id",
             "survey_id",
             "gap_id",
             "phase_id",

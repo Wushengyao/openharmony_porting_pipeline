@@ -34,6 +34,8 @@ Create all files under `PORTING_EXECUTION_ARTIFACT_DIR`:
 - `target_profile.yaml`
 - `meta_knowledge_digest.yaml`
 - `meta_knowledge_digest.md`
+- `implementation_readiness.yaml`
+- `implementation_readiness.md`
 - `source_tree_survey.yaml`
 - `source_tree_survey.md`
 - `gap_analysis.yaml`
@@ -46,6 +48,7 @@ Create all files under `PORTING_EXECUTION_ARTIFACT_DIR`:
 - `build_acceptance.md`
 - `external_dependency_followup.yaml`
 - `external_dependency_followup.md`
+- `porting_completion_summary.md`
 - `uncertainty_ledger.yaml`
 - `uncertainty_ledger.md`
 
@@ -227,6 +230,32 @@ Select only meta methods and cases whose applicability matches the target seed,
 architecture, product/board/SoC/vendor terms, or universal guardrails. Keep HDF,
 WiFi, media/camera, audio, and display feature methods in `deferred_methods`
 until target product/board/SoC paths and feature requirements are visible.
+
+### implementation_readiness.yaml
+
+Use:
+
+```yaml
+artifact_type: implementation_readiness
+target: {}
+overall_status: blocked_before_source_implementation|ready_for_build_only_triage|unknown
+completion_claim: not_complete|partial|unknown
+items:
+  - item_id: IMPL-001
+    area: product_config|board_soc_config|riscv_build_runtime|feature_driver_runtime|vendor_binary_dependency|unknown
+    implementation_class: source_compile_file|external_binary_dependency|unknown
+    target_paths: []
+    current_status: missing_in_workspace|visible_in_workspace|partially_visible|meta_case_identified|deferred_until_base_binding|report_only|unknown
+    execution_decision: plan_ready_not_applied|manual_review_required|requires_diff_or_source_review|defer_feature_specific_source_work|do_not_generate_binary_artifacts|ready_for_build_triage|unknown
+    why_not_completed: <reason or empty>
+    next_action: <next reliable action>
+    evidence_refs: [...]
+```
+
+This artifact must decide what can be implemented as source or compile files,
+what must remain a plan, and what is blocked by vendor/BSP/binary provenance.
+It must not claim the port is complete unless product, board, SoC, build, and
+explicit boot/runtime/test evidence are present.
 
 ### source_tree_survey.yaml
 
