@@ -38,6 +38,8 @@ Create all files under `PORTING_EXECUTION_ARTIFACT_DIR`:
 - `implementation_readiness.md`
 - `source_file_blueprint.yaml`
 - `source_file_blueprint.md`
+- `source_candidate_manifest.yaml`
+- `source_candidate_manifest.md`
 - `source_tree_survey.yaml`
 - `source_tree_survey.md`
 - `gap_analysis.yaml`
@@ -287,6 +289,33 @@ blueprints:
 Blueprints may describe candidate source or compile-file content strategy, but
 must not write source files, patch files, or diff hunks. They are the bridge
 between meta knowledge and later controlled implementation.
+
+### source_candidate_manifest.yaml
+
+Use:
+
+```yaml
+artifact_type: source_candidate_manifest
+target: {}
+default_write_policy: do_not_write_to_workspace
+candidate_count: 0
+scope_note: <scope note>
+candidates:
+  - candidate_id: SRC-CAND-001
+    target_path: <repo path>
+    source_blueprint_ref: SRC-BP-001
+    content_format: json|gn|text|unknown
+    readiness: preview_only_not_apply_ready|unknown
+    write_policy: do_not_write_to_workspace
+    content_preview: <concrete review-only source text>
+    open_questions: []
+    apply_gate: <evidence gate before writing to workspace>
+    evidence_refs: [...]
+```
+
+Candidate files may include concrete source text previews for review, but must
+not be written to the workspace, marked ready to apply, or encoded as patch
+diffs.
 
 ### target_dependency_inventory.yaml
 

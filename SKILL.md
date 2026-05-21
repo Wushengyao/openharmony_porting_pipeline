@@ -85,6 +85,8 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   dependencies and incomplete validation states.
 - Use `source_file_blueprint` as the non-mutating bridge from meta knowledge to
   later controlled source or compile-file implementation.
+- Use `source_candidate_manifest` for concrete review-only file previews; keep
+  its write policy disabled until target source evidence closes the apply gate.
 - Use `target_dependency_inventory` to summarize binary, firmware, bootloader,
   prebuilt, and closed-driver candidates from selected evidence without
   promoting them to source fixes.

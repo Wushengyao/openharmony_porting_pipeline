@@ -119,6 +119,8 @@ writes plan-only execution artifacts under:
 ├── implementation_readiness.md
 ├── source_file_blueprint.yaml
 ├── source_file_blueprint.md
+├── source_candidate_manifest.yaml
+├── source_candidate_manifest.md
 ├── source_tree_survey.yaml
 ├── source_tree_survey.md
 ├── gap_analysis.yaml
@@ -152,6 +154,8 @@ P0 execution-assistant guardrails:
   separated from external binary dependency follow-up;
 - source-file blueprints bridge meta knowledge to later controlled
   implementation without writing source files or patch hunks;
+- source candidate manifests include concrete review-only file previews while
+  keeping workspace writes disabled;
 - target dependency inventory reports binary/prebuilt/firmware candidates from
   selected evidence without treating them as source fixes;
 - unknown requirements and uncertain changes go to `uncertainty_ledger`;

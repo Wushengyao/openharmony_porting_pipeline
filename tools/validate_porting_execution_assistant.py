@@ -25,6 +25,8 @@ REQUIRED_FILES = [
     "implementation_readiness.md",
     "source_file_blueprint.yaml",
     "source_file_blueprint.md",
+    "source_candidate_manifest.yaml",
+    "source_candidate_manifest.md",
     "source_tree_survey.yaml",
     "source_tree_survey.md",
     "gap_analysis.yaml",
@@ -49,6 +51,7 @@ ARTIFACT_CONTRACTS = {
     "meta_knowledge_digest.yaml": ("meta_knowledge_digest", "selected_methods"),
     "implementation_readiness.yaml": ("implementation_readiness", "items"),
     "source_file_blueprint.yaml": ("source_file_blueprint", "blueprints"),
+    "source_candidate_manifest.yaml": ("source_candidate_manifest", "candidates"),
     "source_tree_survey.yaml": ("source_tree_survey", "items"),
     "gap_analysis.yaml": ("gap_analysis", "gaps"),
     "porting_plan.yaml": ("porting_plan", "phases"),
@@ -194,6 +197,7 @@ def validate_nested_evidence(value: Any, context: str) -> None:
             "action_id",
             "item_id",
             "blueprint_id",
+            "candidate_id",
             "asset_id",
             "survey_id",
             "gap_id",
@@ -212,6 +216,7 @@ def validate_nested_evidence(value: Any, context: str) -> None:
             "rationale",
             "why_needed",
             "content_strategy",
+            "content_preview",
             "apply_gate",
             "next_action",
             "risk",
@@ -297,6 +302,28 @@ def validate_target_dependency_inventory(path: Path, data: dict[str, Any]) -> No
             fail(f"target_dependency_inventory.yaml items[{idx}] missing path")
         if not str(item.get("category") or "").strip():
             fail(f"target_dependency_inventory.yaml items[{idx}] missing category")
+
+
+def validate_source_candidate_manifest(path: Path, data: dict[str, Any]) -> None:
+    if data.get("default_write_policy") != "do_not_write_to_workspace":
+        fail("source_candidate_manifest.yaml default_write_policy must be do_not_write_to_workspace")
+    candidates = data.get("candidates")
+    if not isinstance(candidates, list):
+        fail("source_candidate_manifest.yaml candidates must be a list")
+    if data.get("candidate_count") != len(candidates):
+        fail("source_candidate_manifest.yaml candidate_count must equal candidates length")
+    for idx, item in enumerate(candidates):
+        if not isinstance(item, dict):
+            fail(f"source_candidate_manifest.yaml candidates[{idx}] must be a mapping")
+        validate_evidence_refs(item, f"source_candidate_manifest.yaml.candidates[{idx}]")
+        if item.get("write_policy") != "do_not_write_to_workspace":
+            fail(f"source_candidate_manifest.yaml candidates[{idx}] write_policy must be do_not_write_to_workspace")
+        if item.get("readiness") == "ready_to_apply":
+            fail(f"source_candidate_manifest.yaml candidates[{idx}] must not be ready_to_apply in plan-only mode")
+        if not str(item.get("content_preview") or "").strip():
+            fail(f"source_candidate_manifest.yaml candidates[{idx}] missing content_preview")
+        if PATCH_DIFF_RE.search(str(item.get("content_preview") or "")):
+            fail(f"source_candidate_manifest.yaml candidates[{idx}] must not embed diff hunks")
 
 
 def validate_patch_plan(path: Path, md_path: Path, artifact_dir: Path) -> None:
@@ -418,6 +445,8 @@ def main() -> None:
             validate_meta_knowledge_digest(path, data)
         elif rel == "source_file_blueprint.yaml":
             validate_source_file_blueprint(path, data)
+        elif rel == "source_candidate_manifest.yaml":
+            validate_source_candidate_manifest(path, data)
         elif rel == "target_dependency_inventory.yaml":
             validate_target_dependency_inventory(path, data)
 

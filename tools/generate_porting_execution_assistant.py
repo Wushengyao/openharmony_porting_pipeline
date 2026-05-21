@@ -28,6 +28,8 @@ REQUIRED_FILES = [
     "implementation_readiness.md",
     "source_file_blueprint.yaml",
     "source_file_blueprint.md",
+    "source_candidate_manifest.yaml",
+    "source_candidate_manifest.md",
     "source_tree_survey.yaml",
     "source_tree_survey.md",
     "gap_analysis.yaml",
@@ -1381,6 +1383,146 @@ def main() -> None:
             "blueprints": source_blueprints,
         }
     )
+    product_json_preview = {
+        "product_name": target["product"],
+        "device_company": target["vendor"],
+        "target_cpu": target["architecture"],
+        "board": target["board"],
+        "type": "standard",
+        "version": "3.0",
+        "enable_ramdisk": True,
+        "build_selinux": True,
+        "inherit": ["productdefine/common/inherit/rich.json"],
+        "subsystems": [],
+    }
+    vendor_config_preview = {
+        "product_name": target["product"],
+        "device_company": clean_str(target_seed.get("soc_vendor"), target["vendor"]),
+        "device_build_path": f"device/board/{target['vendor']}/{target['board']}",
+        "target_cpu": target["architecture"],
+        "type": "standard",
+        "version": "3.0",
+        "board": target["board"],
+        "enable_ramdisk": True,
+        "build_selinux": True,
+        "inherit": ["productdefine/common/inherit/rich.json"],
+        "subsystems": [],
+    }
+    candidate_files = [
+        {
+            "candidate_id": "SRC-CAND-001",
+            "target_path": f"productdefine/common/products/{target['product']}.json",
+            "source_blueprint_ref": "SRC-BP-001",
+            "content_format": "json",
+            "readiness": "preview_only_not_apply_ready",
+            "write_policy": "do_not_write_to_workspace",
+            "content_preview": json.dumps(product_json_preview, ensure_ascii=False, indent=2),
+            "open_questions": ["Confirm product inheritance profile.", "Confirm minimal subsystem/component set."],
+            "apply_gate": "Target product inheritance and subsystem list must be confirmed by target source evidence.",
+            "evidence_refs": unique([target_seed_ref, f"meta_method:{scope_method}", f"meta_method:{riscv_method}"] + product_case_refs[:3]),
+        },
+        {
+            "candidate_id": "SRC-CAND-002",
+            "target_path": f"vendor/{target['vendor']}/{target['product']}/config.json",
+            "source_blueprint_ref": "SRC-BP-002",
+            "content_format": "json",
+            "readiness": "preview_only_not_apply_ready",
+            "write_policy": "do_not_write_to_workspace",
+            "content_preview": json.dumps(vendor_config_preview, ensure_ascii=False, indent=2),
+            "open_questions": ["Confirm whether device_company should be the SoC vendor `thead` or board/vendor owner `iscas`.", "Confirm target product components."],
+            "apply_gate": "Device-company ownership and target component set must be confirmed.",
+            "evidence_refs": unique([target_seed_ref, product_ref, f"meta_method:{scope_method}"] + product_case_refs[:3]),
+        },
+        {
+            "candidate_id": "SRC-CAND-003",
+            "target_path": f"vendor/{target['vendor']}/{target['product']}/ohos.build",
+            "source_blueprint_ref": "SRC-BP-003",
+            "content_format": "json",
+            "readiness": "preview_only_not_apply_ready",
+            "write_policy": "do_not_write_to_workspace",
+            "content_preview": json.dumps(
+                {
+                    "subsystem": f"{target['vendor']}_products",
+                    "parts": {f"{target['product']}_products": {"module_list": []}},
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            "open_questions": ["Confirm actual subsystem and part naming convention.", "Confirm module_list contents."],
+            "apply_gate": "Minimal product parts and module list must be selected from target source evidence.",
+            "evidence_refs": unique([target_seed_ref, f"meta_method:{evidence_method}", f"meta_method:{riscv_method}"] + product_case_refs[:2]),
+        },
+        {
+            "candidate_id": "SRC-CAND-004",
+            "target_path": f"device/board/{target['vendor']}/{target['board']}/config.gni",
+            "source_blueprint_ref": "SRC-BP-004",
+            "content_format": "gn",
+            "readiness": "preview_only_not_apply_ready",
+            "write_policy": "do_not_write_to_workspace",
+            "content_preview": '\n'.join([
+                'board_arch = "riscv64"',
+                'board_cpu = "unknown"',
+                'board_toolchain_type = "clang"',
+                '',
+            ]),
+            "open_questions": ["Confirm TH1520 CPU string.", "Confirm board toolchain and board FPU settings."],
+            "apply_gate": "TH1520 CPU/toolchain values must be confirmed; unknown fields must be resolved before apply.",
+            "evidence_refs": unique([target_seed_ref, f"meta_method:{riscv_method}", f"meta_method:{boot_method}"] + product_case_refs[:2]),
+        },
+        {
+            "candidate_id": "SRC-CAND-005",
+            "target_path": f"device/board/{target['vendor']}/{target['board']}/device.gni",
+            "source_blueprint_ref": "SRC-BP-005",
+            "content_format": "gn",
+            "readiness": "preview_only_not_apply_ready",
+            "write_policy": "do_not_write_to_workspace",
+            "content_preview": '\n'.join([
+                f'soc_company = "{clean_str(target_seed.get("soc_vendor"), target["vendor"])}"',
+                f'soc_name = "{target["soc"]}"',
+                '',
+                'import("//device/soc/${soc_company}/${soc_name}/soc.gni")',
+                'import("//build/ohos.gni")',
+                '',
+                'if (!defined(defines)) {',
+                '  defines = []',
+                '}',
+                '',
+                'product_config_path = "//vendor/${product_company}/${product_name}"',
+                '',
+            ]),
+            "open_questions": ["Confirm target SoC import path exists.", "Confirm base feature switches for boot graphics, codec, camera, display, USB, and WiFi."],
+            "apply_gate": "device/soc import and base feature flags must be confirmed.",
+            "evidence_refs": unique([target_seed_ref, f"meta_method:{scope_method}", f"meta_method:{riscv_method}"] + product_case_refs[:3]),
+        },
+        {
+            "candidate_id": "SRC-CAND-006",
+            "target_path": f"device/soc/{clean_str(target_seed.get('soc_vendor'), target['vendor'])}/{target['soc']}/soc.gni",
+            "source_blueprint_ref": "SRC-BP-006",
+            "content_format": "gn",
+            "readiness": "preview_only_not_apply_ready",
+            "write_policy": "do_not_write_to_workspace",
+            "content_preview": '\n'.join([
+                f'soc_company = "{clean_str(target_seed.get("soc_vendor"), target["vendor"])}"',
+                f'soc_name = "{target["soc"]}"',
+                '',
+                '# HAL paths and feature switches must come from TH1520 BSP evidence.',
+                '',
+            ]),
+            "open_questions": ["Confirm TH1520 HAL paths.", "Confirm display/GPU/G2D, camera, audio, USB, and WiFi dependencies."],
+            "apply_gate": "TH1520 SoC HAL/source paths and binary dependency inventory must be confirmed.",
+            "evidence_refs": unique([target_seed_ref, f"meta_method:{riscv_method}", f"meta_method:{binary_method}"] + selected_case_refs[:4]),
+        },
+    ]
+    source_candidate_manifest = artifact_base("source_candidate_manifest")
+    source_candidate_manifest.update(
+        {
+            "target": target,
+            "default_write_policy": "do_not_write_to_workspace",
+            "candidate_count": len(candidate_files),
+            "candidates": candidate_files,
+            "scope_note": "Concrete candidate content is for review only. It is not a patch and is not apply-ready while source evidence remains incomplete.",
+        }
+    )
 
     uncertainties = [
         ("UNC-001", "target_source_visibility", f"Target identity is supplied by seed, but `{target['product']}` product config is not visible in the current source tree.", "Add or point to productdefine/vendor product configuration for the target."),
@@ -1411,6 +1553,7 @@ def main() -> None:
         "meta_knowledge_digest.yaml": meta_knowledge_digest,
         "implementation_readiness.yaml": implementation_readiness,
         "source_file_blueprint.yaml": source_file_blueprint,
+        "source_candidate_manifest.yaml": source_candidate_manifest,
         "source_tree_survey.yaml": source_tree_survey,
         "gap_analysis.yaml": gap_analysis,
         "porting_plan.yaml": porting_plan,
@@ -1463,6 +1606,22 @@ def main() -> None:
         + "\n".join(
             f"- {item['blueprint_id']} `{item['target_path']}` ({item['file_kind']}): {item['content_strategy']} Gate: {item['apply_gate']}"
             for item in source_blueprints
+        ),
+    )
+    write_text(
+        artifact_root / "source_candidate_manifest.md",
+        "# Source Candidate Manifest\n\n"
+        f"- Default write policy: `{source_candidate_manifest['default_write_policy']}`\n"
+        f"- Candidate files: {source_candidate_manifest['candidate_count']}\n"
+        f"- Scope: {source_candidate_manifest['scope_note']}\n\n"
+        + "\n\n".join(
+            "## "
+            + item["candidate_id"]
+            + f" `{item['target_path']}`\n\n"
+            + f"- Readiness: `{item['readiness']}`\n"
+            + f"- Apply gate: {item['apply_gate']}\n\n"
+            + f"```{item['content_format']}\n{item['content_preview']}\n```"
+            for item in candidate_files
         ),
     )
     write_text(
@@ -1520,6 +1679,7 @@ def main() -> None:
         f"- Target: `{target['product']}` / `{target['board']}` / `{target['soc']}` / `{target['vendor']}` / `{target['architecture']}`\n"
         f"- Meta knowledge: {len(selected_method_ids)} selected method(s), {len(selected_case_ids)} selected case(s)\n"
         f"- Source blueprints: {len(source_blueprints)} blueprint(s), generation mode `{source_file_blueprint['default_generation_mode']}`\n"
+        f"- Source candidate files: {len(candidate_files)}, write policy `{source_candidate_manifest['default_write_policy']}`\n"
         f"- Candidate binary/vendor assets: {len(inventory_items)} from selected meta cases\n"
         f"- Source implementation status: `{implementation_readiness['overall_status']}`\n"
         f"- Build acceptance: `{build_acceptance['status']}` / `{build_acceptance['acceptance_level']}`\n"
@@ -1534,6 +1694,11 @@ def main() -> None:
         + "\n".join(
             f"- {item['blueprint_id']} `{item['target_path']}`: {item['generation_mode']}; gate={item['apply_gate']}"
             for item in source_blueprints
+        )
+        + "\n\n## Source Candidate Files\n\n"
+        + "\n".join(
+            f"- {item['candidate_id']} `{item['target_path']}`: {item['readiness']}; gate={item['apply_gate']}"
+            for item in candidate_files
         )
         + "\n\n## Vendor And Binary Dependencies\n\n"
         + "\n".join(f"- {item['dependency_id']} `{item['category']}`: {item['next_action']}" for item in external_items)
@@ -1586,7 +1751,7 @@ def main() -> None:
     result = {
         "stage": STAGE,
         "status": "partial" if non_blocking else "passed",
-        "summary": f"Deterministic plan-only execution package generated; target seed and meta knowledge were consumed, with {len(selected_method_ids)} selected method(s), {len(selected_case_ids)} selected case(s), {len(source_blueprints)} source blueprint(s), and {len(inventory_items)} candidate dependency asset(s). Target source visibility/build acceptance remain separate.",
+        "summary": f"Deterministic plan-only execution package generated; target seed and meta knowledge were consumed, with {len(selected_method_ids)} selected method(s), {len(selected_case_ids)} selected case(s), {len(source_blueprints)} source blueprint(s), {len(candidate_files)} candidate source file preview(s), and {len(inventory_items)} candidate dependency asset(s). Target source visibility/build acceptance remain separate.",
         "execution_mode": args.execution_mode,
         "patch_apply_mode": args.patch_apply_mode,
         "artifact_root": str(artifact_root),
