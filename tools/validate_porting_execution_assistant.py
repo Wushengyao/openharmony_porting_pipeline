@@ -23,6 +23,8 @@ REQUIRED_FILES = [
     "meta_knowledge_digest.md",
     "implementation_readiness.yaml",
     "implementation_readiness.md",
+    "source_file_blueprint.yaml",
+    "source_file_blueprint.md",
     "source_tree_survey.yaml",
     "source_tree_survey.md",
     "gap_analysis.yaml",
@@ -44,6 +46,7 @@ ARTIFACT_CONTRACTS = {
     "target_profile.yaml": ("target_profile", "requirements"),
     "meta_knowledge_digest.yaml": ("meta_knowledge_digest", "selected_methods"),
     "implementation_readiness.yaml": ("implementation_readiness", "items"),
+    "source_file_blueprint.yaml": ("source_file_blueprint", "blueprints"),
     "source_tree_survey.yaml": ("source_tree_survey", "items"),
     "gap_analysis.yaml": ("gap_analysis", "gaps"),
     "porting_plan.yaml": ("porting_plan", "phases"),
@@ -187,6 +190,7 @@ def validate_nested_evidence(value: Any, context: str) -> None:
             "case_id",
             "action_id",
             "item_id",
+            "blueprint_id",
             "survey_id",
             "gap_id",
             "phase_id",
@@ -203,6 +207,8 @@ def validate_nested_evidence(value: Any, context: str) -> None:
             "observation",
             "rationale",
             "why_needed",
+            "content_strategy",
+            "apply_gate",
             "unknown",
         ]
         if any(key in value for key in evidence_bearing_keys):
@@ -254,6 +260,21 @@ def validate_meta_knowledge_digest(path: Path, data: dict[str, Any]) -> None:
             if not isinstance(item, dict):
                 fail(f"meta_knowledge_digest.yaml {key}[{idx}] must be a mapping")
             validate_evidence_refs(item, f"meta_knowledge_digest.yaml.{key}[{idx}]")
+
+
+def validate_source_file_blueprint(path: Path, data: dict[str, Any]) -> None:
+    if data.get("default_generation_mode") != "blueprint_only":
+        fail("source_file_blueprint.yaml default_generation_mode must be blueprint_only")
+    if data.get("apply_policy") != "do_not_apply_without_target_source_evidence":
+        fail("source_file_blueprint.yaml apply_policy must block application without target source evidence")
+    for idx, item in enumerate(data.get("blueprints") or []):
+        if not isinstance(item, dict):
+            fail(f"source_file_blueprint.yaml blueprints[{idx}] must be a mapping")
+        validate_evidence_refs(item, f"source_file_blueprint.yaml.blueprints[{idx}]")
+        if item.get("generation_mode") != "blueprint_only":
+            fail(f"source_file_blueprint.yaml blueprints[{idx}] generation_mode must be blueprint_only")
+        if not str(item.get("apply_gate") or "").strip():
+            fail(f"source_file_blueprint.yaml blueprints[{idx}] missing apply_gate")
 
 
 def validate_patch_plan(path: Path, md_path: Path, artifact_dir: Path) -> None:
@@ -373,6 +394,8 @@ def main() -> None:
             validate_target_profile(path, data)
         elif rel == "meta_knowledge_digest.yaml":
             validate_meta_knowledge_digest(path, data)
+        elif rel == "source_file_blueprint.yaml":
+            validate_source_file_blueprint(path, data)
 
     validate_patch_plan(artifact_dir / "patch_plan.yaml", artifact_dir / "patch_plan.md", artifact_dir)
     validate_build_acceptance(artifact_dir / "build_acceptance.yaml", artifact_dir / "build_acceptance.md")

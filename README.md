@@ -117,6 +117,8 @@ writes plan-only execution artifacts under:
 ├── meta_knowledge_digest.md
 ├── implementation_readiness.yaml
 ├── implementation_readiness.md
+├── source_file_blueprint.yaml
+├── source_file_blueprint.md
 ├── source_tree_survey.yaml
 ├── source_tree_survey.md
 ├── gap_analysis.yaml
@@ -146,6 +148,8 @@ P0 execution-assistant guardrails:
   `meta_knowledge_digest` before they influence porting plans;
 - source/compile implementation readiness and current completion judgment are
   separated from external binary dependency follow-up;
+- source-file blueprints bridge meta knowledge to later controlled
+  implementation without writing source files or patch hunks;
 - unknown requirements and uncertain changes go to `uncertainty_ledger`;
 - build success must not be promoted to boot/runtime/test success;
 - every recommendation must carry evidence references to user requirements,

@@ -83,6 +83,8 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
 - Use `implementation_readiness` and `porting_completion_summary` to separate
   source/compile files that are ready to implement from vendor/BSP/binary
   dependencies and incomplete validation states.
+- Use `source_file_blueprint` as the non-mutating bridge from meta knowledge to
+  later controlled source or compile-file implementation.
 
 Cross-scenario aggregation now emits `meta_skill_pack/` with installable
 `SKILL.md` drafts plus `_validate_meta_output.log` for the validation transcript.

@@ -36,6 +36,8 @@ Create all files under `PORTING_EXECUTION_ARTIFACT_DIR`:
 - `meta_knowledge_digest.md`
 - `implementation_readiness.yaml`
 - `implementation_readiness.md`
+- `source_file_blueprint.yaml`
+- `source_file_blueprint.md`
 - `source_tree_survey.yaml`
 - `source_tree_survey.md`
 - `gap_analysis.yaml`
@@ -256,6 +258,33 @@ This artifact must decide what can be implemented as source or compile files,
 what must remain a plan, and what is blocked by vendor/BSP/binary provenance.
 It must not claim the port is complete unless product, board, SoC, build, and
 explicit boot/runtime/test evidence are present.
+
+### source_file_blueprint.yaml
+
+Use:
+
+```yaml
+artifact_type: source_file_blueprint
+target: {}
+default_generation_mode: blueprint_only
+apply_policy: do_not_apply_without_target_source_evidence
+blueprints:
+  - blueprint_id: SRC-BP-001
+    target_path: <repo path or route>
+    owning_area: product_config|board_soc_config|riscv_build_runtime|feature_driver_runtime|unknown
+    file_kind: productdefine_json|vendor_product_config_json|vendor_build_manifest|board_config_gni|board_device_gni|soc_config_gni|cross_repo_source_route|unknown
+    generation_mode: blueprint_only
+    content_strategy: <what the eventual source file must express>
+    reference_paths: []
+    required_fields: []
+    target_values: {}
+    apply_gate: <evidence gate before source files or patches may be generated>
+    evidence_refs: [...]
+```
+
+Blueprints may describe candidate source or compile-file content strategy, but
+must not write source files, patch files, or diff hunks. They are the bridge
+between meta knowledge and later controlled implementation.
 
 ### source_tree_survey.yaml
 

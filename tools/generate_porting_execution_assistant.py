@@ -26,6 +26,8 @@ REQUIRED_FILES = [
     "meta_knowledge_digest.md",
     "implementation_readiness.yaml",
     "implementation_readiness.md",
+    "source_file_blueprint.yaml",
+    "source_file_blueprint.md",
     "source_tree_survey.yaml",
     "source_tree_survey.md",
     "gap_analysis.yaml",
@@ -1165,6 +1167,139 @@ def main() -> None:
         }
     )
 
+    source_blueprints = [
+        {
+            "blueprint_id": "SRC-BP-001",
+            "target_path": f"productdefine/common/products/{target['product']}.json",
+            "owning_area": "product_config",
+            "file_kind": "productdefine_json",
+            "generation_mode": "blueprint_only",
+            "content_strategy": "Create a productdefine entry for the seed product that binds product_name, board, device_company, target_cpu, type, version, inheritance, and minimal subsystem selection.",
+            "reference_paths": [path for path in ["productdefine/common/products/system_arm64_default.json"] if (workspace / path).exists()],
+            "required_fields": ["product_name", "device_company", "target_cpu", "board", "type", "version", "inherit", "subsystems"],
+            "target_values": {
+                "product_name": target["product"],
+                "device_company": target["vendor"],
+                "target_cpu": target["architecture"],
+                "board": target["board"],
+                "type": "standard",
+                "version": "3.0",
+            },
+            "apply_gate": "Only generate or apply after confirming product inheritance and subsystem set from target source evidence.",
+            "evidence_refs": unique([target_seed_ref, product_ref, f"meta_method:{scope_method}", f"meta_method:{riscv_method}"] + product_case_refs[:3]),
+        },
+        {
+            "blueprint_id": "SRC-BP-002",
+            "target_path": f"vendor/{target['vendor']}/{target['product']}/config.json",
+            "owning_area": "product_config",
+            "file_kind": "vendor_product_config_json",
+            "generation_mode": "blueprint_only",
+            "content_strategy": "Create the vendor product config that maps product_name to device_build_path and board while preserving OpenHarmony product schema fields.",
+            "reference_paths": [path for path in ["vendor/hihope/2in1_core_system/config.json"] if (workspace / path).exists()],
+            "required_fields": ["product_name", "device_company", "device_build_path", "target_cpu", "type", "version", "board", "inherit", "subsystems"],
+            "target_values": {
+                "product_name": target["product"],
+                "device_company": clean_str(target_seed.get("soc_vendor"), target["vendor"]),
+                "device_build_path": f"device/board/{target['vendor']}/{target['board']}",
+                "target_cpu": target["architecture"],
+                "board": target["board"],
+            },
+            "apply_gate": "Only generate or apply after confirming device_company semantics for ISCAS versus T-Head ownership and target subsystem requirements.",
+            "evidence_refs": unique([target_seed_ref, product_ref, f"meta_method:{scope_method}"] + product_case_refs[:3]),
+        },
+        {
+            "blueprint_id": "SRC-BP-003",
+            "target_path": f"vendor/{target['vendor']}/{target['product']}/ohos.build",
+            "owning_area": "product_config",
+            "file_kind": "vendor_build_manifest",
+            "generation_mode": "blueprint_only",
+            "content_strategy": "Create a vendor build manifest only after selecting target components; keep feature-specific HDF, WiFi, camera, display, and audio components outside the base skeleton until selected.",
+            "reference_paths": bounded_glob(workspace, "vendor/*/*/ohos.build", limit=4),
+            "required_fields": ["subsystem", "parts"],
+            "target_values": {
+                "product_company": target["vendor"],
+                "product_name": target["product"],
+            },
+            "apply_gate": "Only generate or apply after the minimal component set is selected from target source evidence.",
+            "evidence_refs": unique([target_seed_ref, f"meta_method:{evidence_method}", f"meta_method:{riscv_method}"] + product_case_refs[:2]),
+        },
+        {
+            "blueprint_id": "SRC-BP-004",
+            "target_path": f"device/board/{target['vendor']}/{target['board']}/config.gni",
+            "owning_area": "board_soc_config",
+            "file_kind": "board_config_gni",
+            "generation_mode": "blueprint_only",
+            "content_strategy": "Create board architecture/toolchain declarations for the target board; avoid guessing CPU microarchitecture, FPU, or toolchain knobs beyond seed-level RISC-V64 identity.",
+            "reference_paths": [path for path in ["device/board/hihope/rk3568/config.gni"] if (workspace / path).exists()],
+            "required_fields": ["board_arch", "board_cpu", "board_toolchain_type"],
+            "target_values": {
+                "board_arch": "riscv64",
+                "board_cpu": "unknown",
+                "board_toolchain_type": "clang",
+            },
+            "apply_gate": "Only generate or apply after confirming TH1520 CPU/toolchain values and kernel build assumptions.",
+            "evidence_refs": unique([target_seed_ref, f"meta_method:{riscv_method}", f"meta_method:{boot_method}"] + product_case_refs[:2]),
+        },
+        {
+            "blueprint_id": "SRC-BP-005",
+            "target_path": f"device/board/{target['vendor']}/{target['board']}/device.gni",
+            "owning_area": "board_soc_config",
+            "file_kind": "board_device_gni",
+            "generation_mode": "blueprint_only",
+            "content_strategy": "Create board-to-SoC imports and base feature switches after the SoC config path is confirmed.",
+            "reference_paths": [path for path in ["device/board/hihope/rk3568/device.gni"] if (workspace / path).exists()],
+            "required_fields": ["soc_company", "soc_name", "product_config_path"],
+            "target_values": {
+                "soc_company": clean_str(target_seed.get("soc_vendor"), target["vendor"]),
+                "soc_name": target["soc"],
+                "product_config_path": f"//vendor/{target['vendor']}/{target['product']}",
+            },
+            "apply_gate": "Only generate or apply after confirming device/soc import path and feature switches for RVBook.",
+            "evidence_refs": unique([target_seed_ref, f"meta_method:{scope_method}", f"meta_method:{riscv_method}"] + product_case_refs[:3]),
+        },
+        {
+            "blueprint_id": "SRC-BP-006",
+            "target_path": f"device/soc/{clean_str(target_seed.get('soc_vendor'), target['vendor'])}/{target['soc']}/soc.gni",
+            "owning_area": "board_soc_config",
+            "file_kind": "soc_config_gni",
+            "generation_mode": "blueprint_only",
+            "content_strategy": "Create SoC-level paths and HAL feature variables only from confirmed TH1520 BSP evidence; do not infer display, camera, audio, or USB implementation paths from unrelated boards.",
+            "reference_paths": [path for path in ["device/soc/rockchip/rk3566/soc.gni"] if (workspace / path).exists()],
+            "required_fields": ["soc_name", "soc_company", "hal_paths_or_feature_switches"],
+            "target_values": {
+                "soc_company": clean_str(target_seed.get("soc_vendor"), target["vendor"]),
+                "soc_name": target["soc"],
+            },
+            "apply_gate": "Only generate or apply after TH1520 SoC HAL/source paths and binary dependencies are inventoried.",
+            "evidence_refs": unique([target_seed_ref, f"meta_method:{riscv_method}", f"meta_method:{binary_method}"] + selected_case_refs[:4]),
+        },
+        {
+            "blueprint_id": "SRC-BP-007",
+            "target_path": "build and third_party/musl RISC-V route",
+            "owning_area": "riscv_build_runtime",
+            "file_kind": "cross_repo_source_route",
+            "generation_mode": "blueprint_only",
+            "content_strategy": "Use meta cases to compare build target selection, Rust sysroot/toolchain routing, NDK library paths, musl namespace generation, and libc low-level RISC-V support before source edits.",
+            "reference_paths": ["build", "third_party/musl"],
+            "required_fields": ["diff_source", "affected_repos", "build_log_after_product_visible"],
+            "target_values": {
+                "architecture": target["architecture"],
+                "product": target["product"],
+            },
+            "apply_gate": "Only generate or apply after raw diffs or source evidence for the RVBook RISC-V route are available.",
+            "evidence_refs": unique([target_seed_ref, f"meta_method:{riscv_method}"] + riscv_case_refs[:4]),
+        },
+    ]
+    source_file_blueprint = artifact_base("source_file_blueprint")
+    source_file_blueprint.update(
+        {
+            "target": target,
+            "default_generation_mode": "blueprint_only",
+            "apply_policy": "do_not_apply_without_target_source_evidence",
+            "blueprints": source_blueprints,
+        }
+    )
+
     uncertainties = [
         ("UNC-001", "target_source_visibility", f"Target identity is supplied by seed, but `{target['product']}` product config is not visible in the current source tree.", "Add or point to productdefine/vendor product configuration for the target."),
         ("UNC-002", "board_soc_visibility", f"Target board `{target['board']}` and SoC `{target['soc']}` are not visible in the current source-tree survey.", "Add or point to device/board and device/soc configuration paths for the target."),
@@ -1193,6 +1328,7 @@ def main() -> None:
         "target_profile.yaml": target_profile,
         "meta_knowledge_digest.yaml": meta_knowledge_digest,
         "implementation_readiness.yaml": implementation_readiness,
+        "source_file_blueprint.yaml": source_file_blueprint,
         "source_tree_survey.yaml": source_tree_survey,
         "gap_analysis.yaml": gap_analysis,
         "porting_plan.yaml": porting_plan,
@@ -1234,6 +1370,16 @@ def main() -> None:
         + "\n".join(
             f"- {item['item_id']} `{item['area']}`: {item['execution_decision']} - {item['why_not_completed'] or 'ready for the next build-only step'}"
             for item in implementation_items
+        ),
+    )
+    write_text(
+        artifact_root / "source_file_blueprint.md",
+        "# Source File Blueprint\n\n"
+        f"- Default generation mode: `{source_file_blueprint['default_generation_mode']}`\n"
+        f"- Apply policy: `{source_file_blueprint['apply_policy']}`\n\n"
+        + "\n".join(
+            f"- {item['blueprint_id']} `{item['target_path']}` ({item['file_kind']}): {item['content_strategy']} Gate: {item['apply_gate']}"
+            for item in source_blueprints
         ),
     )
     write_text(
@@ -1280,6 +1426,7 @@ def main() -> None:
         "# Porting Completion Summary\n\n"
         f"- Target: `{target['product']}` / `{target['board']}` / `{target['soc']}` / `{target['vendor']}` / `{target['architecture']}`\n"
         f"- Meta knowledge: {len(selected_method_ids)} selected method(s), {len(selected_case_ids)} selected case(s)\n"
+        f"- Source blueprints: {len(source_blueprints)} blueprint(s), generation mode `{source_file_blueprint['default_generation_mode']}`\n"
         f"- Source implementation status: `{implementation_readiness['overall_status']}`\n"
         f"- Build acceptance: `{build_acceptance['status']}` / `{build_acceptance['acceptance_level']}`\n"
         "- Boot/runtime/device/test status: `unknown`\n\n"
@@ -1288,6 +1435,11 @@ def main() -> None:
             f"- {item['item_id']} `{item['area']}`: {item['execution_decision']}; paths={', '.join(item['target_paths'][:4])}"
             for item in implementation_items
             if item["implementation_class"] == "source_compile_file"
+        )
+        + "\n\n## Source Blueprints\n\n"
+        + "\n".join(
+            f"- {item['blueprint_id']} `{item['target_path']}`: {item['generation_mode']}; gate={item['apply_gate']}"
+            for item in source_blueprints
         )
         + "\n\n## Vendor And Binary Dependencies\n\n"
         + "\n".join(f"- {item['dependency_id']} `{item['category']}`: {item['next_action']}" for item in external_items)
@@ -1335,7 +1487,7 @@ def main() -> None:
     result = {
         "stage": STAGE,
         "status": "partial" if non_blocking else "passed",
-        "summary": f"Deterministic plan-only execution package generated; target seed and meta knowledge were consumed, with {len(selected_method_ids)} selected method(s) and {len(selected_case_ids)} selected case(s). Target source visibility/build acceptance remain separate.",
+        "summary": f"Deterministic plan-only execution package generated; target seed and meta knowledge were consumed, with {len(selected_method_ids)} selected method(s), {len(selected_case_ids)} selected case(s), and {len(source_blueprints)} source blueprint(s). Target source visibility/build acceptance remain separate.",
         "execution_mode": args.execution_mode,
         "patch_apply_mode": args.patch_apply_mode,
         "artifact_root": str(artifact_root),
