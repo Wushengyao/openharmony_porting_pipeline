@@ -104,6 +104,7 @@ bash tools/run_porting_execution_assistant.sh \
   --source-output /path/to/ohos/porting_knowledge_output \
   --meta-output /path/to/openharmony_porting_meta_output_or_zip \
   --target-profile /path/to/target_profile_seed.yaml \
+  --target-source-root /path/to/reference_target_ohos \
   /path/to/ohos
 ```
 
@@ -115,6 +116,8 @@ writes plan-only execution artifacts under:
 ├── target_profile.yaml
 ├── meta_knowledge_digest.yaml
 ├── meta_knowledge_digest.md
+├── target_source_evidence.yaml
+├── target_source_evidence.md
 ├── implementation_readiness.yaml
 ├── implementation_readiness.md
 ├── source_file_blueprint.yaml
@@ -150,6 +153,8 @@ P0 execution-assistant guardrails:
   signing/packaging tool needs go to `external_dependency_followup`;
 - cross-scenario meta methods and target-matching cases are summarized in
   `meta_knowledge_digest` before they influence porting plans;
+- an optional `--target-source-root` is scanned read-only and only along
+  target-relevant product, board, and SoC paths;
 - source/compile implementation readiness and current completion judgment are
   separated from external binary dependency follow-up;
 - source-file blueprints bridge meta knowledge to later controlled

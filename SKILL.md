@@ -42,6 +42,7 @@ bash /home/ve/.codex/skills/openharmony_porting_pipeline/tools/run_porting_execu
   --source-output /path/to/ohos/porting_knowledge_output \
   --meta-output /path/to/openharmony_porting_meta_output_or_zip \
   --target-profile /path/to/target_profile_seed.yaml \
+  --target-source-root /path/to/reference_target_ohos \
   /path/to/ohos
 ```
 
@@ -87,6 +88,9 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   later controlled source or compile-file implementation.
 - Use `source_candidate_manifest` for concrete review-only file previews; keep
   its write policy disabled until target source evidence closes the apply gate.
+- Use `target_source_evidence` when a read-only reference target source tree is
+  supplied; it may inform candidate previews and dependency inventory, but does
+  not authorize copying files into the workspace.
 - Use `target_dependency_inventory` to summarize binary, firmware, bootloader,
   prebuilt, and closed-driver candidates from selected evidence without
   promoting them to source fixes.

@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
+import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +26,8 @@ REQUIRED_FILES = [
     "target_profile.yaml",
     "meta_knowledge_digest.yaml",
     "meta_knowledge_digest.md",
+    "target_source_evidence.yaml",
+    "target_source_evidence.md",
     "implementation_readiness.yaml",
     "implementation_readiness.md",
     "source_file_blueprint.yaml",
@@ -227,15 +231,278 @@ def classify_binary_asset(path: str) -> str:
     lowered = path.lower()
     if any(token in lowered for token in ["u-boot", "uboot", "miniloader", "opensbi", "loader/"]):
         return "bootloader"
-    if any(token in lowered for token in ["firmware", "fw_", "light_", "/boot/"]) or lowered.endswith(".bin"):
+    if (
+        any(token in lowered for token in ["firmware", "fw_", "light_", "/boot/"])
+        or lowered.endswith((".bin", ".hcd"))
+    ):
         return "firmware"
     if lowered.endswith(".ko"):
         return "closed_driver"
     if lowered.endswith(".so"):
         return "prebuilt"
-    if lowered.endswith((".img", ".cfg")):
+    if "/image_conf/" in lowered or lowered.endswith((".img", ".cfg", ".crt")):
         return "signing_packaging_tools"
     return "prebuilt"
+
+
+TEXT_SOURCE_SUFFIXES = {
+    ".build",
+    ".c",
+    ".cfg",
+    ".gni",
+    ".gn",
+    ".h",
+    ".hcs",
+    ".json",
+    ".md",
+    ".para",
+    ".patch",
+    ".sh",
+    ".txt",
+    ".xml",
+}
+
+DEPENDENCY_SUFFIXES = {".a", ".bin", ".crt", ".hcb", ".hcd", ".img", ".ko", ".so"}
+
+
+def sha256_file(path: Path) -> str:
+    try:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except Exception:
+        return "unknown"
+
+
+def read_text_preview(path: Path, max_chars: int = 12000) -> str:
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return ""
+    if len(text) <= max_chars:
+        return text.rstrip()
+    return text[:max_chars].rstrip() + "\n# ... truncated; see target_source_evidence for the full source path ..."
+
+
+def infer_target_source_role(rel_path: str) -> str:
+    lowered = rel_path.lower()
+    if lowered.startswith("productdefine/common/products/"):
+        return "productdefine_config"
+    if lowered.startswith("vendor/"):
+        if "/image_conf/" in lowered:
+            return "image_packaging_config"
+        if "/hdf_config/" in lowered:
+            return "hdf_config"
+        if "/bluetooth/" in lowered:
+            return "bluetooth_firmware_or_driver"
+        return "vendor_product_config"
+    if lowered.startswith("device/board/"):
+        if "/loader/" in lowered:
+            return "bootloader_packaging"
+        if "/kernel/" in lowered:
+            return "kernel_or_driver_payload"
+        if "/audio_drivers/" in lowered:
+            return "audio_driver"
+        return "board_config"
+    if lowered.startswith("device/soc/"):
+        return "soc_config"
+    return "other_target_source"
+
+
+def target_source_root_candidates(root: Path, target: dict[str, str], seed: dict[str, Any]) -> list[str]:
+    product = target.get("product", "unknown")
+    board = target.get("board", "unknown")
+    vendor = target.get("vendor", "unknown")
+    soc = target.get("soc", "unknown")
+    soc_vendor = clean_str(seed.get("soc_vendor"), vendor)
+    candidates = [
+        f"vendor/{vendor}/{product}",
+        f"device/board/{vendor}/{board}",
+        f"device/soc/{soc_vendor}/{soc}",
+        f"productdefine/common/products/{product}.json",
+    ]
+    return [item for item in unique(candidates) if item and item != "unknown" and (root / item).exists()]
+
+
+def iter_relevant_target_files(root: Path, roots: list[str], limit: int = 160, per_root_limit: int = 80) -> list[str]:
+    files: list[str] = []
+    for rel_root in roots:
+        start = root / rel_root
+        root_count = 0
+        if start.is_file():
+            files.append(rel(start, root))
+        elif start.is_dir():
+            for dirpath, dirnames, filenames in os.walk(start):
+                dirnames[:] = sorted(name for name in dirnames if name not in {".git", ".repo", "out"})
+                for filename in sorted(filenames):
+                    files.append(rel(Path(dirpath) / filename, root))
+                    root_count += 1
+                    if len(files) >= limit:
+                        return unique(files)
+                    if root_count >= per_root_limit:
+                        break
+                if root_count >= per_root_limit:
+                    break
+        if len(files) >= limit:
+            break
+    return unique(files)[:limit]
+
+
+def is_text_source_candidate(path: str) -> bool:
+    lowered = path.lower()
+    suffix = Path(path).suffix.lower()
+    return suffix in TEXT_SOURCE_SUFFIXES or lowered.endswith("ohos.build")
+
+
+def is_dependency_asset_candidate(path: str) -> bool:
+    lowered = path.lower()
+    suffix = Path(path).suffix.lower()
+    if suffix in DEPENDENCY_SUFFIXES:
+        return True
+    if "/loader/" in lowered and suffix in {".cfg", ".txt"}:
+        return True
+    if "/image_conf/" in lowered and suffix == ".txt":
+        return True
+    return False
+
+
+def scan_target_source_root(
+    root: Path | None,
+    target: dict[str, str],
+    seed: dict[str, Any],
+) -> dict[str, Any]:
+    artifact = artifact_base("target_source_evidence")
+    artifact.update(
+        {
+            "target": target,
+            "target_source_root": str(root) if root else "unknown",
+            "scan_status": "not_supplied",
+            "visibility": "unknown",
+            "expected_path_count": 0,
+            "found_path_count": 0,
+            "binary_asset_count": 0,
+            "items": [],
+            "binary_assets": [],
+            "coverage_note": "No target source root was supplied, so this artifact has no external source evidence.",
+        }
+    )
+    if not root:
+        return artifact
+    if not root.exists() or not root.is_dir():
+        artifact["scan_status"] = "missing"
+        artifact["coverage_note"] = "The supplied target source root does not exist or is not a directory."
+        return artifact
+
+    product = target.get("product", "unknown")
+    board = target.get("board", "unknown")
+    vendor = target.get("vendor", "unknown")
+    soc = target.get("soc", "unknown")
+    soc_vendor = clean_str(seed.get("soc_vendor"), vendor)
+    expected_paths = [
+        ("productdefine_config", f"productdefine/common/products/{product}.json", "file"),
+        ("vendor_product_config", f"vendor/{vendor}/{product}/config.json", "file"),
+        ("vendor_build_manifest", f"vendor/{vendor}/{product}/ohos.build", "file"),
+        ("vendor_product_gni", f"vendor/{vendor}/{product}/product.gni", "file"),
+        ("vendor_product_dir", f"vendor/{vendor}/{product}", "directory"),
+        ("board_config_gni", f"device/board/{vendor}/{board}/config.gni", "file"),
+        ("board_device_gni", f"device/board/{vendor}/{board}/device.gni", "file"),
+        ("board_build_manifest", f"device/board/{vendor}/{board}/ohos.build", "file"),
+        ("board_dir", f"device/board/{vendor}/{board}", "directory"),
+        ("board_kernel_defconfig", f"device/board/{vendor}/{board}/kernel/{board}_defconfig", "file"),
+        ("board_kernel_build_script", f"device/board/{vendor}/{board}/kernel/build_kernel.sh", "file"),
+        ("soc_config_gni", f"device/soc/{soc_vendor}/{soc}/soc.gni", "file"),
+        ("soc_dir", f"device/soc/{soc_vendor}/{soc}", "directory"),
+    ]
+    visibility = target_visibility(root, target, seed)
+    roots = target_source_root_candidates(root, target, seed)
+    all_relevant_files = iter_relevant_target_files(root, roots, limit=180, per_root_limit=70)
+    dependency_relevant_files = iter_relevant_target_files(root, roots, limit=1200, per_root_limit=500)
+    sample_source_files = [item for item in all_relevant_files if is_text_source_candidate(item)][:60]
+    dependency_files = [item for item in dependency_relevant_files if is_dependency_asset_candidate(item)][:80]
+
+    items: list[dict[str, Any]] = []
+    seen_item_paths: set[str] = set()
+    for role, rel_path, expected_kind in expected_paths:
+        if "unknown" in rel_path:
+            continue
+        full_path = root / rel_path
+        status = "found" if full_path.exists() else "missing"
+        record: dict[str, Any] = {
+            "evidence_id": f"TSE-{len(items) + 1:03d}",
+            "kind": f"expected_{expected_kind}",
+            "role": role,
+            "path": rel_path,
+            "status": status,
+            "evidence_refs": [f"source_file:{rel_path}"] if status == "found" and full_path.is_file() else [f"source_tree:{root}"],
+        }
+        if full_path.exists():
+            record["absolute_path"] = str(full_path)
+            if full_path.is_file():
+                record["size_bytes"] = full_path.stat().st_size
+                record["sha256"] = sha256_file(full_path)
+            elif full_path.is_dir():
+                record["direct_child_count"] = len(list(full_path.iterdir()))
+        items.append(record)
+        seen_item_paths.add(rel_path)
+
+    for rel_path in sample_source_files:
+        if rel_path in seen_item_paths:
+            continue
+        full_path = root / rel_path
+        items.append(
+            {
+                "evidence_id": f"TSE-{len(items) + 1:03d}",
+                "kind": "sample_source_file",
+                "role": infer_target_source_role(rel_path),
+                "path": rel_path,
+                "status": "found",
+                "absolute_path": str(full_path),
+                "size_bytes": full_path.stat().st_size,
+                "sha256": sha256_file(full_path),
+                "evidence_refs": [f"source_file:{rel_path}", f"source_tree:{root}"],
+            }
+        )
+        seen_item_paths.add(rel_path)
+        if len(items) >= 80:
+            break
+
+    binary_assets: list[dict[str, Any]] = []
+    for rel_path in dependency_files:
+        full_path = root / rel_path
+        if not full_path.is_file():
+            continue
+        binary_assets.append(
+            {
+                "asset_id": f"TSA-{len(binary_assets) + 1:03d}",
+                "category": classify_binary_asset(rel_path),
+                "path": rel_path,
+                "absolute_path": str(full_path),
+                "sha256": sha256_file(full_path),
+                "size_bytes": full_path.stat().st_size,
+                "relation": "target_source_dependency_candidate",
+                "role": infer_target_source_role(rel_path),
+                "risk": "Target source root evidence identifies this dependency candidate, but provenance, license, redistribution, regeneration, and board validation still require review.",
+                "next_action": "Confirm ownership, license, source/regeneration route, runtime usage, and validation logs before integrating or declaring completion.",
+                "evidence_refs": [f"source_file:{rel_path}", f"source_tree:{root}"],
+            }
+        )
+
+    found_count = sum(1 for _, rel_path, _ in expected_paths if "unknown" not in rel_path and (root / rel_path).exists())
+    artifact.update(
+        {
+            "scan_status": "loaded",
+            "visibility": visibility,
+            "expected_path_count": len([item for item in expected_paths if "unknown" not in item[1]]),
+            "found_path_count": found_count,
+            "binary_asset_count": len(binary_assets),
+            "items": items,
+            "binary_assets": binary_assets,
+            "coverage_note": "The scan is bounded to target-relevant product, board, and SoC paths. It records evidence only and does not copy files into the current workspace.",
+        }
+    )
+    return artifact
 
 
 def case_binary_assets(record: dict[str, Any], limit: int = 20) -> list[dict[str, str]]:
@@ -551,6 +818,7 @@ def main() -> None:
     parser.add_argument("--source-output", required=True)
     parser.add_argument("--meta-output", default="")
     parser.add_argument("--target-profile", default="")
+    parser.add_argument("--target-source-root", default="")
     parser.add_argument("--build-log", default="")
     parser.add_argument("--stage-result", required=True)
     parser.add_argument("--execution-mode", default="plan-only")
@@ -563,6 +831,7 @@ def main() -> None:
     source_output = Path(args.source_output).resolve()
     meta_output = Path(args.meta_output).resolve() if args.meta_output else None
     target_seed_path = Path(args.target_profile).resolve() if args.target_profile else None
+    target_source_root = Path(args.target_source_root).resolve() if args.target_source_root else None
     build_log_path = Path(args.build_log).resolve() if args.build_log else None
     stage_result = Path(args.stage_result).resolve()
     artifact_root.mkdir(parents=True, exist_ok=True)
@@ -628,6 +897,7 @@ def main() -> None:
     build_ref = "source_file:build/build_scripts/build.sh" if "build/build_scripts/build.sh" in build_files else "source_tree:build"
     product_ref = detected_product["evidence"]
     target_seed_ref = seed_ref(target_seed_path, workspace)
+    target_source_ref = f"source_tree:{target_source_root}" if target_source_root else "source_tree:target_source_root_not_supplied"
 
     target = {
         "product": "unknown",
@@ -643,6 +913,27 @@ def main() -> None:
             target[key] = value.strip()
     target_supplied = any(value != "unknown" for value in target.values()) and bool(target_seed)
     visibility = target_visibility(workspace, target, target_seed) if target_supplied else {}
+    target_source_evidence = scan_target_source_root(target_source_root, target, target_seed)
+    target_source_visibility = (
+        target_source_evidence.get("visibility")
+        if isinstance(target_source_evidence.get("visibility"), dict)
+        else {}
+    )
+    target_source_items = target_source_evidence.get("items", []) if isinstance(target_source_evidence.get("items"), list) else []
+    target_source_binary_assets = (
+        target_source_evidence.get("binary_assets", [])
+        if isinstance(target_source_evidence.get("binary_assets"), list)
+        else []
+    )
+    target_source_loaded = target_source_evidence.get("scan_status") == "loaded"
+    target_source_file_refs = {
+        clean_str(item.get("path"), ""): f"source_file:{clean_str(item.get('path'), '')}"
+        for item in target_source_items
+        if isinstance(item, dict)
+        and item.get("status") == "found"
+        and clean_str(item.get("path"), "")
+        and str(item.get("kind") or "").endswith("file")
+    }
     meta_knowledge_digest = load_meta_knowledge(meta_output, target, target_seed)
     selected_method_ids = [item["method_id"] for item in meta_knowledge_digest.get("selected_methods", [])]
     selected_case_ids = [item["case_id"] for item in meta_knowledge_digest.get("selected_cases", [])]
@@ -674,9 +965,17 @@ def main() -> None:
                 "source_output": str(source_output),
                 "meta_output": str(meta_output) if meta_output else "unknown",
                 "target_profile_seed": str(target_seed_path) if target_seed_path else "unknown",
+                "target_source_root": str(target_source_root) if target_source_root else "unknown",
                 "build_log": str(build_log_path) if build_log_path else "unknown",
                 "detected_source_product_candidate": detected_product,
                 "target_source_visibility": visibility if visibility else "unknown",
+                "external_target_source_evidence": {
+                    "status": target_source_evidence.get("scan_status", "unknown"),
+                    "root": str(target_source_root) if target_source_root else "unknown",
+                    "expected_path_count": target_source_evidence.get("expected_path_count", 0),
+                    "found_path_count": target_source_evidence.get("found_path_count", 0),
+                    "binary_asset_count": target_source_evidence.get("binary_asset_count", 0),
+                },
                 "meta_knowledge_digest": {
                     "status": meta_knowledge_digest.get("meta_status", "unknown"),
                     "selected_method_count": len(meta_knowledge_digest.get("selected_methods", [])),
@@ -708,6 +1007,12 @@ def main() -> None:
                     "source": "meta_output" if meta_knowledge_digest.get("meta_status") == "loaded" else "unknown",
                     "evidence_refs": (selected_case_refs[:3] or [f"meta_method:{scope_method}", target_seed_ref]),
                 },
+                {
+                    "requirement_id": "REQ-005",
+                    "description": "If a target reference source tree is supplied, use it as read-only evidence for product, board, SoC, kernel, boot, firmware, prebuilt, and packaging dependency discovery; do not copy or apply files automatically.",
+                    "source": "source_tree" if target_source_loaded else "unknown",
+                    "evidence_refs": unique([target_source_ref, target_seed_ref, f"meta_method:{evidence_method}", f"meta_method:{binary_method}"]),
+                },
             ],
         }
     )
@@ -720,6 +1025,17 @@ def main() -> None:
     target_board_missing = visibility.get("board_missing", []) if visibility else []
     target_soc_missing = visibility.get("soc_missing", []) if visibility else []
     target_kernel_missing = visibility.get("kernel_missing", []) if visibility else []
+    external_product_paths = target_source_visibility.get("product_found", []) if target_source_visibility else []
+    external_board_paths = target_source_visibility.get("board_found", []) if target_source_visibility else []
+    external_soc_paths = target_source_visibility.get("soc_found", []) if target_source_visibility else []
+    external_kernel_paths = [
+        clean_str(item.get("path"), "")
+        for item in target_source_items
+        if isinstance(item, dict)
+        and item.get("status") == "found"
+        and "kernel" in clean_str(item.get("role"), "")
+    ][:12]
+    external_found_paths = unique(external_product_paths + external_board_paths + external_soc_paths + external_kernel_paths)
 
     survey_items = [
         {
@@ -797,6 +1113,18 @@ def main() -> None:
             "observation": f"Meta selector loaded {len(selected_method_ids)} method(s) and {len(selected_case_ids)} target-relevant case(s) for `{target['product']}`/`{target['soc']}` execution planning.",
             "evidence_refs": (selected_case_refs[:3] or [f"meta_method:{scope_method}", target_seed_ref]),
         },
+        {
+            "survey_id": "SURVEY-009",
+            "topic": "target_reference_source",
+            "status": "found" if target_source_loaded else ("missing" if target_source_root else "unknown"),
+            "paths": external_found_paths[:20],
+            "observation": (
+                f"Read-only target reference source scan status is `{target_source_evidence.get('scan_status')}`; "
+                f"it found {target_source_evidence.get('found_path_count', 0)} of {target_source_evidence.get('expected_path_count', 0)} expected target paths "
+                f"and {target_source_evidence.get('binary_asset_count', 0)} dependency candidate(s). These files are evidence only and have not been copied into the current workspace."
+            ),
+            "evidence_refs": unique([target_source_ref, target_seed_ref, f"meta_method:{evidence_method}", f"meta_method:{binary_method}"]),
+        },
     ]
     source_tree_survey = artifact_base("source_tree_survey")
     source_tree_survey["items"] = survey_items
@@ -806,27 +1134,27 @@ def main() -> None:
             "gap_id": "GAP-001",
             "area": "product_config",
             "severity": "blocker",
-            "description": f"Target identity is supplied by seed as `{target['product']}`/`{target['board']}`/`{target['soc']}`/`{target['vendor']}`/`{target['architecture']}`, but target product config is not visible in the current source tree.",
+            "description": f"Target identity is supplied by seed as `{target['product']}`/`{target['board']}`/`{target['soc']}`/`{target['vendor']}`/`{target['architecture']}`. Current workspace product config is not visible; external target source evidence found {len(external_product_paths)} product path(s) that require controlled import/review.",
             "owner_hint": "source_patch",
-            "evidence_refs": unique([target_seed_ref, workspace_ref, f"meta_method:{scope_method}", f"meta_method:{riscv_method}"] + product_case_refs[:2]),
+            "evidence_refs": unique([target_seed_ref, workspace_ref, target_source_ref, f"meta_method:{scope_method}", f"meta_method:{riscv_method}"] + product_case_refs[:2]),
             "uncertainty_refs": ["UNC-001"],
         },
         {
             "gap_id": "GAP-002",
             "area": "board_config",
             "severity": "blocker",
-            "description": f"Target board/SoC configuration paths for `{target['board']}` and `{target['soc']}` are not visible under device/board or device/soc; reference HiHope/Rockchip/Hisilicon paths must not be treated as the target.",
+            "description": f"Target board/SoC configuration paths for `{target['board']}` and `{target['soc']}` are not visible in the current workspace; external target source evidence found {len(external_board_paths)} board path(s) and {len(external_soc_paths)} SoC path(s) that require controlled import/review.",
             "owner_hint": "source_patch",
-            "evidence_refs": unique([target_seed_ref, product_ref, f"meta_method:{scope_method}", f"meta_method:{riscv_method}"] + product_case_refs[:2]),
+            "evidence_refs": unique([target_seed_ref, product_ref, target_source_ref, f"meta_method:{scope_method}", f"meta_method:{riscv_method}"] + product_case_refs[:2]),
             "uncertainty_refs": ["UNC-002"],
         },
         {
             "gap_id": "GAP-003",
             "area": "kernel",
             "severity": "high",
-            "description": f"Target kernel branch, DTS, defconfig, and TH1520/RVBook kernel binding are not visible in the current OpenHarmony source tree.",
+            "description": f"Target kernel branch, DTS, defconfig, and TH1520/RVBook kernel binding are not visible in the current workspace; external target source evidence found {len(external_kernel_paths)} kernel-related path(s), but provenance and build ownership still need review.",
             "owner_hint": "vendor_or_third_party",
-            "evidence_refs": unique([target_seed_ref, workspace_ref, f"meta_method:{riscv_method}", f"meta_method:{boot_method}"] + riscv_case_refs[:2]),
+            "evidence_refs": unique([target_seed_ref, workspace_ref, target_source_ref, f"meta_method:{riscv_method}", f"meta_method:{boot_method}"] + riscv_case_refs[:2]),
             "uncertainty_refs": ["UNC-003"],
         },
         {
@@ -851,9 +1179,9 @@ def main() -> None:
             "gap_id": "GAP-006",
             "area": "binary_prebuilt",
             "severity": "medium",
-            "description": f"Firmware, prebuilts, closed drivers, and signing/packaging tools for `{target['product']}` are not inventoried with path, hash, provenance, license, and regeneration status.",
+            "description": f"Firmware, prebuilts, closed drivers, and signing/packaging tools for `{target['product']}` have {len(target_source_binary_assets)} target-source candidate(s) with path/hash, but provenance, license, redistribution, regeneration, and validation status remain open.",
             "owner_hint": "vendor_or_third_party",
-            "evidence_refs": [target_seed_ref, workspace_ref, f"meta_method:{binary_method}"],
+            "evidence_refs": [target_seed_ref, workspace_ref, target_source_ref, f"meta_method:{binary_method}"],
             "uncertainty_refs": ["UNC-006", "UNC-007"],
         },
         {
@@ -1165,14 +1493,36 @@ def main() -> None:
                     "evidence_refs": unique(case_refs + [f"meta_method:{binary_method}", f"meta_method:{boot_method}"]),
                 }
             )
+    for asset in target_source_binary_assets:
+        if not isinstance(asset, dict):
+            continue
+        path = clean_str(asset.get("path"), "")
+        if not path or path in seen_assets or f"target_source:{path}" in seen_assets:
+            continue
+        seen_assets.add(f"target_source:{path}")
+        inventory_items.append(
+            {
+                "asset_id": f"ASSET-{len(inventory_items) + 1:03d}",
+                "category": clean_str(asset.get("category"), classify_binary_asset(path)),
+                "path": path,
+                "sha256": clean_str(asset.get("sha256"), "unknown"),
+                "relation": clean_str(asset.get("relation"), "target_source_dependency_candidate"),
+                "source_case_id": "target_source_root",
+                "source_case_title": "Read-only target source root evidence",
+                "target_relevance": "target_source_match",
+                "risk": clean_str(asset.get("risk"), "binary provenance, license, redistribution, and regeneration route must be confirmed before implementation completion."),
+                "next_action": clean_str(asset.get("next_action"), "Confirm ownership, license, source/regeneration route, runtime usage, and board validation logs for this asset."),
+                "evidence_refs": unique(string_list(asset.get("evidence_refs")) + [target_source_ref, f"meta_method:{binary_method}", f"meta_method:{boot_method}"]),
+            }
+        )
     target_dependency_inventory = artifact_base("target_dependency_inventory")
     target_dependency_inventory.update(
         {
             "target": target,
-            "inventory_source": "selected_meta_cases",
+            "inventory_source": "selected_meta_cases_and_target_source_root" if target_source_loaded else "selected_meta_cases",
             "asset_count": len(inventory_items),
             "items": inventory_items,
-            "coverage_note": "This is a meta-evidence inventory. It does not prove the assets are present in the current workspace.",
+            "coverage_note": "This inventory combines selected meta-case assets with read-only target-source dependency candidates when supplied. It does not prove assets are present in or redistributable from the current workspace.",
         }
     )
 
@@ -1188,9 +1538,9 @@ def main() -> None:
             ],
             "current_status": "missing_in_workspace" if not target_product_paths else "visible_in_workspace",
             "execution_decision": "plan_ready_not_applied" if not target_product_paths else "ready_for_build_triage",
-            "why_not_completed": "" if target_product_paths else "The target product is seed-confirmed but not visible in productdefine/vendor paths; generating a config without source ownership would overstate evidence.",
-            "next_action": "Create or import product/vendor configuration from target source evidence, then re-run build-only triage.",
-            "evidence_refs": unique([target_seed_ref, product_ref, f"meta_method:{scope_method}", f"meta_method:{riscv_method}"] + product_case_refs[:3]),
+            "why_not_completed": "" if target_product_paths else f"The target product is seed-confirmed but not visible in the current workspace; external target source evidence has {len(external_product_paths)} product path(s) that still need controlled import/review.",
+            "next_action": "Review target source product/vendor configuration, then import or generate controlled workspace changes before build-only triage.",
+            "evidence_refs": unique([target_seed_ref, product_ref, target_source_ref, f"meta_method:{scope_method}", f"meta_method:{riscv_method}"] + product_case_refs[:3]),
         },
         {
             "item_id": "IMPL-002",
@@ -1203,9 +1553,9 @@ def main() -> None:
             ],
             "current_status": "missing_in_workspace" if not (target_board_paths or target_soc_paths) else "partially_visible",
             "execution_decision": "manual_review_required",
-            "why_not_completed": "Board, SoC, DTS, defconfig, and kernel binding require target-specific BSP/source evidence before automatic implementation.",
-            "next_action": "Import or point to RVBook/TH1520 board and SoC source configuration, then split compile-file skeleton from kernel/BSP payloads.",
-            "evidence_refs": unique([target_seed_ref, f"meta_method:{scope_method}", f"meta_method:{riscv_method}", f"meta_method:{boot_method}"] + product_case_refs[:3]),
+            "why_not_completed": f"Board, SoC, DTS, defconfig, and kernel binding are not visible in the current workspace; target source evidence has {len(external_board_paths)} board path(s), {len(external_soc_paths)} SoC path(s), and {len(external_kernel_paths)} kernel-related path(s) for review.",
+            "next_action": "Review RVBook/TH1520 board and SoC source configuration, then split safe compile-file imports from kernel/BSP payloads.",
+            "evidence_refs": unique([target_seed_ref, target_source_ref, f"meta_method:{scope_method}", f"meta_method:{riscv_method}", f"meta_method:{boot_method}"] + product_case_refs[:3]),
         },
         {
             "item_id": "IMPL-003",
@@ -1236,9 +1586,9 @@ def main() -> None:
             "target_paths": ["prebuilts", "vendor", "device/board", "kernel"],
             "current_status": "report_only",
             "execution_decision": "do_not_generate_binary_artifacts",
-            "why_not_completed": "BSP, bootloader, firmware, prebuilts, closed drivers, and signing/packaging tools require provenance, license, hash, source/regeneration, and board validation evidence.",
+            "why_not_completed": f"BSP, bootloader, firmware, prebuilts, closed drivers, and signing/packaging tools require provenance, license, source/regeneration, and board validation evidence; {len(target_source_binary_assets)} target-source candidate(s) were inventoried for follow-up.",
             "next_action": "Complete external dependency inventory before any binary-dependent integration is marked implementation-complete.",
-            "evidence_refs": unique([target_seed_ref, f"meta_method:{binary_method}", f"meta_method:{boot_method}"] + selected_case_refs[:4]),
+            "evidence_refs": unique([target_seed_ref, target_source_ref, f"meta_method:{binary_method}", f"meta_method:{boot_method}"] + selected_case_refs[:4]),
         },
     ]
     implementation_readiness = artifact_base("implementation_readiness")
@@ -1408,75 +1758,100 @@ def main() -> None:
         "inherit": ["productdefine/common/inherit/rich.json"],
         "subsystems": [],
     }
+
+    def target_source_file_exists(rel_path: str) -> bool:
+        return bool(target_source_root and (target_source_root / rel_path).is_file())
+
+    def target_source_preview_or(rel_path: str, fallback: str) -> str:
+        if target_source_file_exists(rel_path):
+            preview = read_text_preview(target_source_root / rel_path)
+            if preview:
+                return preview
+        return fallback
+
+    def candidate_readiness(rel_path: str) -> str:
+        return "target_source_available_review_only" if target_source_file_exists(rel_path) else "preview_only_not_apply_ready"
+
+    def candidate_refs(rel_path: str, refs: list[str]) -> list[str]:
+        source_ref = target_source_file_refs.get(rel_path)
+        return unique(([source_ref] if source_ref else []) + refs)
+
+    product_define_path = f"productdefine/common/products/{target['product']}.json"
+    vendor_config_path = f"vendor/{target['vendor']}/{target['product']}/config.json"
+    vendor_ohos_build_path = f"vendor/{target['vendor']}/{target['product']}/ohos.build"
+    board_config_path = f"device/board/{target['vendor']}/{target['board']}/config.gni"
+    board_device_path = f"device/board/{target['vendor']}/{target['board']}/device.gni"
+    soc_config_path = f"device/soc/{clean_str(target_seed.get('soc_vendor'), target['vendor'])}/{target['soc']}/soc.gni"
+
     candidate_files = [
         {
             "candidate_id": "SRC-CAND-001",
-            "target_path": f"productdefine/common/products/{target['product']}.json",
+            "target_path": product_define_path,
             "source_blueprint_ref": "SRC-BP-001",
             "content_format": "json",
-            "readiness": "preview_only_not_apply_ready",
+            "readiness": candidate_readiness(product_define_path),
             "write_policy": "do_not_write_to_workspace",
-            "content_preview": json.dumps(product_json_preview, ensure_ascii=False, indent=2),
+            "content_preview": target_source_preview_or(product_define_path, json.dumps(product_json_preview, ensure_ascii=False, indent=2)),
             "open_questions": ["Confirm product inheritance profile.", "Confirm minimal subsystem/component set."],
             "apply_gate": "Target product inheritance and subsystem list must be confirmed by target source evidence.",
-            "evidence_refs": unique([target_seed_ref, f"meta_method:{scope_method}", f"meta_method:{riscv_method}"] + product_case_refs[:3]),
+            "evidence_refs": candidate_refs(product_define_path, [target_seed_ref, target_source_ref, f"meta_method:{scope_method}", f"meta_method:{riscv_method}"] + product_case_refs[:3]),
         },
         {
             "candidate_id": "SRC-CAND-002",
-            "target_path": f"vendor/{target['vendor']}/{target['product']}/config.json",
+            "target_path": vendor_config_path,
             "source_blueprint_ref": "SRC-BP-002",
             "content_format": "json",
-            "readiness": "preview_only_not_apply_ready",
+            "readiness": candidate_readiness(vendor_config_path),
             "write_policy": "do_not_write_to_workspace",
-            "content_preview": json.dumps(vendor_config_preview, ensure_ascii=False, indent=2),
+            "content_preview": target_source_preview_or(vendor_config_path, json.dumps(vendor_config_preview, ensure_ascii=False, indent=2)),
             "open_questions": ["Confirm whether device_company should be the SoC vendor `thead` or board/vendor owner `iscas`.", "Confirm target product components."],
             "apply_gate": "Device-company ownership and target component set must be confirmed.",
-            "evidence_refs": unique([target_seed_ref, product_ref, f"meta_method:{scope_method}"] + product_case_refs[:3]),
+            "evidence_refs": candidate_refs(vendor_config_path, [target_seed_ref, product_ref, target_source_ref, f"meta_method:{scope_method}"] + product_case_refs[:3]),
         },
         {
             "candidate_id": "SRC-CAND-003",
-            "target_path": f"vendor/{target['vendor']}/{target['product']}/ohos.build",
+            "target_path": vendor_ohos_build_path,
             "source_blueprint_ref": "SRC-BP-003",
             "content_format": "json",
-            "readiness": "preview_only_not_apply_ready",
+            "readiness": candidate_readiness(vendor_ohos_build_path),
             "write_policy": "do_not_write_to_workspace",
-            "content_preview": json.dumps(
+            "content_preview": target_source_preview_or(vendor_ohos_build_path, json.dumps(
                 {
                     "subsystem": f"{target['vendor']}_products",
                     "parts": {f"{target['product']}_products": {"module_list": []}},
                 },
                 ensure_ascii=False,
                 indent=2,
-            ),
+            )),
             "open_questions": ["Confirm actual subsystem and part naming convention.", "Confirm module_list contents."],
             "apply_gate": "Minimal product parts and module list must be selected from target source evidence.",
-            "evidence_refs": unique([target_seed_ref, f"meta_method:{evidence_method}", f"meta_method:{riscv_method}"] + product_case_refs[:2]),
+            "evidence_refs": candidate_refs(vendor_ohos_build_path, [target_seed_ref, target_source_ref, f"meta_method:{evidence_method}", f"meta_method:{riscv_method}"] + product_case_refs[:2]),
         },
         {
             "candidate_id": "SRC-CAND-004",
-            "target_path": f"device/board/{target['vendor']}/{target['board']}/config.gni",
+            "target_path": board_config_path,
             "source_blueprint_ref": "SRC-BP-004",
             "content_format": "gn",
-            "readiness": "preview_only_not_apply_ready",
+            "readiness": candidate_readiness(board_config_path),
             "write_policy": "do_not_write_to_workspace",
-            "content_preview": '\n'.join([
+            "content_preview": target_source_preview_or(board_config_path, '\n'.join([
                 'board_arch = "riscv64"',
                 'board_cpu = "unknown"',
                 'board_toolchain_type = "clang"',
                 '',
-            ]),
+            ])),
             "open_questions": ["Confirm TH1520 CPU string.", "Confirm board toolchain and board FPU settings."],
             "apply_gate": "TH1520 CPU/toolchain values must be confirmed; unknown fields must be resolved before apply.",
-            "evidence_refs": unique([target_seed_ref, f"meta_method:{riscv_method}", f"meta_method:{boot_method}"] + product_case_refs[:2]),
+            "evidence_refs": candidate_refs(board_config_path, [target_seed_ref, target_source_ref, f"meta_method:{riscv_method}", f"meta_method:{boot_method}"] + product_case_refs[:2]),
         },
         {
             "candidate_id": "SRC-CAND-005",
-            "target_path": f"device/board/{target['vendor']}/{target['board']}/device.gni",
+            "target_path": board_device_path,
             "source_blueprint_ref": "SRC-BP-005",
             "content_format": "gn",
-            "readiness": "preview_only_not_apply_ready",
+            "readiness": candidate_readiness(board_device_path),
             "write_policy": "do_not_write_to_workspace",
-            "content_preview": '\n'.join([
+            "content_preview": target_source_preview_or(board_device_path, '\n'.join([
                 f'soc_company = "{clean_str(target_seed.get("soc_vendor"), target["vendor"])}"',
                 f'soc_name = "{target["soc"]}"',
                 '',
@@ -1489,28 +1864,28 @@ def main() -> None:
                 '',
                 'product_config_path = "//vendor/${product_company}/${product_name}"',
                 '',
-            ]),
+            ])),
             "open_questions": ["Confirm target SoC import path exists.", "Confirm base feature switches for boot graphics, codec, camera, display, USB, and WiFi."],
             "apply_gate": "device/soc import and base feature flags must be confirmed.",
-            "evidence_refs": unique([target_seed_ref, f"meta_method:{scope_method}", f"meta_method:{riscv_method}"] + product_case_refs[:3]),
+            "evidence_refs": candidate_refs(board_device_path, [target_seed_ref, target_source_ref, f"meta_method:{scope_method}", f"meta_method:{riscv_method}"] + product_case_refs[:3]),
         },
         {
             "candidate_id": "SRC-CAND-006",
-            "target_path": f"device/soc/{clean_str(target_seed.get('soc_vendor'), target['vendor'])}/{target['soc']}/soc.gni",
+            "target_path": soc_config_path,
             "source_blueprint_ref": "SRC-BP-006",
             "content_format": "gn",
-            "readiness": "preview_only_not_apply_ready",
+            "readiness": candidate_readiness(soc_config_path),
             "write_policy": "do_not_write_to_workspace",
-            "content_preview": '\n'.join([
+            "content_preview": target_source_preview_or(soc_config_path, '\n'.join([
                 f'soc_company = "{clean_str(target_seed.get("soc_vendor"), target["vendor"])}"',
                 f'soc_name = "{target["soc"]}"',
                 '',
                 '# HAL paths and feature switches must come from TH1520 BSP evidence.',
                 '',
-            ]),
+            ])),
             "open_questions": ["Confirm TH1520 HAL paths.", "Confirm display/GPU/G2D, camera, audio, USB, and WiFi dependencies."],
             "apply_gate": "TH1520 SoC HAL/source paths and binary dependency inventory must be confirmed.",
-            "evidence_refs": unique([target_seed_ref, f"meta_method:{riscv_method}", f"meta_method:{binary_method}"] + selected_case_refs[:4]),
+            "evidence_refs": candidate_refs(soc_config_path, [target_seed_ref, target_source_ref, f"meta_method:{riscv_method}", f"meta_method:{binary_method}"] + selected_case_refs[:4]),
         },
     ]
     source_candidate_manifest = artifact_base("source_candidate_manifest")
@@ -1551,6 +1926,7 @@ def main() -> None:
     artifacts: dict[str, dict[str, Any]] = {
         "target_profile.yaml": target_profile,
         "meta_knowledge_digest.yaml": meta_knowledge_digest,
+        "target_source_evidence.yaml": target_source_evidence,
         "implementation_readiness.yaml": implementation_readiness,
         "source_file_blueprint.yaml": source_file_blueprint,
         "source_candidate_manifest.yaml": source_candidate_manifest,
@@ -1586,6 +1962,27 @@ def main() -> None:
         + "\n".join(
             f"- {item['action_id']} `{item['area']}`: {item['recommendation']}"
             for item in meta_knowledge_digest.get("action_bias", [])
+        ),
+    )
+    write_text(
+        artifact_root / "target_source_evidence.md",
+        "# Target Source Evidence\n\n"
+        f"- Status: `{target_source_evidence.get('scan_status', 'unknown')}`\n"
+        f"- Root: `{target_source_evidence.get('target_source_root', 'unknown')}`\n"
+        f"- Expected target paths found: {target_source_evidence.get('found_path_count', 0)} / {target_source_evidence.get('expected_path_count', 0)}\n"
+        f"- Dependency candidates: {target_source_evidence.get('binary_asset_count', 0)}\n"
+        f"- Coverage: {target_source_evidence.get('coverage_note', '')}\n\n"
+        "## Source Paths\n\n"
+        + "\n".join(
+            f"- {item['evidence_id']} `{item['status']}` `{item['path']}` role={item['role']}"
+            for item in target_source_items[:40]
+            if isinstance(item, dict)
+        )
+        + "\n\n## Dependency Candidates\n\n"
+        + "\n".join(
+            f"- {asset['asset_id']} `{asset['category']}` `{asset['path']}` sha256={asset['sha256']}"
+            for asset in target_source_binary_assets[:40]
+            if isinstance(asset, dict)
         ),
     )
     write_text(
@@ -1678,9 +2075,10 @@ def main() -> None:
         "# Porting Completion Summary\n\n"
         f"- Target: `{target['product']}` / `{target['board']}` / `{target['soc']}` / `{target['vendor']}` / `{target['architecture']}`\n"
         f"- Meta knowledge: {len(selected_method_ids)} selected method(s), {len(selected_case_ids)} selected case(s)\n"
+        f"- Target source evidence: `{target_source_evidence.get('scan_status', 'unknown')}`, found {target_source_evidence.get('found_path_count', 0)} / {target_source_evidence.get('expected_path_count', 0)} expected path(s), {target_source_evidence.get('binary_asset_count', 0)} dependency candidate(s)\n"
         f"- Source blueprints: {len(source_blueprints)} blueprint(s), generation mode `{source_file_blueprint['default_generation_mode']}`\n"
         f"- Source candidate files: {len(candidate_files)}, write policy `{source_candidate_manifest['default_write_policy']}`\n"
-        f"- Candidate binary/vendor assets: {len(inventory_items)} from selected meta cases\n"
+        f"- Candidate binary/vendor assets: {len(inventory_items)} from selected meta cases and target source evidence\n"
         f"- Source implementation status: `{implementation_readiness['overall_status']}`\n"
         f"- Build acceptance: `{build_acceptance['status']}` / `{build_acceptance['acceptance_level']}`\n"
         "- Boot/runtime/device/test status: `unknown`\n\n"
@@ -1735,6 +2133,15 @@ def main() -> None:
         )
     if target_seed_path:
         inputs_read.append(str(target_seed_path))
+    if target_source_root and target_source_root.exists():
+        inputs_read.append(str(target_source_root))
+        inputs_read.extend(
+            str(target_source_root / clean_str(item.get("path"), ""))
+            for item in target_source_items[:40]
+            if isinstance(item, dict)
+            and item.get("status") == "found"
+            and clean_str(item.get("path"), "")
+        )
     if build_log_path:
         inputs_read.append(str(build_log_path))
 
@@ -1742,7 +2149,12 @@ def main() -> None:
     if not target_seed_path:
         non_blocking.append("PORTING_EXECUTION_TARGET_PROFILE_SEED is empty; target identity remains unknown.")
     elif not target_product_paths:
-        non_blocking.append(f"Target profile seed is supplied, but target product `{target['product']}` is not visible in the current source tree.")
+        if target_source_loaded:
+            non_blocking.append(f"Target profile seed is supplied and target source root was scanned, but target product `{target['product']}` is still not visible in the current workspace.")
+        else:
+            non_blocking.append(f"Target profile seed is supplied, but target product `{target['product']}` is not visible in the current source tree.")
+    if target_source_root and not target_source_loaded:
+        non_blocking.append("PORTING_EXECUTION_TARGET_SOURCE_ROOT was supplied but could not be loaded.")
     if not source_stage_files:
         non_blocking.append("PORTING_EXECUTION_SOURCE_OUTPUT lacks compact Stage 00-07 artifacts; evidence depth is limited.")
     if not build_log_path:
@@ -1751,7 +2163,7 @@ def main() -> None:
     result = {
         "stage": STAGE,
         "status": "partial" if non_blocking else "passed",
-        "summary": f"Deterministic plan-only execution package generated; target seed and meta knowledge were consumed, with {len(selected_method_ids)} selected method(s), {len(selected_case_ids)} selected case(s), {len(source_blueprints)} source blueprint(s), {len(candidate_files)} candidate source file preview(s), and {len(inventory_items)} candidate dependency asset(s). Target source visibility/build acceptance remain separate.",
+        "summary": f"Deterministic plan-only execution package generated; target seed and meta knowledge were consumed, with {len(selected_method_ids)} selected method(s), {len(selected_case_ids)} selected case(s), {len(source_blueprints)} source blueprint(s), {len(candidate_files)} candidate source file preview(s), {len(inventory_items)} candidate dependency asset(s), and target-source scan status {target_source_evidence.get('scan_status', 'unknown')} ({target_source_evidence.get('found_path_count', 0)}/{target_source_evidence.get('expected_path_count', 0)} expected path(s)). Target source visibility/build acceptance remain separate.",
         "execution_mode": args.execution_mode,
         "patch_apply_mode": args.patch_apply_mode,
         "artifact_root": str(artifact_root),

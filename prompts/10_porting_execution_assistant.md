@@ -22,6 +22,8 @@ The runner exports:
   output directory; the runner may derive it from a user-supplied `.zip`.
 - `PORTING_EXECUTION_TARGET_PROFILE_SEED`: optional user-provided target profile
   seed YAML.
+- `PORTING_EXECUTION_TARGET_SOURCE_ROOT`: optional read-only reference target
+  source tree. Use it only for bounded product/board/SoC evidence extraction.
 - `PORTING_EXECUTION_BUILD_LOG`: optional existing build log for triage.
 
 If an environment variable is unset, use the default path above or write
@@ -34,6 +36,8 @@ Create all files under `PORTING_EXECUTION_ARTIFACT_DIR`:
 - `target_profile.yaml`
 - `meta_knowledge_digest.yaml`
 - `meta_knowledge_digest.md`
+- `target_source_evidence.yaml`
+- `target_source_evidence.md`
 - `implementation_readiness.yaml`
 - `implementation_readiness.md`
 - `source_file_blueprint.yaml`
@@ -128,6 +132,14 @@ inputs only:
 - `meta_skill_pack/references/conditional_method_index.md`
 - `meta_skill_pack/examples/case_selector_examples.yaml`
 - `meta_report.md`
+
+If `PORTING_EXECUTION_TARGET_SOURCE_ROOT` exists, read it as a reference source
+tree only. Bound the scan to target-relevant paths derived from the target
+profile, such as `vendor/<vendor>/<product>`,
+`device/board/<vendor>/<board>`, `device/soc/<soc_vendor>/<soc>`, and
+`productdefine/common/products/<product>.json`. Do not bulk-mine unrelated
+products, do not copy files, and do not present a reference file as already
+implemented in the current workspace.
 
 Survey source tree paths needed to identify existing OpenHarmony build entry
 points and target-product structure. Prefer bounded reads such as `find`,
@@ -237,6 +249,42 @@ architecture, product/board/SoC/vendor terms, or universal guardrails. Keep HDF,
 WiFi, media/camera, audio, and display feature methods in `deferred_methods`
 until target product/board/SoC paths and feature requirements are visible.
 
+### target_source_evidence.yaml
+
+Use:
+
+```yaml
+artifact_type: target_source_evidence
+target: {}
+target_source_root: <path or unknown>
+scan_status: not_supplied|missing|loaded
+visibility: {}
+expected_path_count: 0
+found_path_count: 0
+binary_asset_count: 0
+coverage_note: <bounded scan scope>
+items:
+  - evidence_id: TSE-001
+    kind: expected_file|expected_directory|sample_source_file
+    role: productdefine_config|vendor_product_config|board_config|soc_config|kernel_or_driver_payload|bootloader_packaging|unknown
+    path: <path relative to target source root>
+    status: found|missing
+    evidence_refs: [...]
+binary_assets:
+  - asset_id: TSA-001
+    category: bsp|bootloader|firmware|prebuilt|closed_driver|signing_packaging_tools|unknown
+    path: <path relative to target source root>
+    sha256: <hash or unknown>
+    relation: target_source_dependency_candidate|unknown
+    risk: <why provenance remains open>
+    next_action: <review action>
+    evidence_refs: [...]
+```
+
+This artifact is evidence only. It can improve candidate previews and dependency
+inventory, but it does not authorize automatic source writes, binary imports, or
+completion claims.
+
 ### implementation_readiness.yaml
 
 Use:
@@ -324,7 +372,7 @@ Use:
 ```yaml
 artifact_type: target_dependency_inventory
 target: {}
-inventory_source: selected_meta_cases|source_output|unknown
+inventory_source: selected_meta_cases|selected_meta_cases_and_target_source_root|source_output|unknown
 asset_count: 0
 coverage_note: <scope note>
 items:

@@ -12,6 +12,7 @@ PATCH_APPLY_MODE="none"
 SOURCE_OUTPUT=""
 META_OUTPUT=""
 TARGET_PROFILE_SEED=""
+TARGET_SOURCE_ROOT=""
 BUILD_LOG=""
 OUT_DIR=""
 POSITIONAL_ARGS=()
@@ -28,6 +29,7 @@ Options:
   --source-output DIR              已有单场景 porting_knowledge_output，默认等于 out_dir
   --meta-output DIR                可选 cross-scenario openharmony_porting_meta_output
   --target-profile FILE            可选目标画像种子 YAML
+  --target-source-root DIR         可选目标参考源码树；只读提取证据，不写入当前 workspace
   --build-log FILE                 可选已有构建日志，只用于 triage，不代表 boot/runtime/test
   --out DIR                        输出目录，默认 <workspace_root>/porting_knowledge_output
   -h, --help                       显示帮助
@@ -69,6 +71,10 @@ while [[ $# -gt 0 ]]; do
       TARGET_PROFILE_SEED="${2:-}"
       shift 2
       ;;
+    --target-source-root)
+      TARGET_SOURCE_ROOT="${2:-}"
+      shift 2
+      ;;
     --build-log)
       BUILD_LOG="${2:-}"
       shift 2
@@ -104,6 +110,13 @@ WORKSPACE_ROOT="${POSITIONAL_ARGS[0]:-$PWD}"
 WORKSPACE_ROOT="$(cd "${WORKSPACE_ROOT}" && pwd)"
 if [[ -z "${OUT_DIR}" ]]; then
   OUT_DIR="${POSITIONAL_ARGS[1]:-${WORKSPACE_ROOT}/porting_knowledge_output}"
+fi
+if [[ -n "${TARGET_SOURCE_ROOT}" ]]; then
+  if [[ ! -d "${TARGET_SOURCE_ROOT}" ]]; then
+    echo "--target-source-root must be an existing directory: ${TARGET_SOURCE_ROOT}" >&2
+    exit 2
+  fi
+  TARGET_SOURCE_ROOT="$(cd "${TARGET_SOURCE_ROOT}" && pwd)"
 fi
 if [[ -z "${SOURCE_OUTPUT}" ]]; then
   SOURCE_OUTPUT="${OUT_DIR}"
@@ -175,8 +188,14 @@ timestamp() { date '+%Y-%m-%dT%H:%M:%S%z'; }
 log_msg() { local level="$1"; shift; printf '[%s] [%s] %s\n' "$(timestamp)" "${level}" "$*" | tee -a "${PIPELINE_LOG}"; }
 log_file_state() {
   local label="$1" path="$2"
-  if [[ -e "${path}" ]]; then
+  if [[ -d "${path}" ]]; then
+    local child_count
+    child_count="$(find "${path}" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')"
+    log_msg INFO "${label}: ${path} (directory, ${child_count} direct entries)"
+  elif [[ -f "${path}" ]]; then
     log_msg INFO "${label}: ${path} ($(wc -c < "${path}") bytes)"
+  elif [[ -e "${path}" ]]; then
+    log_msg INFO "${label}: ${path} (exists)"
   else
     log_msg WARN "${label}: ${path} (missing)"
   fi
@@ -218,6 +237,7 @@ export PORTING_EXECUTION_ARTIFACT_DIR="${ARTIFACT_DIR}"
 export PORTING_EXECUTION_SOURCE_OUTPUT="${SOURCE_OUTPUT}"
 export PORTING_EXECUTION_META_OUTPUT="${META_OUTPUT}"
 export PORTING_EXECUTION_TARGET_PROFILE_SEED="${TARGET_PROFILE_SEED}"
+export PORTING_EXECUTION_TARGET_SOURCE_ROOT="${TARGET_SOURCE_ROOT}"
 export PORTING_EXECUTION_BUILD_LOG="${BUILD_LOG}"
 
 CODEX_BASE_ARGS=(--cd "${WORKSPACE_ROOT}" --sandbox workspace-write --skip-git-repo-check --ephemeral --json)
@@ -237,6 +257,7 @@ if [[ -n "${META_OUTPUT_INPUT}" && "${META_OUTPUT_INPUT}" != "${META_OUTPUT}" ]]
 fi
 log_msg INFO "meta_output=${META_OUTPUT:-<none>}"
 log_msg INFO "target_profile_seed=${TARGET_PROFILE_SEED:-<none>}"
+log_msg INFO "target_source_root=${TARGET_SOURCE_ROOT:-<none>}"
 log_msg INFO "build_log=${BUILD_LOG:-<none>}"
 log_msg INFO "execution_mode=${EXECUTION_MODE}"
 log_msg INFO "patch_apply_mode=${PATCH_APPLY_MODE}"
@@ -255,6 +276,9 @@ if [[ -n "${META_OUTPUT}" ]]; then
 fi
 if [[ -n "${TARGET_PROFILE_SEED}" ]]; then
   log_file_state target_profile_seed "${TARGET_PROFILE_SEED}"
+fi
+if [[ -n "${TARGET_SOURCE_ROOT}" ]]; then
+  log_file_state target_source_root "${TARGET_SOURCE_ROOT}"
 fi
 if [[ -n "${BUILD_LOG}" ]]; then
   log_file_state build_log "${BUILD_LOG}"
@@ -278,6 +302,9 @@ if [[ "${DETERMINISTIC_PORTING_EXECUTION_ASSISTANT:-0}" == "1" ]]; then
   fi
   if [[ -n "${TARGET_PROFILE_SEED}" ]]; then
     DET_ARGS+=(--target-profile "${TARGET_PROFILE_SEED}")
+  fi
+  if [[ -n "${TARGET_SOURCE_ROOT}" ]]; then
+    DET_ARGS+=(--target-source-root "${TARGET_SOURCE_ROOT}")
   fi
   if [[ -n "${BUILD_LOG}" ]]; then
     DET_ARGS+=(--build-log "${BUILD_LOG}")

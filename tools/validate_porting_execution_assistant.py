@@ -21,6 +21,8 @@ REQUIRED_FILES = [
     "target_profile.yaml",
     "meta_knowledge_digest.yaml",
     "meta_knowledge_digest.md",
+    "target_source_evidence.yaml",
+    "target_source_evidence.md",
     "implementation_readiness.yaml",
     "implementation_readiness.md",
     "source_file_blueprint.yaml",
@@ -49,6 +51,7 @@ REQUIRED_FILES = [
 ARTIFACT_CONTRACTS = {
     "target_profile.yaml": ("target_profile", "requirements"),
     "meta_knowledge_digest.yaml": ("meta_knowledge_digest", "selected_methods"),
+    "target_source_evidence.yaml": ("target_source_evidence", "items"),
     "implementation_readiness.yaml": ("implementation_readiness", "items"),
     "source_file_blueprint.yaml": ("source_file_blueprint", "blueprints"),
     "source_candidate_manifest.yaml": ("source_candidate_manifest", "candidates"),
@@ -192,6 +195,7 @@ def validate_nested_evidence(value: Any, context: str) -> None:
     if isinstance(value, dict):
         evidence_bearing_keys = [
             "requirement_id",
+            "evidence_id",
             "method_id",
             "case_id",
             "action_id",
@@ -271,6 +275,37 @@ def validate_meta_knowledge_digest(path: Path, data: dict[str, Any]) -> None:
             if not isinstance(item, dict):
                 fail(f"meta_knowledge_digest.yaml {key}[{idx}] must be a mapping")
             validate_evidence_refs(item, f"meta_knowledge_digest.yaml.{key}[{idx}]")
+
+
+def validate_target_source_evidence(path: Path, data: dict[str, Any]) -> None:
+    if data.get("scan_status") not in {"not_supplied", "missing", "loaded"}:
+        fail("target_source_evidence.yaml scan_status must be not_supplied, missing, or loaded")
+    if not str(data.get("target_source_root") or "").strip():
+        fail("target_source_evidence.yaml missing target_source_root")
+    items = data.get("items")
+    if not isinstance(items, list):
+        fail("target_source_evidence.yaml items must be a list")
+    for idx, item in enumerate(items):
+        if not isinstance(item, dict):
+            fail(f"target_source_evidence.yaml items[{idx}] must be a mapping")
+        validate_evidence_refs(item, f"target_source_evidence.yaml.items[{idx}]")
+        if not str(item.get("path") or "").strip():
+            fail(f"target_source_evidence.yaml items[{idx}] missing path")
+        if item.get("status") not in {"found", "missing"}:
+            fail(f"target_source_evidence.yaml items[{idx}] status must be found or missing")
+    binary_assets = data.get("binary_assets")
+    if not isinstance(binary_assets, list):
+        fail("target_source_evidence.yaml binary_assets must be a list")
+    if data.get("binary_asset_count") != len(binary_assets):
+        fail("target_source_evidence.yaml binary_asset_count must equal binary_assets length")
+    for idx, asset in enumerate(binary_assets):
+        if not isinstance(asset, dict):
+            fail(f"target_source_evidence.yaml binary_assets[{idx}] must be a mapping")
+        validate_evidence_refs(asset, f"target_source_evidence.yaml.binary_assets[{idx}]")
+        if not str(asset.get("path") or "").strip():
+            fail(f"target_source_evidence.yaml binary_assets[{idx}] missing path")
+        if not str(asset.get("category") or "").strip():
+            fail(f"target_source_evidence.yaml binary_assets[{idx}] missing category")
 
 
 def validate_source_file_blueprint(path: Path, data: dict[str, Any]) -> None:
@@ -443,6 +478,8 @@ def main() -> None:
             validate_target_profile(path, data)
         elif rel == "meta_knowledge_digest.yaml":
             validate_meta_knowledge_digest(path, data)
+        elif rel == "target_source_evidence.yaml":
+            validate_target_source_evidence(path, data)
         elif rel == "source_file_blueprint.yaml":
             validate_source_file_blueprint(path, data)
         elif rel == "source_candidate_manifest.yaml":
