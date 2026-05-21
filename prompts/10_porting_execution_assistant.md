@@ -38,6 +38,8 @@ Create all files under `PORTING_EXECUTION_ARTIFACT_DIR`:
 - `meta_knowledge_digest.md`
 - `target_source_evidence.yaml`
 - `target_source_evidence.md`
+- `source_import_plan.yaml`
+- `source_import_plan.md`
 - `implementation_readiness.yaml`
 - `implementation_readiness.md`
 - `source_file_blueprint.yaml`
@@ -284,6 +286,50 @@ binary_assets:
 This artifact is evidence only. It can improve candidate previews and dependency
 inventory, but it does not authorize automatic source writes, binary imports, or
 completion claims.
+
+### source_import_plan.yaml
+
+Use:
+
+```yaml
+artifact_type: source_import_plan
+target: {}
+target_source_root: <path or unknown>
+scan_status: not_supplied|missing|loaded|unknown
+default_write_policy: do_not_write_to_workspace
+import_policy: manual_review_only
+item_count: 0
+excluded_dependency_count: 0
+decision_counts: {}
+coverage_note: <scope note>
+items:
+  - import_id: IMP-001
+    import_class: product_config|build_manifest|board_config|soc_config|kernel_build_config|hdf_config|driver_source|product_runtime_config|other_source_file|unknown
+    source_role: <role from target_source_evidence>
+    source_path: <path relative to target source root or unknown>
+    target_path: <workspace-relative destination path>
+    target_workspace_path: <absolute destination path>
+    source_status: found_in_target_source_root|missing_in_target_source_root|unknown
+    current_workspace_status: missing|present_same_hash|present_different_or_unverified|present_directory|unknown
+    source_sha256: <hash or unknown>
+    current_sha256: <hash or unknown>
+    import_decision: manual_import_candidate|compare_before_import|already_present_same_hash|cannot_import_missing_target_source|unknown
+    write_policy: do_not_write_to_workspace
+    apply_gate: <manual review gate>
+    next_action: <next controlled step>
+    evidence_refs: [...]
+excluded_items:
+  - excluded_id: EXCL-001
+    path: <target source path>
+    category: bootloader|firmware|prebuilt|closed_driver|signing_packaging_tools|external_dependency|unknown
+    reason: <why this is not a source import>
+    routed_to: target_dependency_inventory|external_dependency_followup
+    evidence_refs: [...]
+```
+
+This artifact is the execution queue for source and compile-file work. It must
+not mark items `ready_to_apply`, generate patch hunks, copy files, or treat
+binary/firmware/prebuilt payloads as source imports.
 
 ### implementation_readiness.yaml
 

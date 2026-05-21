@@ -118,6 +118,8 @@ writes plan-only execution artifacts under:
 ├── meta_knowledge_digest.md
 ├── target_source_evidence.yaml
 ├── target_source_evidence.md
+├── source_import_plan.yaml
+├── source_import_plan.md
 ├── implementation_readiness.yaml
 ├── implementation_readiness.md
 ├── source_file_blueprint.yaml
@@ -155,6 +157,9 @@ P0 execution-assistant guardrails:
   `meta_knowledge_digest` before they influence porting plans;
 - an optional `--target-source-root` is scanned read-only and only along
   target-relevant product, board, and SoC paths;
+- `source_import_plan` turns target-source text evidence into a manual-review
+  import queue and routes firmware, bootloader, modules, and prebuilts away from
+  source imports;
 - source/compile implementation readiness and current completion judgment are
   separated from external binary dependency follow-up;
 - source-file blueprints bridge meta knowledge to later controlled

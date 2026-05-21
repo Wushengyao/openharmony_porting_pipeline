@@ -23,6 +23,8 @@ REQUIRED_FILES = [
     "meta_knowledge_digest.md",
     "target_source_evidence.yaml",
     "target_source_evidence.md",
+    "source_import_plan.yaml",
+    "source_import_plan.md",
     "implementation_readiness.yaml",
     "implementation_readiness.md",
     "source_file_blueprint.yaml",
@@ -52,6 +54,7 @@ ARTIFACT_CONTRACTS = {
     "target_profile.yaml": ("target_profile", "requirements"),
     "meta_knowledge_digest.yaml": ("meta_knowledge_digest", "selected_methods"),
     "target_source_evidence.yaml": ("target_source_evidence", "items"),
+    "source_import_plan.yaml": ("source_import_plan", "items"),
     "implementation_readiness.yaml": ("implementation_readiness", "items"),
     "source_file_blueprint.yaml": ("source_file_blueprint", "blueprints"),
     "source_candidate_manifest.yaml": ("source_candidate_manifest", "candidates"),
@@ -196,6 +199,8 @@ def validate_nested_evidence(value: Any, context: str) -> None:
         evidence_bearing_keys = [
             "requirement_id",
             "evidence_id",
+            "import_id",
+            "excluded_id",
             "method_id",
             "case_id",
             "action_id",
@@ -306,6 +311,44 @@ def validate_target_source_evidence(path: Path, data: dict[str, Any]) -> None:
             fail(f"target_source_evidence.yaml binary_assets[{idx}] missing path")
         if not str(asset.get("category") or "").strip():
             fail(f"target_source_evidence.yaml binary_assets[{idx}] missing category")
+
+
+def validate_source_import_plan(path: Path, data: dict[str, Any]) -> None:
+    if data.get("default_write_policy") != "do_not_write_to_workspace":
+        fail("source_import_plan.yaml default_write_policy must be do_not_write_to_workspace")
+    if data.get("import_policy") != "manual_review_only":
+        fail("source_import_plan.yaml import_policy must be manual_review_only")
+    items = data.get("items")
+    if not isinstance(items, list):
+        fail("source_import_plan.yaml items must be a list")
+    if data.get("item_count") != len(items):
+        fail("source_import_plan.yaml item_count must equal items length")
+    forbidden_decisions = {"ready_to_apply", "auto_apply", "applied"}
+    for idx, item in enumerate(items):
+        if not isinstance(item, dict):
+            fail(f"source_import_plan.yaml items[{idx}] must be a mapping")
+        validate_evidence_refs(item, f"source_import_plan.yaml.items[{idx}]")
+        if item.get("write_policy") != "do_not_write_to_workspace":
+            fail(f"source_import_plan.yaml items[{idx}] write_policy must be do_not_write_to_workspace")
+        if str(item.get("import_decision") or "") in forbidden_decisions:
+            fail(f"source_import_plan.yaml items[{idx}] must not be auto-apply/ready-to-apply")
+        if not str(item.get("target_path") or "").strip():
+            fail(f"source_import_plan.yaml items[{idx}] missing target_path")
+        if not str(item.get("import_class") or "").strip():
+            fail(f"source_import_plan.yaml items[{idx}] missing import_class")
+    excluded_items = data.get("excluded_items")
+    if not isinstance(excluded_items, list):
+        fail("source_import_plan.yaml excluded_items must be a list")
+    if data.get("excluded_dependency_count") != len(excluded_items):
+        fail("source_import_plan.yaml excluded_dependency_count must equal excluded_items length")
+    for idx, item in enumerate(excluded_items):
+        if not isinstance(item, dict):
+            fail(f"source_import_plan.yaml excluded_items[{idx}] must be a mapping")
+        validate_evidence_refs(item, f"source_import_plan.yaml.excluded_items[{idx}]")
+        if not str(item.get("path") or "").strip():
+            fail(f"source_import_plan.yaml excluded_items[{idx}] missing path")
+        if not str(item.get("routed_to") or "").strip():
+            fail(f"source_import_plan.yaml excluded_items[{idx}] missing routed_to")
 
 
 def validate_source_file_blueprint(path: Path, data: dict[str, Any]) -> None:
@@ -480,6 +523,8 @@ def main() -> None:
             validate_meta_knowledge_digest(path, data)
         elif rel == "target_source_evidence.yaml":
             validate_target_source_evidence(path, data)
+        elif rel == "source_import_plan.yaml":
+            validate_source_import_plan(path, data)
         elif rel == "source_file_blueprint.yaml":
             validate_source_file_blueprint(path, data)
         elif rel == "source_candidate_manifest.yaml":

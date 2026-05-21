@@ -28,6 +28,8 @@ REQUIRED_FILES = [
     "meta_knowledge_digest.md",
     "target_source_evidence.yaml",
     "target_source_evidence.md",
+    "source_import_plan.yaml",
+    "source_import_plan.md",
     "implementation_readiness.yaml",
     "implementation_readiness.md",
     "source_file_blueprint.yaml",
@@ -505,6 +507,221 @@ def scan_target_source_root(
     return artifact
 
 
+def infer_import_class(path: str, role: str) -> str:
+    lowered = path.lower()
+    if role in {"productdefine_config", "vendor_product_config", "vendor_product_gni"}:
+        return "product_config"
+    if role in {"vendor_build_manifest", "board_build_manifest"} or lowered.endswith("ohos.build"):
+        return "build_manifest"
+    if role in {"board_config_gni", "board_device_gni", "board_config"}:
+        return "board_config"
+    if role in {"soc_config_gni", "soc_config"}:
+        return "soc_config"
+    if "kernel" in role or "/kernel/" in lowered:
+        return "kernel_build_config"
+    if role == "hdf_config" or "/hdf_config/" in lowered:
+        return "hdf_config"
+    if role == "audio_driver" or "/audio_drivers/" in lowered:
+        return "driver_source"
+    if "/bluetooth/" in lowered and lowered.endswith((".c", ".h", ".gn")):
+        return "driver_source"
+    if lowered.endswith((".json", ".xml", ".para", ".gni", ".gn", ".cfg", ".txt")):
+        return "product_runtime_config"
+    return "other_source_file"
+
+
+def source_import_exclusion_reason(path: str, role: str) -> str:
+    lowered = path.lower()
+    if is_dependency_asset_candidate(path):
+        return "dependency_asset_candidate"
+    if "/loader/" in lowered:
+        return "bootloader_or_partition_packaging_dependency"
+    if "/kernel/boot/" in lowered or "/kernel/ko/" in lowered:
+        return "kernel_binary_or_module_dependency"
+    if "/hardware/firmware/" in lowered or "/hardware/g2d/" in lowered or "/hardware/gpu/" in lowered:
+        return "firmware_or_prebuilt_dependency"
+    if "/image_conf/" in lowered:
+        return "image_packaging_dependency"
+    if lowered.endswith(".patch"):
+        return "patch_artifact_requires_separate_diff_review"
+    if role in {"bootloader_packaging", "image_packaging_config"}:
+        return "external_packaging_or_boot_dependency"
+    return ""
+
+
+def current_workspace_file_status(workspace: Path, target_path: str, source_sha: str) -> dict[str, str]:
+    path = workspace / target_path
+    if not path.exists():
+        return {"status": "missing", "sha256": "unknown"}
+    if path.is_dir():
+        return {"status": "present_directory", "sha256": "unknown"}
+    if not path.is_file():
+        return {"status": "present_non_file", "sha256": "unknown"}
+    current_sha = sha256_file(path)
+    if current_sha != "unknown" and source_sha != "unknown" and current_sha == source_sha:
+        status = "present_same_hash"
+    else:
+        status = "present_different_or_unverified"
+    return {"status": status, "sha256": current_sha}
+
+
+def build_source_import_plan(
+    workspace: Path,
+    target_source_root: Path | None,
+    target_source_evidence: dict[str, Any],
+    target: dict[str, str],
+    target_seed_ref: str,
+    target_source_ref: str,
+    scope_method: str,
+    riscv_method: str,
+    binary_method: str,
+) -> dict[str, Any]:
+    plan = artifact_base("source_import_plan")
+    scan_status = clean_str(target_source_evidence.get("scan_status"), "unknown")
+    source_items = target_source_evidence.get("items")
+    if not isinstance(source_items, list):
+        source_items = []
+    binary_assets = target_source_evidence.get("binary_assets")
+    if not isinstance(binary_assets, list):
+        binary_assets = []
+    binary_paths = {
+        clean_str(asset.get("path"), "")
+        for asset in binary_assets
+        if isinstance(asset, dict) and clean_str(asset.get("path"), "")
+    }
+
+    import_items: list[dict[str, Any]] = []
+    excluded_items: list[dict[str, Any]] = []
+    seen_import_paths: set[str] = set()
+
+    for item in source_items:
+        if not isinstance(item, dict):
+            continue
+        path = clean_str(item.get("path"), "")
+        if not path or path in seen_import_paths:
+            continue
+        role = clean_str(item.get("role"), "unknown")
+        status = clean_str(item.get("status"), "unknown")
+        kind = clean_str(item.get("kind"), "unknown")
+        evidence_refs = unique(string_list(item.get("evidence_refs")) + [target_seed_ref, target_source_ref])
+        if kind == "expected_directory":
+            continue
+        if status == "missing":
+            current = current_workspace_file_status(workspace, path, "unknown")
+            import_items.append(
+                {
+                    "import_id": f"IMP-{len(import_items) + 1:03d}",
+                    "import_class": infer_import_class(path, role),
+                    "source_role": role,
+                    "source_path": "unknown",
+                    "target_path": path,
+                    "target_workspace_path": str(workspace / path),
+                    "source_status": "missing_in_target_source_root",
+                    "current_workspace_status": current["status"],
+                    "source_sha256": "unknown",
+                    "current_sha256": current["sha256"],
+                    "import_decision": "cannot_import_missing_target_source",
+                    "write_policy": "do_not_write_to_workspace",
+                    "apply_gate": "Supply target-source evidence or a reviewed product definition before this path can enter an import queue.",
+                    "next_action": "Create or locate the missing target source file from authoritative product evidence.",
+                    "evidence_refs": evidence_refs,
+                }
+            )
+            seen_import_paths.add(path)
+            continue
+
+        exclusion_reason = source_import_exclusion_reason(path, role)
+        if path in binary_paths or exclusion_reason:
+            excluded_items.append(
+                {
+                    "excluded_id": f"EXCL-{len(excluded_items) + 1:03d}",
+                    "path": path,
+                    "category": classify_binary_asset(path) if path in binary_paths or is_dependency_asset_candidate(path) else "external_dependency",
+                    "reason": exclusion_reason or "listed_as_target_source_dependency_asset",
+                    "routed_to": "target_dependency_inventory",
+                    "evidence_refs": unique(evidence_refs + [f"meta_method:{binary_method}"]),
+                }
+            )
+            seen_import_paths.add(path)
+            continue
+
+        if status != "found" or not is_text_source_candidate(path):
+            continue
+
+        source_sha = clean_str(item.get("sha256"), "unknown")
+        current = current_workspace_file_status(workspace, path, source_sha)
+        if current["status"] == "missing":
+            decision = "manual_import_candidate"
+            next_action = "Review source ownership and version compatibility, then import through a controlled patch or copy step."
+        elif current["status"] == "present_same_hash":
+            decision = "already_present_same_hash"
+            next_action = "No source import needed for this file; keep it as evidence."
+        else:
+            decision = "compare_before_import"
+            next_action = "Diff current workspace file against target source evidence before deciding whether to replace, merge, or skip."
+
+        import_items.append(
+            {
+                "import_id": f"IMP-{len(import_items) + 1:03d}",
+                "import_class": infer_import_class(path, role),
+                "source_role": role,
+                "source_path": path,
+                "target_path": path,
+                "target_workspace_path": str(workspace / path),
+                "source_status": "found_in_target_source_root",
+                "current_workspace_status": current["status"],
+                "source_sha256": source_sha,
+                "current_sha256": current["sha256"],
+                "import_decision": decision,
+                "write_policy": "do_not_write_to_workspace",
+                "apply_gate": "Manual review must confirm OpenHarmony version compatibility, ownership, file role, and absence of binary payload before any workspace write.",
+                "next_action": next_action,
+                "evidence_refs": unique(evidence_refs + [f"meta_method:{scope_method}", f"meta_method:{riscv_method}"]),
+            }
+        )
+        seen_import_paths.add(path)
+
+    for asset in binary_assets:
+        if not isinstance(asset, dict):
+            continue
+        path = clean_str(asset.get("path"), "")
+        if not path or path in seen_import_paths:
+            continue
+        excluded_items.append(
+            {
+                "excluded_id": f"EXCL-{len(excluded_items) + 1:03d}",
+                "path": path,
+                "category": clean_str(asset.get("category"), classify_binary_asset(path)),
+                "reason": "target_source_dependency_asset",
+                "routed_to": "target_dependency_inventory",
+                "evidence_refs": unique(string_list(asset.get("evidence_refs")) + [target_source_ref, f"meta_method:{binary_method}"]),
+            }
+        )
+        seen_import_paths.add(path)
+
+    decision_counts: dict[str, int] = {}
+    for item in import_items:
+        decision = clean_str(item.get("import_decision"), "unknown")
+        decision_counts[decision] = decision_counts.get(decision, 0) + 1
+
+    plan.update(
+        {
+            "target": target,
+            "target_source_root": str(target_source_root) if target_source_root else "unknown",
+            "scan_status": scan_status,
+            "default_write_policy": "do_not_write_to_workspace",
+            "import_policy": "manual_review_only",
+            "item_count": len(import_items),
+            "excluded_dependency_count": len(excluded_items),
+            "decision_counts": decision_counts,
+            "items": import_items,
+            "excluded_items": excluded_items,
+            "coverage_note": "This import plan converts read-only target-source evidence into a review queue. It does not copy files, generate patch hunks, or include binary/firmware/prebuilt payloads as source imports.",
+        }
+    )
+    return plan
+
+
 def case_binary_assets(record: dict[str, Any], limit: int = 20) -> list[dict[str, str]]:
     evidence = record.get("evidence")
     if not isinstance(evidence, dict):
@@ -954,6 +1171,17 @@ def main() -> None:
         if any("riscv" in value for value in item.get("subsystem", []) + item.get("problem_type", []) + item.get("scenario_type", []))
         for ref in item.get("evidence_refs", [])
     ]
+    source_import_plan = build_source_import_plan(
+        workspace,
+        target_source_root,
+        target_source_evidence,
+        target,
+        target_seed_ref,
+        target_source_ref,
+        scope_method,
+        riscv_method,
+        binary_method,
+    )
 
     target_profile = artifact_base("target_profile")
     target_profile.update(
@@ -975,6 +1203,12 @@ def main() -> None:
                     "expected_path_count": target_source_evidence.get("expected_path_count", 0),
                     "found_path_count": target_source_evidence.get("found_path_count", 0),
                     "binary_asset_count": target_source_evidence.get("binary_asset_count", 0),
+                },
+                "source_import_plan": {
+                    "status": source_import_plan.get("scan_status", "unknown"),
+                    "item_count": source_import_plan.get("item_count", 0),
+                    "excluded_dependency_count": source_import_plan.get("excluded_dependency_count", 0),
+                    "import_policy": source_import_plan.get("import_policy", "unknown"),
                 },
                 "meta_knowledge_digest": {
                     "status": meta_knowledge_digest.get("meta_status", "unknown"),
@@ -1927,6 +2161,7 @@ def main() -> None:
         "target_profile.yaml": target_profile,
         "meta_knowledge_digest.yaml": meta_knowledge_digest,
         "target_source_evidence.yaml": target_source_evidence,
+        "source_import_plan.yaml": source_import_plan,
         "implementation_readiness.yaml": implementation_readiness,
         "source_file_blueprint.yaml": source_file_blueprint,
         "source_candidate_manifest.yaml": source_candidate_manifest,
@@ -1983,6 +2218,27 @@ def main() -> None:
             f"- {asset['asset_id']} `{asset['category']}` `{asset['path']}` sha256={asset['sha256']}"
             for asset in target_source_binary_assets[:40]
             if isinstance(asset, dict)
+        ),
+    )
+    write_text(
+        artifact_root / "source_import_plan.md",
+        "# Source Import Plan\n\n"
+        f"- Policy: `{source_import_plan['import_policy']}` / `{source_import_plan['default_write_policy']}`\n"
+        f"- Import queue items: {source_import_plan['item_count']}\n"
+        f"- Excluded dependency items: {source_import_plan['excluded_dependency_count']}\n"
+        f"- Decisions: {source_import_plan['decision_counts']}\n"
+        f"- Coverage: {source_import_plan['coverage_note']}\n\n"
+        "## Import Queue\n\n"
+        + "\n".join(
+            f"- {item['import_id']} `{item['import_class']}` `{item['target_path']}`: {item['import_decision']} current={item['current_workspace_status']}"
+            for item in source_import_plan.get("items", [])[:60]
+            if isinstance(item, dict)
+        )
+        + "\n\n## Excluded Dependencies\n\n"
+        + "\n".join(
+            f"- {item['excluded_id']} `{item['category']}` `{item['path']}`: {item['reason']} -> {item['routed_to']}"
+            for item in source_import_plan.get("excluded_items", [])[:40]
+            if isinstance(item, dict)
         ),
     )
     write_text(
@@ -2076,6 +2332,7 @@ def main() -> None:
         f"- Target: `{target['product']}` / `{target['board']}` / `{target['soc']}` / `{target['vendor']}` / `{target['architecture']}`\n"
         f"- Meta knowledge: {len(selected_method_ids)} selected method(s), {len(selected_case_ids)} selected case(s)\n"
         f"- Target source evidence: `{target_source_evidence.get('scan_status', 'unknown')}`, found {target_source_evidence.get('found_path_count', 0)} / {target_source_evidence.get('expected_path_count', 0)} expected path(s), {target_source_evidence.get('binary_asset_count', 0)} dependency candidate(s)\n"
+        f"- Source import plan: {source_import_plan['item_count']} queue item(s), {source_import_plan['excluded_dependency_count']} excluded dependency item(s), policy `{source_import_plan['default_write_policy']}`\n"
         f"- Source blueprints: {len(source_blueprints)} blueprint(s), generation mode `{source_file_blueprint['default_generation_mode']}`\n"
         f"- Source candidate files: {len(candidate_files)}, write policy `{source_candidate_manifest['default_write_policy']}`\n"
         f"- Candidate binary/vendor assets: {len(inventory_items)} from selected meta cases and target source evidence\n"
@@ -2097,6 +2354,12 @@ def main() -> None:
         + "\n".join(
             f"- {item['candidate_id']} `{item['target_path']}`: {item['readiness']}; gate={item['apply_gate']}"
             for item in candidate_files
+        )
+        + "\n\n## Source Import Queue\n\n"
+        + "\n".join(
+            f"- {item['import_id']} `{item['import_class']}` `{item['target_path']}`: {item['import_decision']}; current={item['current_workspace_status']}"
+            for item in source_import_plan.get("items", [])[:30]
+            if isinstance(item, dict)
         )
         + "\n\n## Vendor And Binary Dependencies\n\n"
         + "\n".join(f"- {item['dependency_id']} `{item['category']}`: {item['next_action']}" for item in external_items)
@@ -2163,7 +2426,7 @@ def main() -> None:
     result = {
         "stage": STAGE,
         "status": "partial" if non_blocking else "passed",
-        "summary": f"Deterministic plan-only execution package generated; target seed and meta knowledge were consumed, with {len(selected_method_ids)} selected method(s), {len(selected_case_ids)} selected case(s), {len(source_blueprints)} source blueprint(s), {len(candidate_files)} candidate source file preview(s), {len(inventory_items)} candidate dependency asset(s), and target-source scan status {target_source_evidence.get('scan_status', 'unknown')} ({target_source_evidence.get('found_path_count', 0)}/{target_source_evidence.get('expected_path_count', 0)} expected path(s)). Target source visibility/build acceptance remain separate.",
+        "summary": f"Deterministic plan-only execution package generated; target seed and meta knowledge were consumed, with {len(selected_method_ids)} selected method(s), {len(selected_case_ids)} selected case(s), {len(source_blueprints)} source blueprint(s), {len(candidate_files)} candidate source file preview(s), {source_import_plan['item_count']} source import queue item(s), {len(inventory_items)} candidate dependency asset(s), and target-source scan status {target_source_evidence.get('scan_status', 'unknown')} ({target_source_evidence.get('found_path_count', 0)}/{target_source_evidence.get('expected_path_count', 0)} expected path(s)). Target source visibility/build acceptance remain separate.",
         "execution_mode": args.execution_mode,
         "patch_apply_mode": args.patch_apply_mode,
         "artifact_root": str(artifact_root),
