@@ -50,6 +50,8 @@ Create all files under `PORTING_EXECUTION_ARTIFACT_DIR`:
 - `build_acceptance.md`
 - `external_dependency_followup.yaml`
 - `external_dependency_followup.md`
+- `target_dependency_inventory.yaml`
+- `target_dependency_inventory.md`
 - `porting_completion_summary.md`
 - `uncertainty_ledger.yaml`
 - `uncertainty_ledger.md`
@@ -285,6 +287,34 @@ blueprints:
 Blueprints may describe candidate source or compile-file content strategy, but
 must not write source files, patch files, or diff hunks. They are the bridge
 between meta knowledge and later controlled implementation.
+
+### target_dependency_inventory.yaml
+
+Use:
+
+```yaml
+artifact_type: target_dependency_inventory
+target: {}
+inventory_source: selected_meta_cases|source_output|unknown
+asset_count: 0
+coverage_note: <scope note>
+items:
+  - asset_id: ASSET-001
+    category: bsp|bootloader|firmware|prebuilt|closed_driver|signing_packaging_tools|unknown
+    path: <asset path from evidence>
+    sha256: <hash or unknown>
+    relation: risk_only|runtime_dependency|unknown
+    source_case_id: <case id>
+    source_case_title: <case title>
+    target_relevance: target_case_match|conditional_case_match|unknown
+    risk: <why this remains dependency evidence>
+    next_action: <provenance or validation check>
+    evidence_refs: [...]
+```
+
+This inventory reports vendor, BSP, firmware, prebuilt, module, bootloader, and
+packaging assets found in selected evidence. It must not imply those assets are
+present in the current workspace or redistributable.
 
 ### source_tree_survey.yaml
 

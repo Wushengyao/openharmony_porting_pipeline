@@ -131,6 +131,8 @@ writes plan-only execution artifacts under:
 ├── build_acceptance.md
 ├── external_dependency_followup.yaml
 ├── external_dependency_followup.md
+├── target_dependency_inventory.yaml
+├── target_dependency_inventory.md
 ├── porting_completion_summary.md
 ├── uncertainty_ledger.yaml
 └── uncertainty_ledger.md
@@ -150,6 +152,8 @@ P0 execution-assistant guardrails:
   separated from external binary dependency follow-up;
 - source-file blueprints bridge meta knowledge to later controlled
   implementation without writing source files or patch hunks;
+- target dependency inventory reports binary/prebuilt/firmware candidates from
+  selected evidence without treating them as source fixes;
 - unknown requirements and uncertain changes go to `uncertainty_ledger`;
 - build success must not be promoted to boot/runtime/test success;
 - every recommendation must carry evidence references to user requirements,

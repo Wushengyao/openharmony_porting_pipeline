@@ -37,6 +37,8 @@ REQUIRED_FILES = [
     "build_acceptance.md",
     "external_dependency_followup.yaml",
     "external_dependency_followup.md",
+    "target_dependency_inventory.yaml",
+    "target_dependency_inventory.md",
     "porting_completion_summary.md",
     "uncertainty_ledger.yaml",
     "uncertainty_ledger.md",
@@ -53,6 +55,7 @@ ARTIFACT_CONTRACTS = {
     "patch_plan.yaml": ("patch_plan", "patches"),
     "build_acceptance.yaml": ("build_acceptance", "commands"),
     "external_dependency_followup.yaml": ("external_dependency_followup", "items"),
+    "target_dependency_inventory.yaml": ("target_dependency_inventory", "items"),
     "uncertainty_ledger.yaml": ("uncertainty_ledger", "items"),
 }
 
@@ -191,6 +194,7 @@ def validate_nested_evidence(value: Any, context: str) -> None:
             "action_id",
             "item_id",
             "blueprint_id",
+            "asset_id",
             "survey_id",
             "gap_id",
             "phase_id",
@@ -209,6 +213,8 @@ def validate_nested_evidence(value: Any, context: str) -> None:
             "why_needed",
             "content_strategy",
             "apply_gate",
+            "next_action",
+            "risk",
             "unknown",
         ]
         if any(key in value for key in evidence_bearing_keys):
@@ -275,6 +281,22 @@ def validate_source_file_blueprint(path: Path, data: dict[str, Any]) -> None:
             fail(f"source_file_blueprint.yaml blueprints[{idx}] generation_mode must be blueprint_only")
         if not str(item.get("apply_gate") or "").strip():
             fail(f"source_file_blueprint.yaml blueprints[{idx}] missing apply_gate")
+
+
+def validate_target_dependency_inventory(path: Path, data: dict[str, Any]) -> None:
+    items = data.get("items")
+    if not isinstance(items, list):
+        fail("target_dependency_inventory.yaml items must be a list")
+    if data.get("asset_count") != len(items):
+        fail("target_dependency_inventory.yaml asset_count must equal items length")
+    for idx, item in enumerate(items):
+        if not isinstance(item, dict):
+            fail(f"target_dependency_inventory.yaml items[{idx}] must be a mapping")
+        validate_evidence_refs(item, f"target_dependency_inventory.yaml.items[{idx}]")
+        if not str(item.get("path") or "").strip():
+            fail(f"target_dependency_inventory.yaml items[{idx}] missing path")
+        if not str(item.get("category") or "").strip():
+            fail(f"target_dependency_inventory.yaml items[{idx}] missing category")
 
 
 def validate_patch_plan(path: Path, md_path: Path, artifact_dir: Path) -> None:
@@ -396,6 +418,8 @@ def main() -> None:
             validate_meta_knowledge_digest(path, data)
         elif rel == "source_file_blueprint.yaml":
             validate_source_file_blueprint(path, data)
+        elif rel == "target_dependency_inventory.yaml":
+            validate_target_dependency_inventory(path, data)
 
     validate_patch_plan(artifact_dir / "patch_plan.yaml", artifact_dir / "patch_plan.md", artifact_dir)
     validate_build_acceptance(artifact_dir / "build_acceptance.yaml", artifact_dir / "build_acceptance.md")

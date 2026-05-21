@@ -40,6 +40,8 @@ REQUIRED_FILES = [
     "build_acceptance.md",
     "external_dependency_followup.yaml",
     "external_dependency_followup.md",
+    "target_dependency_inventory.yaml",
+    "target_dependency_inventory.md",
     "porting_completion_summary.md",
     "uncertainty_ledger.yaml",
     "uncertainty_ledger.md",
@@ -219,6 +221,45 @@ def case_repo_paths(record: dict[str, Any], limit: int = 8) -> list[str]:
     return unique(paths)[:limit]
 
 
+def classify_binary_asset(path: str) -> str:
+    lowered = path.lower()
+    if any(token in lowered for token in ["u-boot", "uboot", "miniloader", "opensbi", "loader/"]):
+        return "bootloader"
+    if any(token in lowered for token in ["firmware", "fw_", "light_", "/boot/"]) or lowered.endswith(".bin"):
+        return "firmware"
+    if lowered.endswith(".ko"):
+        return "closed_driver"
+    if lowered.endswith(".so"):
+        return "prebuilt"
+    if lowered.endswith((".img", ".cfg")):
+        return "signing_packaging_tools"
+    return "prebuilt"
+
+
+def case_binary_assets(record: dict[str, Any], limit: int = 20) -> list[dict[str, str]]:
+    evidence = record.get("evidence")
+    if not isinstance(evidence, dict):
+        return []
+    assets: list[dict[str, str]] = []
+    for asset in evidence.get("binary_assets") or []:
+        if not isinstance(asset, dict):
+            continue
+        path = clean_str(asset.get("path"), "")
+        if not path:
+            continue
+        assets.append(
+            {
+                "path": path,
+                "category": classify_binary_asset(path),
+                "relation": clean_str(asset.get("relation"), "unknown"),
+                "sha256": clean_str(asset.get("sha256"), "unknown"),
+            }
+        )
+        if len(assets) >= limit:
+            break
+    return assets
+
+
 def load_meta_knowledge(meta_output: Path | None, target: dict[str, str], seed: dict[str, Any]) -> dict[str, Any]:
     digest = artifact_base("meta_knowledge_digest")
     scenario_types = string_list(seed.get("scenario_type"))
@@ -364,6 +405,7 @@ def load_meta_knowledge(meta_output: Path | None, target: dict[str, str], seed: 
                 "evidence_strength": clean_str(record.get("evidence_strength")),
                 "rule": clean_str(record.get("rule"), ""),
                 "repo_paths": case_repo_paths(record),
+                "binary_assets": case_binary_assets(record),
                 "source_case_path": clean_str(record.get("source_case_path"), ""),
                 "score": score,
                 "evidence_refs": [case_evidence_ref(record)],
@@ -1092,6 +1134,46 @@ def main() -> None:
         }
     )
 
+    inventory_items: list[dict[str, Any]] = []
+    seen_assets: set[str] = set()
+    for case in meta_knowledge_digest.get("selected_cases", []):
+        case_id = clean_str(case.get("case_id"), "unknown")
+        case_title = clean_str(case.get("title"), case_id)
+        case_refs = string_list(case.get("evidence_refs"))
+        for asset in case.get("binary_assets", []):
+            if not isinstance(asset, dict):
+                continue
+            path = clean_str(asset.get("path"), "")
+            if not path or path in seen_assets:
+                continue
+            seen_assets.add(path)
+            category = clean_str(asset.get("category"), classify_binary_asset(path))
+            inventory_items.append(
+                {
+                    "asset_id": f"ASSET-{len(inventory_items) + 1:03d}",
+                    "category": category,
+                    "path": path,
+                    "sha256": clean_str(asset.get("sha256"), "unknown"),
+                    "relation": clean_str(asset.get("relation"), "unknown"),
+                    "source_case_id": case_id,
+                    "source_case_title": case_title,
+                    "target_relevance": "target_case_match" if "rvbook" in case_id.lower() or "rvbook" in path.lower() else "conditional_case_match",
+                    "risk": "binary provenance, license, redistribution, and regeneration route must be confirmed before implementation completion.",
+                    "next_action": "Confirm ownership, license, source/regeneration route, runtime usage, and board validation logs for this asset.",
+                    "evidence_refs": unique(case_refs + [f"meta_method:{binary_method}", f"meta_method:{boot_method}"]),
+                }
+            )
+    target_dependency_inventory = artifact_base("target_dependency_inventory")
+    target_dependency_inventory.update(
+        {
+            "target": target,
+            "inventory_source": "selected_meta_cases",
+            "asset_count": len(inventory_items),
+            "items": inventory_items,
+            "coverage_note": "This is a meta-evidence inventory. It does not prove the assets are present in the current workspace.",
+        }
+    )
+
     implementation_items = [
         {
             "item_id": "IMPL-001",
@@ -1335,6 +1417,7 @@ def main() -> None:
         "patch_plan.yaml": patch_plan,
         "build_acceptance.yaml": build_acceptance,
         "external_dependency_followup.yaml": external_dependency_followup,
+        "target_dependency_inventory.yaml": target_dependency_inventory,
         "uncertainty_ledger.yaml": uncertainty_ledger,
     }
     for name, data in artifacts.items():
@@ -1422,11 +1505,22 @@ def main() -> None:
         + "\n".join(f"- {item['dependency_id']} `{item['category']}`: {item['why_needed']}" for item in external_items),
     )
     write_text(
+        artifact_root / "target_dependency_inventory.md",
+        "# Target Dependency Inventory\n\n"
+        f"- Source: `{target_dependency_inventory['inventory_source']}`\n"
+        f"- Candidate assets: {target_dependency_inventory['asset_count']}\n\n"
+        + "\n".join(
+            f"- {item['asset_id']} `{item['category']}` `{item['path']}` sha256={item['sha256']} source={item['source_case_id']}"
+            for item in inventory_items
+        ),
+    )
+    write_text(
         artifact_root / "porting_completion_summary.md",
         "# Porting Completion Summary\n\n"
         f"- Target: `{target['product']}` / `{target['board']}` / `{target['soc']}` / `{target['vendor']}` / `{target['architecture']}`\n"
         f"- Meta knowledge: {len(selected_method_ids)} selected method(s), {len(selected_case_ids)} selected case(s)\n"
         f"- Source blueprints: {len(source_blueprints)} blueprint(s), generation mode `{source_file_blueprint['default_generation_mode']}`\n"
+        f"- Candidate binary/vendor assets: {len(inventory_items)} from selected meta cases\n"
         f"- Source implementation status: `{implementation_readiness['overall_status']}`\n"
         f"- Build acceptance: `{build_acceptance['status']}` / `{build_acceptance['acceptance_level']}`\n"
         "- Boot/runtime/device/test status: `unknown`\n\n"
@@ -1443,6 +1537,11 @@ def main() -> None:
         )
         + "\n\n## Vendor And Binary Dependencies\n\n"
         + "\n".join(f"- {item['dependency_id']} `{item['category']}`: {item['next_action']}" for item in external_items)
+        + "\n\n## Candidate Assets From Meta Evidence\n\n"
+        + "\n".join(
+            f"- {item['asset_id']} `{item['category']}` `{item['path']}` from {item['source_case_id']}"
+            for item in inventory_items[:20]
+        )
         + "\n\n## Current Completion Judgment\n\n"
         "The port is not implementation-complete in this workspace. The next reliable move is to make the target product/board/SoC visible from source evidence, then run build-only triage for the seed product.",
     )
@@ -1487,7 +1586,7 @@ def main() -> None:
     result = {
         "stage": STAGE,
         "status": "partial" if non_blocking else "passed",
-        "summary": f"Deterministic plan-only execution package generated; target seed and meta knowledge were consumed, with {len(selected_method_ids)} selected method(s), {len(selected_case_ids)} selected case(s), and {len(source_blueprints)} source blueprint(s). Target source visibility/build acceptance remain separate.",
+        "summary": f"Deterministic plan-only execution package generated; target seed and meta knowledge were consumed, with {len(selected_method_ids)} selected method(s), {len(selected_case_ids)} selected case(s), {len(source_blueprints)} source blueprint(s), and {len(inventory_items)} candidate dependency asset(s). Target source visibility/build acceptance remain separate.",
         "execution_mode": args.execution_mode,
         "patch_apply_mode": args.patch_apply_mode,
         "artifact_root": str(artifact_root),
