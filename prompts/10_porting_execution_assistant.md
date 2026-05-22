@@ -342,6 +342,17 @@ artifact_type: porting_work_order
 target: {}
 default_execution_policy: manual_review_only
 workspace_write_policy: do_not_write_to_workspace
+controlled_executor:
+  tool: tools/apply_porting_base_patch.py
+  default_mode: dry_run_stage_only
+  allowed_phases: [L0_target_identity, L1_base_binding, L2_build_triage]
+  excluded_payloads: [firmware, bootloader, prebuilt, kernel_module, closed_driver, signing_packaging_tool]
+  compatibility_policy: normalize_openharmony_6_0_product_device_subsystems_filter_unavailable_components_and_apply_evidenced_riscv64_ndk_mapping_when_needed
+  dry_run_command: <stage-only command; no workspace write>
+  apply_and_build_command: <requires explicit --apply --attempt-build>
+  notes:
+    - build attempts must emit diagnostics that separate host/prebuilt failures from source/build compatibility and dependency follow-up
+    - RISC-V build compatibility patches are allowed only when the reference target tree contains matching source evidence such as NDK riscv64 mapping or curl riscv64 cflags guards
 batch_count: 0
 source_import_item_count: 0
 excluded_dependency_count: 0
@@ -369,9 +380,10 @@ batches:
     evidence_refs: [...]
 ```
 
-This work order sequences `source_import_plan` into execution batches. It must
-not write files, run commands, mark batches complete, perform environment setup,
-or infer boot/runtime/test status from build-only checks.
+This work order sequences `source_import_plan` into execution batches. It may
+name a controlled executor entrypoint, but it must not itself write files, run
+commands, mark batches complete, perform environment setup, or infer
+boot/runtime/test status from build-only checks.
 
 ### implementation_readiness.yaml
 

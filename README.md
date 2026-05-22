@@ -178,10 +178,61 @@ P0 execution-assistant guardrails:
 - every recommendation must carry evidence references to user requirements,
   source tree evidence, meta methods, cases, or logs.
 
+After the plan-only artifacts are reviewed, a narrow controlled executor can
+stage or apply the first product-visible patch:
+
+```bash
+python3 tools/apply_porting_base_patch.py \
+  --workspace /path/to/ohos \
+  --target-source-root /path/to/reference_target_ohos \
+  --target-profile /path/to/target_profile_seed.yaml \
+  --out /path/to/ohos/porting_knowledge_output/base_patch_dry_run
+```
+
+Dry-run mode writes `base_patch_manifest.yaml`, `base_patch_manifest.md`, and
+`staged_files/` without changing the workspace. To write the L0/L1 files and
+run compile-flow triage:
+
+```bash
+python3 tools/apply_porting_base_patch.py \
+  --workspace /path/to/ohos \
+  --target-source-root /path/to/reference_target_ohos \
+  --target-profile /path/to/target_profile_seed.yaml \
+  --out /path/to/ohos/porting_knowledge_output/base_patch_apply \
+  --apply \
+  --attempt-build
+```
+
+The executor only handles productdefine, vendor product config, board binding
+config, the board root `BUILD.gn`, SoC binding config, direct product
+inheritance JSON, and narrowly evidenced build-compatibility fixes needed for
+the selected architecture. It excludes firmware, bootloader, prebuilts, kernel
+modules, closed-driver payloads, and high-risk runtime imports. Existing differing workspace files block by default;
+`--overwrite` requires an explicit rerun and creates backups under the output
+directory. By default it also normalizes copied `ohos.build` subsystem names to
+the OpenHarmony 6.0 preloader convention (`product_<product>` and
+`device_<board>`); pass `--no-ohos6-subsystem-normalization` to stage the
+reference files byte-for-byte instead. It also filters target product/vendor
+components and feature flags that are not visible in current-workspace bundle
+metadata; pass `--no-component-visibility-filter` to preserve the target
+component and feature list exactly for diagnosis.
+Board module labels that point at known binary/firmware follow-up areas, such as
+target Bluetooth firmware payloads, are deferred from the base patch so compile
+triage can continue without silently importing closed assets.
+For a RISC-V target, if the reference target tree contains the OpenHarmony NDK
+`riscv64-linux-ohos` mapping, the executor can stage/apply the corresponding
+minimal `build/ohos/ndk/ndk.gni` compatibility patch; it can also apply the
+evidenced `third_party/curl/BUILD.gn` riscv64 cflags guard when needed. Build
+attempts emit diagnostics in `base_patch_manifest.yaml` and `.md` for known
+blockers such as host/prebuilt C++ header gaps, missing `BUILD.gn` closures,
+unavailable product components, RISC-V build-compatibility gaps, and
+prebuilt-backed feature blockers such as a WebView riscv64 ArkWebCore HAP.
+
 Minimum local checks for the new execution-assistant layer:
 
 ```bash
 bash -n tools/run_porting_execution_assistant.sh
+python3 -m py_compile tools/apply_porting_base_patch.py
 python3 -m py_compile tools/validate_porting_execution_assistant.py
 python3 -m json.tool schemas/porting_execution_assistant.schema.json >/dev/null
 python3 tools/validate_porting_execution_assistant.py \

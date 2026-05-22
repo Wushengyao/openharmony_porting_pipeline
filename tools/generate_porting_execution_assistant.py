@@ -771,6 +771,7 @@ def build_porting_work_order(
         f"vendor/{vendor}/{product}/product.gni",
         f"device/board/{vendor}/{board}/config.gni",
         f"device/board/{vendor}/{board}/device.gni",
+        f"device/board/{vendor}/{board}/BUILD.gn",
         f"device/board/{vendor}/{board}/ohos.build",
         f"device/soc/{soc_vendor}/{soc}/soc.gni",
     ]
@@ -841,7 +842,7 @@ def build_porting_work_order(
             "status": "manual_review_ready_blocked_by_batch_001",
             "objective": f"Import the minimal text files that bind `{product}` to `{board}` and `{soc}` after BATCH-001 closes the missing productdefine file.",
             "import_ids": base_ids,
-            "target_paths": paths_for_ids(base_ids),
+            "target_paths": unique(paths_for_ids(base_ids) + base_paths),
             "prerequisites": ["BATCH-001 productdefine closure", "manual ownership review for ISCAS versus T-Head paths"],
             "blocking_reasons": ["Productdefine is still absent; base bindings alone cannot make the product build-visible."],
             "verification_commands": [
@@ -933,6 +934,49 @@ def build_porting_work_order(
             "target": target,
             "default_execution_policy": "manual_review_only",
             "workspace_write_policy": "do_not_write_to_workspace",
+            "controlled_executor": {
+                "tool": "tools/apply_porting_base_patch.py",
+                "default_mode": "dry_run_stage_only",
+                "allowed_phases": ["L0_target_identity", "L1_base_binding", "L2_build_triage"],
+                "excluded_payloads": [
+                    "firmware",
+                    "bootloader",
+                    "prebuilt",
+                    "kernel_module",
+                    "closed_driver",
+                    "signing_packaging_tool",
+                ],
+                "compatibility_policy": (
+                    "normalize_openharmony_6_0_product_device_subsystems_filter_unavailable_components_"
+                    "and_apply_evidenced_riscv64_ndk_mapping_when_needed"
+                ),
+                "dry_run_command": (
+                    "python3 tools/apply_porting_base_patch.py "
+                    "--workspace <ohos_workspace> "
+                    "--target-source-root <reference_target_ohos> "
+                    "--target-profile <target_profile_seed.yaml> "
+                    "--out <assistant_output>/base_patch_dry_run"
+                ),
+                "apply_and_build_command": (
+                    "python3 tools/apply_porting_base_patch.py "
+                    "--workspace <ohos_workspace> "
+                    "--target-source-root <reference_target_ohos> "
+                    "--target-profile <target_profile_seed.yaml> "
+                    "--out <assistant_output>/base_patch_apply "
+                    "--apply --attempt-build"
+                ),
+                "notes": [
+                    "Generated productdefine is allowed only from target seed plus reviewed target vendor config.",
+                    "OpenHarmony 6.0 product/device ohos.build subsystem names may be normalized to product_<product> and device_<board> before compile triage.",
+                    "Target product/vendor components or feature flags not visible in current workspace bundle metadata may be filtered from the first compile-triage patch.",
+                    "Board module labels that point at binary or firmware follow-up areas may be deferred from the base patch.",
+                    "For RISC-V targets, an evidenced minimal build/ohos/ndk/ndk.gni riscv64 mapping patch may be staged/applied before compile triage.",
+                    "For RISC-V targets, an evidenced third_party/curl/BUILD.gn cflags guard patch may be staged/applied when GN reports an undefined cflags identifier.",
+                    "Build attempts produce diagnostics for host/prebuilt toolchain failures, missing BUILD.gn closures, product-config skew, source/build compatibility blockers, and prebuilt-backed feature blockers such as WebView ArkWebCore.",
+                    "Existing differing workspace files block unless the operator explicitly reruns with --overwrite.",
+                    "Build pass is compile-flow evidence only and must not be promoted to boot/runtime/test status.",
+                ],
+            },
             "batch_count": len(batches),
             "source_import_item_count": len(items),
             "excluded_dependency_count": len(excluded_items),
@@ -2495,6 +2539,8 @@ def main() -> None:
         "# Porting Work Order\n\n"
         f"- Execution policy: `{porting_work_order['default_execution_policy']}`\n"
         f"- Workspace write policy: `{porting_work_order['workspace_write_policy']}`\n"
+        f"- Controlled executor: `{porting_work_order.get('controlled_executor', {}).get('tool', 'none')}` "
+        f"mode `{porting_work_order.get('controlled_executor', {}).get('default_mode', 'unknown')}`\n"
         f"- Batches: {porting_work_order['batch_count']}\n"
         f"- Source import items: {porting_work_order['source_import_item_count']}\n"
         f"- Excluded dependencies: {porting_work_order['excluded_dependency_count']}\n"

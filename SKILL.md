@@ -46,6 +46,18 @@ bash /home/ve/.codex/skills/openharmony_porting_pipeline/tools/run_porting_execu
   /path/to/ohos
 ```
 
+Stage, apply, and optionally compile-test the reviewed L0/L1 base patch:
+
+```bash
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/apply_porting_base_patch.py \
+  --workspace /path/to/ohos \
+  --target-source-root /path/to/reference_target_ohos \
+  --target-profile /path/to/target_profile_seed.yaml \
+  --out /path/to/ohos/porting_knowledge_output/base_patch_apply \
+  --apply \
+  --attempt-build
+```
+
 Aggregate multiple scenario outputs:
 
 ```bash
@@ -97,6 +109,37 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
 - Use `porting_work_order` to sequence source-import items into manually
   reviewable execution batches with prerequisites, blockers, and build-only
   verification commands.
+- Use `apply_porting_base_patch.py` only after the target seed and target source
+  evidence identify concrete L0/L1 text files. Its default mode stages files
+  under the output directory without workspace writes; `--apply` is required for
+  source edits and `--attempt-build` is allowed only after apply.
+- Keep its OpenHarmony 6.0 subsystem-name normalization enabled unless the user
+  explicitly needs byte-for-byte target-source staging; this adapts copied
+  product/device `ohos.build` files to `product_<product>` and `device_<board>`
+  preloader paths before compile triage.
+- Keep its component visibility filter enabled for version-skewed reference
+  trees; it removes target product/vendor components and feature flags that are
+  not backed by current-workspace bundle metadata, while preserving
+  target-specific subsystem parts for later dependency triage.
+- Include the board root `BUILD.gn` in the base patch when `device/board/.../ohos.build`
+  directly references a board group; leave feature subdirectories, firmware, and
+  runtime/HDF payloads to build-log-driven follow-up batches.
+- Defer board module labels that point at known binary/firmware follow-up areas,
+  such as vendor Bluetooth firmware payloads, instead of importing those assets
+  through the base patch.
+- For RISC-V targets, allow the controlled executor to stage/apply a minimal
+  `build/ohos/ndk/ndk.gni` compatibility patch only when the reference target
+  source tree contains the `riscv64-linux-ohos` NDK mapping evidence.
+- For RISC-V targets, allow the controlled executor to stage/apply the
+  `third_party/curl/BUILD.gn` riscv64 cflags guard only when the reference
+  target source tree contains the same guard.
+- Treat `base_patch_manifest` build diagnostics as the next iteration driver:
+  separate host/prebuilt toolchain issues from source/build compatibility,
+  missing text closures, product-config version skew, and external dependency
+  follow-up.
+- When a compile blocker is backed by a target prebuilt such as WebView
+  `ArkWebCore.hap`, report it as external dependency/provenance work or an
+  explicit compile-only deferral, not as an automatic source import.
 - Use `target_dependency_inventory` to summarize binary, firmware, bootloader,
   prebuilt, and closed-driver candidates from selected evidence without
   promoting them to source fixes.
