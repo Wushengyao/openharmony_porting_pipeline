@@ -40,6 +40,8 @@ Create all files under `PORTING_EXECUTION_ARTIFACT_DIR`:
 - `target_source_evidence.md`
 - `source_import_plan.yaml`
 - `source_import_plan.md`
+- `porting_work_order.yaml`
+- `porting_work_order.md`
 - `implementation_readiness.yaml`
 - `implementation_readiness.md`
 - `source_file_blueprint.yaml`
@@ -330,6 +332,46 @@ excluded_items:
 This artifact is the execution queue for source and compile-file work. It must
 not mark items `ready_to_apply`, generate patch hunks, copy files, or treat
 binary/firmware/prebuilt payloads as source imports.
+
+### porting_work_order.yaml
+
+Use:
+
+```yaml
+artifact_type: porting_work_order
+target: {}
+default_execution_policy: manual_review_only
+workspace_write_policy: do_not_write_to_workspace
+batch_count: 0
+source_import_item_count: 0
+excluded_dependency_count: 0
+acceptance_ladder: []
+coverage_note: <scope note>
+batches:
+  - batch_id: BATCH-001
+    title: <short title>
+    phase: L0_target_identity|L1_base_binding|L2_build_triage|L3_runtime_hdf_config|L4_feature_driver_source|L5_external_dependency_closure|unknown
+    status: blocked_missing_target_source|manual_review_ready_blocked_by_batch_001|blocked_until_base_binding_visible|deferred_until_build_triage|deferred_until_feature_and_dependency_closure|external_dependency_followup_required|unknown
+    objective: <batch objective>
+    import_ids: []
+    target_paths: []
+    prerequisites: []
+    blocking_reasons: []
+    verification_commands:
+      - command_id: WO-CMD-001
+        command: <existing check or build-only command>
+        description: <what this verifies>
+        runnable_now: false
+        environment_setup: false
+        uses_existing_script: true|false
+        evidence_refs: [...]
+    next_action: <next controlled step>
+    evidence_refs: [...]
+```
+
+This work order sequences `source_import_plan` into execution batches. It must
+not write files, run commands, mark batches complete, perform environment setup,
+or infer boot/runtime/test status from build-only checks.
 
 ### implementation_readiness.yaml
 

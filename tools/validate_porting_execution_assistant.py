@@ -25,6 +25,8 @@ REQUIRED_FILES = [
     "target_source_evidence.md",
     "source_import_plan.yaml",
     "source_import_plan.md",
+    "porting_work_order.yaml",
+    "porting_work_order.md",
     "implementation_readiness.yaml",
     "implementation_readiness.md",
     "source_file_blueprint.yaml",
@@ -55,6 +57,7 @@ ARTIFACT_CONTRACTS = {
     "meta_knowledge_digest.yaml": ("meta_knowledge_digest", "selected_methods"),
     "target_source_evidence.yaml": ("target_source_evidence", "items"),
     "source_import_plan.yaml": ("source_import_plan", "items"),
+    "porting_work_order.yaml": ("porting_work_order", "batches"),
     "implementation_readiness.yaml": ("implementation_readiness", "items"),
     "source_file_blueprint.yaml": ("source_file_blueprint", "blueprints"),
     "source_candidate_manifest.yaml": ("source_candidate_manifest", "candidates"),
@@ -201,6 +204,9 @@ def validate_nested_evidence(value: Any, context: str) -> None:
             "evidence_id",
             "import_id",
             "excluded_id",
+            "batch_id",
+            "work_item_id",
+            "blocker_id",
             "method_id",
             "case_id",
             "action_id",
@@ -349,6 +355,48 @@ def validate_source_import_plan(path: Path, data: dict[str, Any]) -> None:
             fail(f"source_import_plan.yaml excluded_items[{idx}] missing path")
         if not str(item.get("routed_to") or "").strip():
             fail(f"source_import_plan.yaml excluded_items[{idx}] missing routed_to")
+
+
+def validate_porting_work_order(path: Path, data: dict[str, Any]) -> None:
+    if data.get("default_execution_policy") != "manual_review_only":
+        fail("porting_work_order.yaml default_execution_policy must be manual_review_only")
+    if data.get("workspace_write_policy") != "do_not_write_to_workspace":
+        fail("porting_work_order.yaml workspace_write_policy must be do_not_write_to_workspace")
+    batches = data.get("batches")
+    if not isinstance(batches, list):
+        fail("porting_work_order.yaml batches must be a list")
+    if data.get("batch_count") != len(batches):
+        fail("porting_work_order.yaml batch_count must equal batches length")
+    if not isinstance(data.get("acceptance_ladder"), list):
+        fail("porting_work_order.yaml acceptance_ladder must be a list")
+    forbidden_status = {"ready_to_apply", "auto_apply", "applied", "complete"}
+    for idx, batch in enumerate(batches):
+        if not isinstance(batch, dict):
+            fail(f"porting_work_order.yaml batches[{idx}] must be a mapping")
+        validate_evidence_refs(batch, f"porting_work_order.yaml.batches[{idx}]")
+        if not str(batch.get("batch_id") or "").strip():
+            fail(f"porting_work_order.yaml batches[{idx}] missing batch_id")
+        if str(batch.get("status") or "") in forbidden_status:
+            fail(f"porting_work_order.yaml batches[{idx}] must not be auto-apply/applied/complete")
+        if not isinstance(batch.get("import_ids"), list):
+            fail(f"porting_work_order.yaml batches[{idx}] import_ids must be a list")
+        if not isinstance(batch.get("target_paths"), list):
+            fail(f"porting_work_order.yaml batches[{idx}] target_paths must be a list")
+        commands = batch.get("verification_commands") or []
+        if not isinstance(commands, list):
+            fail(f"porting_work_order.yaml batches[{idx}] verification_commands must be a list")
+        for cmd_idx, command_record in enumerate(commands):
+            if not isinstance(command_record, dict):
+                fail(f"porting_work_order.yaml batches[{idx}].verification_commands[{cmd_idx}] must be a mapping")
+            validate_evidence_refs(command_record, f"porting_work_order.yaml.batches[{idx}].verification_commands[{cmd_idx}]")
+            if command_record.get("environment_setup") is not False:
+                fail(f"porting_work_order.yaml batches[{idx}].verification_commands[{cmd_idx}] must not perform environment setup")
+            command = str(command_record.get("command") or "")
+            if SETUP_COMMAND_RE.search(command):
+                fail(f"porting_work_order.yaml verification command performs environment/source setup: batches[{idx}].verification_commands[{cmd_idx}]")
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    if PATCH_DIFF_RE.search(text):
+        fail("porting_work_order.yaml contains a patch diff; work orders must remain plan-only")
 
 
 def validate_source_file_blueprint(path: Path, data: dict[str, Any]) -> None:
@@ -525,6 +573,8 @@ def main() -> None:
             validate_target_source_evidence(path, data)
         elif rel == "source_import_plan.yaml":
             validate_source_import_plan(path, data)
+        elif rel == "porting_work_order.yaml":
+            validate_porting_work_order(path, data)
         elif rel == "source_file_blueprint.yaml":
             validate_source_file_blueprint(path, data)
         elif rel == "source_candidate_manifest.yaml":

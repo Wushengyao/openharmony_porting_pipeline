@@ -94,6 +94,9 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
 - Use `source_import_plan` to convert read-only target-source text evidence into
   a manual-review import queue while excluding binary, firmware, bootloader,
   module, prebuilt, and packaging dependencies from source imports.
+- Use `porting_work_order` to sequence source-import items into manually
+  reviewable execution batches with prerequisites, blockers, and build-only
+  verification commands.
 - Use `target_dependency_inventory` to summarize binary, firmware, bootloader,
   prebuilt, and closed-driver candidates from selected evidence without
   promoting them to source fixes.

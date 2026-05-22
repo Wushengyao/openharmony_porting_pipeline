@@ -30,6 +30,8 @@ REQUIRED_FILES = [
     "target_source_evidence.md",
     "source_import_plan.yaml",
     "source_import_plan.md",
+    "porting_work_order.yaml",
+    "porting_work_order.md",
     "implementation_readiness.yaml",
     "implementation_readiness.md",
     "source_file_blueprint.yaml",
@@ -722,6 +724,233 @@ def build_source_import_plan(
     return plan
 
 
+def build_porting_work_order(
+    source_import_plan: dict[str, Any],
+    target: dict[str, str],
+    target_seed: dict[str, Any],
+    target_seed_ref: str,
+    target_source_ref: str,
+    workspace_ref: str,
+    build_ref: str,
+    validation_method: str,
+    scope_method: str,
+    riscv_method: str,
+    binary_method: str,
+    boot_method: str,
+) -> dict[str, Any]:
+    work_order = artifact_base("porting_work_order")
+    items = source_import_plan.get("items")
+    if not isinstance(items, list):
+        items = []
+    excluded_items = source_import_plan.get("excluded_items")
+    if not isinstance(excluded_items, list):
+        excluded_items = []
+
+    def item_path(item: dict[str, Any]) -> str:
+        return clean_str(item.get("target_path"), "")
+
+    def item_id(item: dict[str, Any]) -> str:
+        return clean_str(item.get("import_id"), "")
+
+    def by_path(path: str) -> list[dict[str, Any]]:
+        return [item for item in items if isinstance(item, dict) and item_path(item) == path]
+
+    def by_class(*classes: str) -> list[dict[str, Any]]:
+        wanted = set(classes)
+        return [item for item in items if isinstance(item, dict) and clean_str(item.get("import_class"), "") in wanted]
+
+    product = target.get("product", "unknown")
+    board = target.get("board", "unknown")
+    vendor = target.get("vendor", "unknown")
+    soc = target.get("soc", "unknown")
+    soc_vendor = clean_str(target_seed.get("soc_vendor"), vendor)
+    productdefine_path = f"productdefine/common/products/{product}.json"
+    base_paths = [
+        f"vendor/{vendor}/{product}/config.json",
+        f"vendor/{vendor}/{product}/ohos.build",
+        f"vendor/{vendor}/{product}/product.gni",
+        f"device/board/{vendor}/{board}/config.gni",
+        f"device/board/{vendor}/{board}/device.gni",
+        f"device/board/{vendor}/{board}/ohos.build",
+        f"device/soc/{soc_vendor}/{soc}/soc.gni",
+    ]
+    productdefine_items = by_path(productdefine_path)
+    base_items = [item for path in base_paths for item in by_path(path)]
+    base_ids = unique([item_id(item) for item in base_items])
+    productdefine_ids = unique([item_id(item) for item in productdefine_items])
+    base_path_set = set(base_paths + [productdefine_path])
+    hdf_items = by_class("hdf_config")
+    driver_items = by_class("driver_source")
+    kernel_items = by_class("kernel_build_config")
+    runtime_items = [
+        item
+        for item in by_class("product_runtime_config", "product_config", "build_manifest")
+        if item_path(item) not in base_path_set
+    ]
+    runtime_ids = unique([item_id(item) for item in runtime_items])
+    hdf_ids = unique([item_id(item) for item in hdf_items])
+    driver_ids = unique([item_id(item) for item in driver_items])
+    kernel_ids = unique([item_id(item) for item in kernel_items])
+    dependency_categories: dict[str, int] = {}
+    for item in excluded_items:
+        if not isinstance(item, dict):
+            continue
+        category = clean_str(item.get("category"), "unknown")
+        dependency_categories[category] = dependency_categories.get(category, 0) + 1
+
+    def paths_for_ids(ids: list[str]) -> list[str]:
+        wanted = set(ids)
+        return [
+            item_path(item)
+            for item in items
+            if isinstance(item, dict) and item_id(item) in wanted and item_path(item)
+        ]
+
+    def refs(extra: list[str] | None = None) -> list[str]:
+        return unique([target_seed_ref, target_source_ref, workspace_ref] + (extra or []))
+
+    batches = [
+        {
+            "batch_id": "BATCH-001",
+            "title": "Close Missing Product Definition",
+            "phase": "L0_target_identity",
+            "status": "blocked_missing_target_source",
+            "objective": f"Create or locate `{productdefine_path}` so `{product}` can become visible through productdefine before build-only triage.",
+            "import_ids": productdefine_ids,
+            "target_paths": [productdefine_path],
+            "prerequisites": ["target profile seed supplied", "authoritative product inheritance and subsystem selection"],
+            "blocking_reasons": ["The target reference tree does not contain productdefine/common/products/rvbook.json."],
+            "verification_commands": [
+                {
+                    "command_id": "WO-CMD-001",
+                    "command": f"test -f {productdefine_path}",
+                    "description": "Confirm the productdefine file exists before treating product visibility as closed.",
+                    "runnable_now": False,
+                    "environment_setup": False,
+                    "uses_existing_script": False,
+                    "evidence_refs": refs([f"meta_method:{scope_method}"]),
+                }
+            ],
+            "next_action": "Author the productdefine file from reviewed product inheritance evidence, then re-run the assistant before workspace writes.",
+            "evidence_refs": refs([f"meta_method:{scope_method}", f"meta_method:{riscv_method}"]),
+        },
+        {
+            "batch_id": "BATCH-002",
+            "title": "Import Base Product, Board, And SoC Bindings",
+            "phase": "L1_base_binding",
+            "status": "manual_review_ready_blocked_by_batch_001",
+            "objective": f"Import the minimal text files that bind `{product}` to `{board}` and `{soc}` after BATCH-001 closes the missing productdefine file.",
+            "import_ids": base_ids,
+            "target_paths": paths_for_ids(base_ids),
+            "prerequisites": ["BATCH-001 productdefine closure", "manual ownership review for ISCAS versus T-Head paths"],
+            "blocking_reasons": ["Productdefine is still absent; base bindings alone cannot make the product build-visible."],
+            "verification_commands": [
+                {
+                    "command_id": "WO-CMD-002",
+                    "command": " && ".join([f"test -f {path}" for path in [productdefine_path] + base_paths]),
+                    "description": "Check that the minimal product, board, and SoC binding files exist before build-only triage.",
+                    "runnable_now": False,
+                    "environment_setup": False,
+                    "uses_existing_script": False,
+                    "evidence_refs": refs([f"meta_method:{scope_method}", f"meta_method:{riscv_method}"]),
+                }
+            ],
+            "next_action": "Review and import this batch as a single base-binding change set; keep feature, firmware, and module payloads out of it.",
+            "evidence_refs": refs([f"meta_method:{scope_method}", f"meta_method:{riscv_method}"]),
+        },
+        {
+            "batch_id": "BATCH-003",
+            "title": "Run Build-Only Triage",
+            "phase": "L2_build_triage",
+            "status": "blocked_until_base_binding_visible",
+            "objective": f"Run a build-only check for `{product}` after BATCH-001 and BATCH-002 make the target product visible.",
+            "import_ids": [],
+            "target_paths": [productdefine_path] + base_paths,
+            "prerequisites": ["BATCH-001 complete", "BATCH-002 complete"],
+            "blocking_reasons": ["Current workspace does not yet contain the target product, board, and SoC binding files."],
+            "verification_commands": [
+                {
+                    "command_id": "WO-CMD-003",
+                    "command": f"./build.sh --product-name {product} --ccache=false",
+                    "description": "Run compile-flow triage only; do not infer boot, runtime, or test status from this command.",
+                    "runnable_now": False,
+                    "environment_setup": False,
+                    "uses_existing_script": True,
+                    "evidence_refs": refs([build_ref, f"meta_method:{validation_method}", f"meta_method:{riscv_method}"]),
+                }
+            ],
+            "next_action": "After base binding files exist, run the build command and feed the log back as PORTING_EXECUTION_BUILD_LOG.",
+            "evidence_refs": refs([build_ref, f"meta_method:{validation_method}", f"meta_method:{riscv_method}"]),
+        },
+        {
+            "batch_id": "BATCH-004",
+            "title": "Import Runtime And HDF Text Configuration",
+            "phase": "L3_runtime_hdf_config",
+            "status": "deferred_until_build_triage",
+            "objective": "Prepare product runtime configuration and HDF text configuration as a later manual-review import batch after the base route is build-visible.",
+            "import_ids": unique(runtime_ids + hdf_ids),
+            "target_paths": paths_for_ids(unique(runtime_ids + hdf_ids))[:80],
+            "prerequisites": ["BATCH-003 build-only triage log", "feature scope confirmation for audio, camera, USB, Bluetooth, and display"],
+            "blocking_reasons": ["Feature-specific HDF/runtime configuration should not precede base product visibility."],
+            "verification_commands": [],
+            "next_action": "After build-only triage, split HDF/runtime config into feature-specific patches with matching dependencies and validation logs.",
+            "evidence_refs": refs([f"meta_method:{scope_method}", f"meta_method:{binary_method}"]),
+        },
+        {
+            "batch_id": "BATCH-005",
+            "title": "Review Driver Source And Kernel Build Helpers",
+            "phase": "L4_feature_driver_source",
+            "status": "deferred_until_feature_and_dependency_closure",
+            "objective": "Keep Bluetooth, audio-driver, and kernel-helper source files out of the base-binding batch until their binary and runtime dependencies are resolved.",
+            "import_ids": unique(driver_ids + kernel_ids),
+            "target_paths": paths_for_ids(unique(driver_ids + kernel_ids))[:80],
+            "prerequisites": ["feature requirement selection", "dependency provenance review", "target kernel route confirmation"],
+            "blocking_reasons": ["Driver source often depends on firmware, kernel modules, HAL prebuilts, and board runtime logs."],
+            "verification_commands": [],
+            "next_action": "Create one feature-specific work order per selected driver/runtime feature after dependency closure.",
+            "evidence_refs": refs([f"meta_method:{riscv_method}", f"meta_method:{binary_method}", f"meta_method:{boot_method}"]),
+        },
+        {
+            "batch_id": "BATCH-006",
+            "title": "Close External Dependency Inventory",
+            "phase": "L5_external_dependency_closure",
+            "status": "external_dependency_followup_required",
+            "objective": "Resolve provenance, licensing, redistribution, regeneration, and validation evidence for binary and packaging assets before completion claims.",
+            "import_ids": [],
+            "target_paths": [],
+            "dependency_category_counts": dependency_categories,
+            "excluded_dependency_count": len(excluded_items),
+            "prerequisites": ["vendor/BSP ownership confirmation", "license and redistribution decisions", "board validation logs"],
+            "blocking_reasons": ["Binary and packaging assets cannot be promoted as source imports or completion evidence."],
+            "verification_commands": [],
+            "next_action": "Use target_dependency_inventory and external_dependency_followup to close each dependency category.",
+            "evidence_refs": refs([f"meta_method:{binary_method}", f"meta_method:{boot_method}"]),
+        },
+    ]
+
+    work_order.update(
+        {
+            "target": target,
+            "default_execution_policy": "manual_review_only",
+            "workspace_write_policy": "do_not_write_to_workspace",
+            "batch_count": len(batches),
+            "source_import_item_count": len(items),
+            "excluded_dependency_count": len(excluded_items),
+            "acceptance_ladder": [
+                "L0 target identity/productdefine closed",
+                "L1 product/board/SoC base binding visible",
+                "L2 build-only triage log captured",
+                "L3 runtime/HDF feature configuration reviewed",
+                "L4 selected driver source reviewed with dependencies",
+                "L5 external dependency provenance and validation closed",
+            ],
+            "batches": batches,
+            "coverage_note": "This work order sequences the source import plan into execution batches. It does not write source files, create patches, run builds, or claim boot/runtime/test status.",
+        }
+    )
+    return work_order
+
+
 def case_binary_assets(record: dict[str, Any], limit: int = 20) -> list[dict[str, str]]:
     evidence = record.get("evidence")
     if not isinstance(evidence, dict):
@@ -1182,6 +1411,20 @@ def main() -> None:
         riscv_method,
         binary_method,
     )
+    porting_work_order = build_porting_work_order(
+        source_import_plan,
+        target,
+        target_seed,
+        target_seed_ref,
+        target_source_ref,
+        workspace_ref,
+        build_ref,
+        validation_method,
+        scope_method,
+        riscv_method,
+        binary_method,
+        boot_method,
+    )
 
     target_profile = artifact_base("target_profile")
     target_profile.update(
@@ -1209,6 +1452,11 @@ def main() -> None:
                     "item_count": source_import_plan.get("item_count", 0),
                     "excluded_dependency_count": source_import_plan.get("excluded_dependency_count", 0),
                     "import_policy": source_import_plan.get("import_policy", "unknown"),
+                },
+                "porting_work_order": {
+                    "batch_count": porting_work_order.get("batch_count", 0),
+                    "execution_policy": porting_work_order.get("default_execution_policy", "unknown"),
+                    "workspace_write_policy": porting_work_order.get("workspace_write_policy", "unknown"),
                 },
                 "meta_knowledge_digest": {
                     "status": meta_knowledge_digest.get("meta_status", "unknown"),
@@ -2162,6 +2410,7 @@ def main() -> None:
         "meta_knowledge_digest.yaml": meta_knowledge_digest,
         "target_source_evidence.yaml": target_source_evidence,
         "source_import_plan.yaml": source_import_plan,
+        "porting_work_order.yaml": porting_work_order,
         "implementation_readiness.yaml": implementation_readiness,
         "source_file_blueprint.yaml": source_file_blueprint,
         "source_candidate_manifest.yaml": source_candidate_manifest,
@@ -2240,6 +2489,25 @@ def main() -> None:
             for item in source_import_plan.get("excluded_items", [])[:40]
             if isinstance(item, dict)
         ),
+    )
+    write_text(
+        artifact_root / "porting_work_order.md",
+        "# Porting Work Order\n\n"
+        f"- Execution policy: `{porting_work_order['default_execution_policy']}`\n"
+        f"- Workspace write policy: `{porting_work_order['workspace_write_policy']}`\n"
+        f"- Batches: {porting_work_order['batch_count']}\n"
+        f"- Source import items: {porting_work_order['source_import_item_count']}\n"
+        f"- Excluded dependencies: {porting_work_order['excluded_dependency_count']}\n"
+        f"- Coverage: {porting_work_order['coverage_note']}\n\n"
+        "## Batches\n\n"
+        + "\n".join(
+            f"- {batch['batch_id']} `{batch['phase']}` `{batch['status']}`: {batch['title']} "
+            f"imports={len(batch.get('import_ids', []))} deps={batch.get('excluded_dependency_count', 0)}"
+            for batch in porting_work_order.get("batches", [])
+            if isinstance(batch, dict)
+        )
+        + "\n\n## Acceptance Ladder\n\n"
+        + "\n".join(f"- {step}" for step in porting_work_order.get("acceptance_ladder", [])),
     )
     write_text(
         artifact_root / "implementation_readiness.md",
@@ -2333,6 +2601,7 @@ def main() -> None:
         f"- Meta knowledge: {len(selected_method_ids)} selected method(s), {len(selected_case_ids)} selected case(s)\n"
         f"- Target source evidence: `{target_source_evidence.get('scan_status', 'unknown')}`, found {target_source_evidence.get('found_path_count', 0)} / {target_source_evidence.get('expected_path_count', 0)} expected path(s), {target_source_evidence.get('binary_asset_count', 0)} dependency candidate(s)\n"
         f"- Source import plan: {source_import_plan['item_count']} queue item(s), {source_import_plan['excluded_dependency_count']} excluded dependency item(s), policy `{source_import_plan['default_write_policy']}`\n"
+        f"- Porting work order: {porting_work_order['batch_count']} batch(es), policy `{porting_work_order['workspace_write_policy']}`\n"
         f"- Source blueprints: {len(source_blueprints)} blueprint(s), generation mode `{source_file_blueprint['default_generation_mode']}`\n"
         f"- Source candidate files: {len(candidate_files)}, write policy `{source_candidate_manifest['default_write_policy']}`\n"
         f"- Candidate binary/vendor assets: {len(inventory_items)} from selected meta cases and target source evidence\n"
@@ -2360,6 +2629,12 @@ def main() -> None:
             f"- {item['import_id']} `{item['import_class']}` `{item['target_path']}`: {item['import_decision']}; current={item['current_workspace_status']}"
             for item in source_import_plan.get("items", [])[:30]
             if isinstance(item, dict)
+        )
+        + "\n\n## Porting Work Order Batches\n\n"
+        + "\n".join(
+            f"- {batch['batch_id']} `{batch['phase']}`: {batch['status']}; {batch['title']}"
+            for batch in porting_work_order.get("batches", [])
+            if isinstance(batch, dict)
         )
         + "\n\n## Vendor And Binary Dependencies\n\n"
         + "\n".join(f"- {item['dependency_id']} `{item['category']}`: {item['next_action']}" for item in external_items)
@@ -2426,7 +2701,7 @@ def main() -> None:
     result = {
         "stage": STAGE,
         "status": "partial" if non_blocking else "passed",
-        "summary": f"Deterministic plan-only execution package generated; target seed and meta knowledge were consumed, with {len(selected_method_ids)} selected method(s), {len(selected_case_ids)} selected case(s), {len(source_blueprints)} source blueprint(s), {len(candidate_files)} candidate source file preview(s), {source_import_plan['item_count']} source import queue item(s), {len(inventory_items)} candidate dependency asset(s), and target-source scan status {target_source_evidence.get('scan_status', 'unknown')} ({target_source_evidence.get('found_path_count', 0)}/{target_source_evidence.get('expected_path_count', 0)} expected path(s)). Target source visibility/build acceptance remain separate.",
+        "summary": f"Deterministic plan-only execution package generated; target seed and meta knowledge were consumed, with {len(selected_method_ids)} selected method(s), {len(selected_case_ids)} selected case(s), {len(source_blueprints)} source blueprint(s), {len(candidate_files)} candidate source file preview(s), {source_import_plan['item_count']} source import queue item(s), {porting_work_order['batch_count']} work-order batch(es), {len(inventory_items)} candidate dependency asset(s), and target-source scan status {target_source_evidence.get('scan_status', 'unknown')} ({target_source_evidence.get('found_path_count', 0)}/{target_source_evidence.get('expected_path_count', 0)} expected path(s)). Target source visibility/build acceptance remain separate.",
         "execution_mode": args.execution_mode,
         "patch_apply_mode": args.patch_apply_mode,
         "artifact_root": str(artifact_root),

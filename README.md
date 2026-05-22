@@ -120,6 +120,8 @@ writes plan-only execution artifacts under:
 ├── target_source_evidence.md
 ├── source_import_plan.yaml
 ├── source_import_plan.md
+├── porting_work_order.yaml
+├── porting_work_order.md
 ├── implementation_readiness.yaml
 ├── implementation_readiness.md
 ├── source_file_blueprint.yaml
@@ -160,6 +162,9 @@ P0 execution-assistant guardrails:
 - `source_import_plan` turns target-source text evidence into a manual-review
   import queue and routes firmware, bootloader, modules, and prebuilts away from
   source imports;
+- `porting_work_order` sequences the import queue into productdefine, base
+  binding, build-only triage, runtime/HDF, driver-source, and dependency-closure
+  batches without writing the workspace;
 - source/compile implementation readiness and current completion judgment are
   separated from external binary dependency follow-up;
 - source-file blueprints bridge meta knowledge to later controlled
