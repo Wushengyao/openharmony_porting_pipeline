@@ -165,6 +165,9 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   minimal `ark_config.gni` rule that disables unsupported LLVM
   backend/irtoc/codegen paths for `target_cpu == "riscv64"`; avoid importing the
   broader ArkCompiler 6.1 source rename set during base compile triage.
+- For SmartPerf split blockers, when target evidence shows SmartPerf is owned by
+  `developtools/smartperf_host`, remove legacy `developtools/profiler/host/smartperf`
+  labels from the hiprofiler bundle registry to avoid duplicate fuzz outputs.
 - For board vendor modules, import text-only C/GN/header closures when directly
   referenced by board manifests, while representing firmware payloads such as
   Bluetooth `.hcd` files with tracked compile-only fake artifacts.

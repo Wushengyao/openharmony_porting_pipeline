@@ -884,6 +884,20 @@ def target_has_webview_app_fwk_update_test_migration_evidence(target_root: Path)
     )
 
 
+def target_has_profiler_smartperf_split_evidence(target_root: Path) -> bool:
+    profiler_bundle = target_root / "developtools/profiler/bundle.json"
+    smartperf_bundle = target_root / "developtools/smartperf_host/bundle.json"
+    if not profiler_bundle.is_file() or not smartperf_bundle.is_file():
+        return False
+    profiler_text = profiler_bundle.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    smartperf_text = smartperf_bundle.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "//developtools/profiler/host/smartperf/" not in profiler_text
+        and "//developtools/smartperf_host/smartperf_device" in smartperf_text
+        and "smartperf_host_device" in smartperf_text
+    )
+
+
 def file_has_riscv64_rofs_evidence(path: Path) -> bool:
     if not path.is_file():
         return False
@@ -1302,6 +1316,20 @@ def planned_actions(
         if target_bundle_has_feature(target_root, rel_path, feature):
             actions.append(component_feature_registry_action(rel_path, feature, target_root, reason))
 
+    if target_has_profiler_smartperf_split_evidence(target_root):
+        actions.append(
+            workspace_transform_action(
+                "developtools/profiler/bundle.json",
+                "profiler_smartperf_split_bundle_migration",
+                "L2_component_registry_migration",
+                (
+                    "Apply the target-evidenced SmartPerf split: remove legacy "
+                    "developtools/profiler/host/smartperf module and test labels from hiprofiler "
+                    "so smartperf_host owns SmartPerf without duplicate fuzz outputs."
+                ),
+            )
+        )
+
     if clean_str(seed.get("architecture")) == "riscv64" and target_has_riscv64_webview_stub_evidence(target_root):
         prebuilt_rel = "base/web/webview/ohos_nweb/prebuilts/riscv64/ArkWebCore.hap"
         target_prebuilt = target_root / prebuilt_rel
@@ -1445,6 +1473,7 @@ def planned_actions(
         "RISC-V build/common libcpp prebuilt source mapping is applied only when target-source evidence contains the riscv64 libc++ rule.",
         "RISC-V ArkCompiler LLVM backend/codegen disablement is applied only when target-source evidence contains the riscv64 ark_config rule.",
         "RISC-V graphic_3d embedded-asset rofs object mappings are applied only when target-source evidence contains matching rv64 object rules.",
+        "SmartPerf split component-registry migration removes legacy hiprofiler-hosted SmartPerf labels only when target evidence shows SmartPerf is owned by smartperf_host.",
         "Vendor product module text/config closures are imported only from direct target ohos.build module labels; non-text payloads become compile-only fake interfaces.",
         "Board module text/config closures are imported only from local labels in the target board root BUILD.gn; kernel modules, bootloader images, and firmware become compile-only fake interfaces.",
         "SoC module text/source closures are imported only from target board BUILD.gn labels under the selected SoC root; firmware and proprietary GPU/WiFi/shared-library payloads become compile-only fake interfaces.",
@@ -1720,6 +1749,52 @@ def apply_webview_bundle_app_fwk_update_migration(data: bytes) -> tuple[bytes, l
     return text.encode(TEXT_ENCODING), notes
 
 
+def item_mentions_profiler_smartperf_host(item: Any) -> bool:
+    if isinstance(item, str):
+        return "//developtools/profiler/host/smartperf/" in item
+    if isinstance(item, dict):
+        return any(item_mentions_profiler_smartperf_host(value) for value in item.values())
+    if isinstance(item, list):
+        return any(item_mentions_profiler_smartperf_host(value) for value in item)
+    return False
+
+
+def apply_profiler_smartperf_split_migration(data: bytes) -> tuple[bytes, list[str]]:
+    notes: list[str] = []
+    try:
+        bundle = json.loads(data.decode(TEXT_ENCODING))
+    except Exception:
+        return data, ["profiler SmartPerf split migration skipped: bundle.json is not valid JSON"]
+    component = bundle.get("component") if isinstance(bundle, dict) else None
+    build = component.get("build") if isinstance(component, dict) else None
+    if not isinstance(build, dict):
+        return data, ["profiler SmartPerf split migration skipped: component.build missing"]
+
+    for key in ("sub_component", "test"):
+        values = build.get(key)
+        if not isinstance(values, list):
+            continue
+        kept = [item for item in values if not item_mentions_profiler_smartperf_host(item)]
+        removed = len(values) - len(kept)
+        if removed:
+            build[key] = kept
+            notes.append(f"removed {removed} legacy profiler SmartPerf {key} label(s)")
+
+    inner_kits = build.get("inner_kits")
+    if isinstance(inner_kits, list):
+        kept_inner_kits = [
+            item for item in inner_kits if not item_mentions_profiler_smartperf_host(item)
+        ]
+        removed = len(inner_kits) - len(kept_inner_kits)
+        if removed:
+            build["inner_kits"] = kept_inner_kits
+            notes.append(f"removed {removed} legacy profiler SmartPerf inner_kits entry/entries")
+
+    if not notes:
+        notes.append("legacy profiler SmartPerf labels already absent")
+    return (json.dumps(bundle, ensure_ascii=False, indent=2) + "\n").encode(TEXT_ENCODING), notes
+
+
 def apply_component_feature_compat(data: bytes, features_to_add: list[str]) -> tuple[bytes, list[str]]:
     notes: list[str] = []
     try:
@@ -1799,6 +1874,11 @@ def materialize_action(
             and action.get("source_role") == "webview_bundle_app_fwk_update_sa_migration"
         ):
             data, transforms = apply_webview_bundle_app_fwk_update_migration(data)
+        elif (
+            rel_path == "developtools/profiler/bundle.json"
+            and action.get("source_role") == "profiler_smartperf_split_bundle_migration"
+        ):
+            data, transforms = apply_profiler_smartperf_split_migration(data)
         elif (
             action.get("source_role") == "graphic_3d_riscv64_rofs_build_rule"
             and target.get("architecture") == "riscv64"
@@ -2251,6 +2331,30 @@ def parse_build_diagnostics(
                             "libapp_fwk_update_service.z.so",
                             "//base/web/webview/sa:app_fwk_update_service",
                             "//base/web/webview/sa/app_fwk_update:app_fwk_update_service",
+                        ],
+                        12,
+                    ),
+                )
+            )
+        elif (
+            "tests/fuzztest/hiprofiler/hiprofiler/SpDaemonFuzzTest" in block_text
+            and "//developtools/profiler/host/smartperf/client/client_command/test/fuzztest/spdaemon_fuzzer:SpDaemonFuzzTest" in block_text
+            and "//developtools/smartperf_host/smartperf_device/device_command/test/fuzztest/spdaemon_fuzzer:SpDaemonFuzzTest" in block_text
+        ):
+            diagnostics.append(
+                build_diagnostic(
+                    "smartperf_spdaemon_fuzzer_duplicate_output",
+                    "source_build_compatibility",
+                    "Both legacy hiprofiler-hosted SmartPerf and smartperf_host build the SpDaemonFuzzTest target.",
+                    "Apply the target-evidenced SmartPerf split by removing legacy developtools/profiler/host/smartperf labels from hiprofiler's bundle registry.",
+                    [str(log_path), str(target_root / "developtools/profiler/bundle.json")],
+                    matching_lines(
+                        all_text,
+                        [
+                            "Duplicate output file",
+                            "SpDaemonFuzzTest",
+                            "//developtools/profiler/host/smartperf/client/client_command/test/fuzztest/spdaemon_fuzzer",
+                            "//developtools/smartperf_host/smartperf_device/device_command/test/fuzztest/spdaemon_fuzzer",
                         ],
                         12,
                     ),

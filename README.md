@@ -264,6 +264,10 @@ For ArkCompiler RISC-V GN assertion gaps, the executor may apply the
 target-evidenced minimal `ark_config.gni` rule that disables unsupported
 LLVM backend/irtoc/codegen paths for `target_cpu == "riscv64"`; it does not
 import the broader 6.1 ArkCompiler source rename set as part of the base patch.
+For SmartPerf split conflicts, the executor may remove legacy
+`developtools/profiler/host/smartperf` labels from `developtools/profiler`
+`bundle.json` when target evidence shows SmartPerf is owned by
+`developtools/smartperf_host`, avoiding duplicate `SpDaemonFuzzTest` outputs.
 For board-level vendor Bluetooth modules, the executor imports text C/GN/header
 closures referenced by `ohos.build`, but replaces firmware payloads such as
 `BCM4362A2.hcd` with marked compile-only fake artifacts.

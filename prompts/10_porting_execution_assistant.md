@@ -354,6 +354,7 @@ controlled_executor:
     - build attempts must emit diagnostics that separate host/prebuilt failures from source/build compatibility and dependency follow-up
     - RISC-V build compatibility patches are allowed only when the reference target tree contains matching source evidence such as NDK riscv64 mapping, curl riscv64 cflags guards, libcpp riscv64 prebuilt source mapping, or graphic_3d rofs rv64 object mappings
     - ArkCompiler RISC-V assertion blockers may use only the target-evidenced minimal ark_config.gni LLVM backend/codegen disablement, not broad ArkCompiler source replacement
+    - SmartPerf split blockers may remove legacy developtools/profiler/host/smartperf labels from hiprofiler bundle.json only when target evidence shows smartperf_host owns SmartPerf
     - prebuilt-backed components should remain visible in product config where possible; use marked compile-only fake interfaces for missing external payloads
     - architecture-specific prebuilt gaps may use wrong-architecture binary placeholders only when clearly marked and reported as compile-only dependency debt
     - board vendor text closures may be imported, but firmware payloads must become tracked compile-only fake artifacts
