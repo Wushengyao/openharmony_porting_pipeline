@@ -117,29 +117,69 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   explicitly needs byte-for-byte target-source staging; this adapts copied
   product/device `ohos.build` files to `product_<product>` and `device_<board>`
   preloader paths before compile triage.
-- Keep its component visibility filter enabled for version-skewed reference
-  trees; it removes target product/vendor components and feature flags that are
-  not backed by current-workspace bundle metadata, while preserving
-  target-specific subsystem parts for later dependency triage.
+- Preserve target product/vendor component and feature declarations by default.
+  Use component visibility filtering only as an explicit diagnostic mode after
+  recording why a missing source component cannot be represented by a text
+  closure or fake interface.
 - Include the board root `BUILD.gn` in the base patch when `device/board/.../ohos.build`
   directly references a board group; leave feature subdirectories, firmware, and
   runtime/HDF payloads to build-log-driven follow-up batches.
-- Defer board module labels that point at known binary/firmware follow-up areas,
-  such as vendor Bluetooth firmware payloads, instead of importing those assets
-  through the base patch.
+- Keep product and board feature declarations visible where possible. When a
+  build blocker is caused by a missing binary/prebuilt/third-party payload,
+  prefer a clearly marked compile-only fake interface over removing the feature
+  from product config; summarize every fake in dependency debt reports.
 - For RISC-V targets, allow the controlled executor to stage/apply a minimal
   `build/ohos/ndk/ndk.gni` compatibility patch only when the reference target
   source tree contains the `riscv64-linux-ohos` NDK mapping evidence.
 - For RISC-V targets, allow the controlled executor to stage/apply the
   `third_party/curl/BUILD.gn` riscv64 cflags guard only when the reference
   target source tree contains the same guard.
+- For RISC-V targets, allow the controlled executor to stage/apply
+  `build/common/libcpp/BUILD.gn` libc++ prebuilt source mapping only when the
+  reference target source tree contains the riscv64 rule; if the payload is
+  absent, represent it as tracked compile-only dependency debt.
 - Treat `base_patch_manifest` build diagnostics as the next iteration driver:
   separate host/prebuilt toolchain issues from source/build compatibility,
   missing text closures, product-config version skew, and external dependency
   follow-up.
 - When a compile blocker is backed by a target prebuilt such as WebView
-  `ArkWebCore.hap`, report it as external dependency/provenance work or an
-  explicit compile-only deferral, not as an automatic source import.
+  `ArkWebCore.hap`, keep `web:webview` selected and generate a tracked
+  compile-only fake artifact only as a build-progress bridge. Record the
+  reference path, hash, fake path, runtime non-functionality, and replacement
+  follow-up in `base_patch_manifest`.
+- For architecture-specific prebuilt rules such as RISC-V Rust
+  `libstd.dylib.so`/`libtest.dylib.so`, import only the evidenced text build
+  rule and use clearly marked wrong-architecture binary placeholders when the
+  real target prebuilt is unavailable. These placeholders are compile-only and
+  must be replaced before packaging/runtime validation.
+- For board vendor modules, import text-only C/GN/header closures when directly
+  referenced by board manifests, while representing firmware payloads such as
+  Bluetooth `.hcd` files with tracked compile-only fake artifacts.
+- For local modules directly listed by `device/board/<vendor>/<board>/BUILD.gn`,
+  import text/config closures, but represent kernel modules, bootloader images,
+  firmware, and other non-text payloads as tracked compile-only fake interfaces.
+- For SoC modules under `device/soc/<soc_vendor>/<soc>` directly referenced by
+  the board root `BUILD.gn`, import text/source closures and represent firmware,
+  proprietary GPU/WiFi blobs, and shared-library payloads as tracked
+  compile-only fake interfaces.
+- For vendor product modules directly listed by `vendor/<vendor>/<product>/ohos.build`,
+  import text/config closures such as image config, preinstall config, HDF `.hcs`,
+  XML, JSON, `.para`, GN/GNI, and C/header files; represent non-text payloads as
+  tracked compile-only fake interfaces.
+- For RISC-V graphics builds, add target-evidenced `graphic_3d` rofs `rv64`
+  object mappings to compile files when GN reports empty generated asset paths;
+  this is a build-compatibility source fix, not a product feature removal.
+- When a product references a component that has no real current-workspace
+  `bundle.json`, generate a zero-subcomponent fake component registry under
+  that subsystem's root from `build/subsystem_config.json` instead of deleting
+  the component from product config. Treat this as source/dependency debt.
+- When a product references a feature that the current component registry lacks
+  but the target reference declares, add a tracked feature-registry shim to the
+  component `bundle.json` instead of removing the product feature.
+- If prebuilt host clang selects an incomplete host GCC installation and cannot
+  include `<cstdlib>` or cannot link `-static-libstdc++`, the executor may set
+  `CPLUS_INCLUDE_PATH`/`LIBRARY_PATH` for the build subprocess after validating
+  the detected host paths. Record this as an environment fix, not a source patch.
 - Use `target_dependency_inventory` to summarize binary, firmware, bootloader,
   prebuilt, and closed-driver candidates from selected evidence without
   promoting them to source fixes.

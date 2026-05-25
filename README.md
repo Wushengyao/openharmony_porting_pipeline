@@ -212,21 +212,63 @@ modules, closed-driver payloads, and high-risk runtime imports. Existing differi
 directory. By default it also normalizes copied `ohos.build` subsystem names to
 the OpenHarmony 6.0 preloader convention (`product_<product>` and
 `device_<board>`); pass `--no-ohos6-subsystem-normalization` to stage the
-reference files byte-for-byte instead. It also filters target product/vendor
-components and feature flags that are not visible in current-workspace bundle
-metadata; pass `--no-component-visibility-filter` to preserve the target
-component and feature list exactly for diagnosis.
-Board module labels that point at known binary/firmware follow-up areas, such as
-target Bluetooth firmware payloads, are deferred from the base patch so compile
-triage can continue without silently importing closed assets.
+reference files byte-for-byte instead. It preserves target product/vendor
+components and feature flags by default; pass `--filter-unavailable-components`
+only for a diagnostic run where missing current-workspace bundle metadata should
+be filtered intentionally.
+Product and board feature declarations should remain visible during compile
+triage where possible. When a blocker is caused by a missing binary, prebuilt,
+firmware, or third-party payload, the executor may create a clearly marked
+compile-only fake interface and record it as dependency debt instead of removing
+the feature from product config.
+When a selected product component has no real current-workspace `bundle.json`,
+the executor can add a zero-subcomponent fake registry under that subsystem's
+root from `build/subsystem_config.json` (for example `third_party/...` for
+`thirdparty` and `drivers/...` for `hdf`); this keeps the product selection
+intact while making the missing source/component dependency explicit in
+`fake_interfaces`.
+When a selected product feature is present in the target reference but missing
+from the current component registry, the executor can add a tracked
+feature-registry shim to the component `bundle.json` rather than removing that
+feature from product config.
 For a RISC-V target, if the reference target tree contains the OpenHarmony NDK
 `riscv64-linux-ohos` mapping, the executor can stage/apply the corresponding
 minimal `build/ohos/ndk/ndk.gni` compatibility patch; it can also apply the
-evidenced `third_party/curl/BUILD.gn` riscv64 cflags guard when needed. Build
+evidenced `third_party/curl/BUILD.gn` riscv64 cflags guard and
+`build/common/libcpp/BUILD.gn` libc++ prebuilt source mapping when needed. It
+also adds target-evidenced `graphic_3d` rofs `rv64` object mappings when GN
+reports empty generated asset paths for RISC-V graphics builds. Build
 attempts emit diagnostics in `base_patch_manifest.yaml` and `.md` for known
 blockers such as host/prebuilt C++ header gaps, missing `BUILD.gn` closures,
 unavailable product components, RISC-V build-compatibility gaps, and
 prebuilt-backed feature blockers such as a WebView riscv64 ArkWebCore HAP.
+For the WebView riscv64 ArkWebCore gap, the executor keeps `web:webview` enabled,
+imports the evidenced text-only build rule, writes a marked compile-only fake
+`ArkWebCore.hap`, and reports it under `fake_interfaces`. External-prebuilt
+component deferral is now opt-in via `--defer-external-prebuilt-components` for
+cases where an operator explicitly wants that older compile-triage mode.
+For RISC-V Rust std/test dylib gaps, the executor imports the target-evidenced
+text GN rule and may copy an existing workspace Rust dylib as a clearly marked
+wrong-architecture placeholder under `prebuilts/rustc-riscv/...`; this is only a
+compile-flow bridge and is reported as fake dependency debt.
+For board-level vendor Bluetooth modules, the executor imports text C/GN/header
+closures referenced by `ohos.build`, but replaces firmware payloads such as
+`BCM4362A2.hcd` with marked compile-only fake artifacts.
+For local modules directly listed by `device/board/<vendor>/<board>/BUILD.gn`,
+the executor imports text/config closures and records kernel modules, bootloader
+images, firmware, and other non-text payloads as compile-only fake interfaces.
+For SoC modules under `device/soc/<soc_vendor>/<soc>` directly referenced by the
+board root `BUILD.gn`, the executor imports text/source closures and records
+firmware, proprietary GPU/WiFi blobs, and shared-library payloads as
+compile-only fake interfaces.
+For vendor product modules directly listed by `vendor/<vendor>/<product>/ohos.build`,
+the executor imports text/config closures (image config, preinstall config,
+HDF `.hcs`, XML, JSON, `.para`, GN/GNI, C/header files) and records non-text
+payloads as compile-only fake interfaces.
+Build attempts also probe the prebuilt host clang `<cstdlib>` include path. If
+clang selected an incomplete host GCC installation, the executor validates and
+sets `CPLUS_INCLUDE_PATH`/`LIBRARY_PATH` only for the build subprocess, then
+records the environment fix in the build manifest.
 
 Minimum local checks for the new execution-assistant layer:
 

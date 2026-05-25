@@ -21,6 +21,8 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import time
 from typing import Any
 
 import yaml
@@ -28,6 +30,34 @@ import yaml
 
 TEXT_ENCODING = "utf-8"
 DEFAULT_BUILD_TIMEOUT_SEC = 3600
+TEXT_CLOSURE_SUFFIXES = {
+    ".c",
+    ".cc",
+    ".cfg",
+    ".conf",
+    ".cpp",
+    ".crt",
+    ".cxx",
+    ".gn",
+    ".gni",
+    ".h",
+    ".hcs",
+    ".hpp",
+    ".ini",
+    ".json",
+    ".md",
+    ".para",
+    ".patch",
+    ".rc",
+    ".sh",
+    ".txt",
+    ".xml",
+}
+TEXT_CLOSURE_FILENAMES = {
+    "BUILD.gn",
+    "Kconfig",
+    "Makefile",
+}
 
 
 def now() -> str:
@@ -116,6 +146,63 @@ def workspace_transform_action(rel_path: str, role: str, phase: str, reason: str
     }
 
 
+def generated_fake_interface_action(
+    rel_path: str,
+    role: str,
+    phase: str,
+    reason: str,
+    content: str,
+    missing_dependency: str,
+    provenance_path: str,
+    follow_up: str = "replace with provenance-checked vendor/third-party dependency before runtime validation",
+) -> dict[str, Any]:
+    return {
+        "path": normalize_rel(rel_path),
+        "source_path": "generated",
+        "content_source": "generated_fake_interface",
+        "source_role": role,
+        "phase": phase,
+        "reason": reason,
+        "dependency_policy": "compile_only_fake_interface",
+        "generated_text": content,
+        "fake_interface": {
+            "missing_dependency": missing_dependency,
+            "provenance_path": provenance_path,
+            "scope": "compile_only",
+            "runtime_status": "not_functional",
+            "follow_up": follow_up,
+        },
+    }
+
+
+def workspace_fake_binary_action(
+    rel_path: str,
+    source_path: str,
+    role: str,
+    phase: str,
+    reason: str,
+    missing_dependency: str,
+    provenance_path: str,
+    follow_up: str,
+) -> dict[str, Any]:
+    return {
+        "path": normalize_rel(rel_path),
+        "source_path": normalize_rel(source_path),
+        "content_source": "workspace_fake_binary_from_existing",
+        "source_role": role,
+        "phase": phase,
+        "reason": reason,
+        "dependency_policy": "compile_only_fake_binary_placeholder",
+        "fake_interface": {
+            "missing_dependency": missing_dependency,
+            "provenance_path": provenance_path,
+            "scope": "compile_only_binary_placeholder",
+            "runtime_status": "wrong_architecture_not_functional",
+            "follow_up": follow_up,
+        },
+    }
+
+
 def build_productdefine(product: str, seed: dict[str, Any], vendor_config: dict[str, Any]) -> dict[str, Any]:
     allowed_keys = [
         "product_name",
@@ -161,6 +248,9 @@ def collect_workspace_component_features(workspace: Path, target: dict[str, str]
     }
     for dirpath, dirnames, filenames in os.walk(workspace):
         rel_dir = Path(dirpath).resolve().relative_to(workspace).as_posix() if Path(dirpath).resolve() != workspace else ""
+        if "/fake_components/" in f"/{rel_dir}/":
+            dirnames[:] = []
+            continue
         first = rel_dir.split("/", 1)[0] if rel_dir else ""
         if first in excluded_roots:
             dirnames[:] = []
@@ -199,17 +289,301 @@ def feature_name(feature: Any) -> str:
     return text
 
 
+def component_key(subsystem: str, component: str) -> str:
+    return f"{subsystem}:{component}"
+
+
+def safe_path_segment(value: str) -> str:
+    text = re.sub(r"[^A-Za-z0-9_.+-]+", "_", value.strip())
+    return text or "unknown"
+
+
+def collect_config_component_entries(config: dict[str, Any]) -> list[dict[str, str]]:
+    entries: list[dict[str, str]] = []
+    subsystems = config.get("subsystems")
+    if not isinstance(subsystems, list):
+        return entries
+    for subsystem in subsystems:
+        if not isinstance(subsystem, dict):
+            continue
+        subsystem_name = clean_str(subsystem.get("subsystem"), "")
+        components = subsystem.get("components")
+        if not subsystem_name or not isinstance(components, list):
+            continue
+        for component in components:
+            if not isinstance(component, dict):
+                continue
+            component_name = clean_str(component.get("component"), "")
+            if component_name:
+                entries.append({"subsystem": subsystem_name, "component": component_name})
+    return entries
+
+
+def collect_declared_target_components(product_config: dict[str, Any], target_root: Path) -> list[dict[str, str]]:
+    entries = collect_config_component_entries(product_config)
+    seen_inherit: set[str] = set()
+    for item in product_config.get("inherit") or []:
+        if not isinstance(item, str) or not item.strip().endswith(".json"):
+            continue
+        inherit_rel = normalize_rel(item)
+        if inherit_rel in seen_inherit:
+            continue
+        seen_inherit.add(inherit_rel)
+        inherit_path = target_root / inherit_rel
+        if not inherit_path.is_file():
+            continue
+        try:
+            inherit_config = read_json(inherit_path)
+        except Exception:
+            continue
+        entries.extend(collect_config_component_entries(inherit_config))
+
+    deduped: list[dict[str, str]] = []
+    seen_keys: set[str] = set()
+    for entry in entries:
+        key = component_key(entry["subsystem"], entry["component"])
+        if key not in seen_keys:
+            deduped.append(entry)
+            seen_keys.add(key)
+    return deduped
+
+
+def read_subsystem_paths(workspace: Path) -> dict[str, str]:
+    config_path = workspace / "build/subsystem_config.json"
+    if not config_path.is_file():
+        return {}
+    try:
+        data = read_json(config_path)
+    except Exception:
+        return {}
+    paths: dict[str, str] = {}
+    for key, value in data.items():
+        if not isinstance(value, dict):
+            continue
+        name = clean_str(value.get("name"), clean_str(key, ""))
+        path = clean_str(value.get("path"), "")
+        if name and path:
+            paths[name] = normalize_rel(path)
+    return paths
+
+
+def generated_fake_component_bundle_action(
+    vendor: str,
+    product: str,
+    subsystem: str,
+    component: str,
+    subsystem_base_path: str,
+) -> dict[str, Any]:
+    fake_rel = (
+        f"{normalize_rel(subsystem_base_path)}/fake_components/"
+        f"{safe_path_segment(vendor)}_{safe_path_segment(product)}/{safe_path_segment(component)}/bundle.json"
+    )
+    bundle = {
+        "name": f"@ohos/{component}_fake_for_{product}",
+        "description": (
+            "Compile-only fake component registry generated by the OpenHarmony "
+            "porting assistant. It preserves product selection while the real "
+            "source or third-party dependency is missing."
+        ),
+        "version": "0.0.0-porting-fake",
+        "license": "Apache License 2.0",
+        "publishAs": "code-segment",
+        "segment": {"destPath": fake_rel.rsplit("/", 1)[0]},
+        "dirs": {},
+        "scripts": {},
+        "component": {
+            "name": component,
+            "subsystem": subsystem,
+            "syscap": [],
+            "features": [],
+            "adapted_system_type": ["standard"],
+            "rom": "0KB",
+            "ram": "0KB",
+            "deps": {"components": [], "third_party": []},
+            "build": {"sub_component": [], "inner_kits": [], "test": []},
+        },
+    }
+    return generated_fake_interface_action(
+        fake_rel,
+        "fake_component_registry",
+        "L2_missing_source_component_stub",
+        (
+            f"Create a compile-only fake bundle registry for missing component "
+            f"{subsystem}:{component} so product configuration remains unchanged."
+        ),
+        json.dumps(bundle, ensure_ascii=False, indent=2) + "\n",
+        f"OpenHarmony component registry/source for {subsystem}:{component}",
+        f"target product configuration declares {subsystem}:{component}",
+        f"replace fake registry with the real {subsystem}:{component} source component or remove only after a product-scope decision",
+    )
+
+
+def is_text_closure_file(path: Path) -> bool:
+    return (
+        path.name in TEXT_CLOSURE_FILENAMES
+        or path.suffix.lower() in TEXT_CLOSURE_SUFFIXES
+        or path.name.startswith("fstab.")
+        or path.name.endswith("defconfig")
+        or path.name.endswith(".config")
+    )
+
+
+def collect_ohos_build_module_dirs(ohos_build_path: Path, label_prefix: str) -> list[str]:
+    if not ohos_build_path.is_file():
+        return []
+    try:
+        data = read_json(ohos_build_path)
+    except Exception:
+        return []
+    parts = data.get("parts")
+    if not isinstance(parts, dict):
+        return []
+    dirs: list[str] = []
+    prefix = f"//{normalize_rel(label_prefix)}"
+    for part in parts.values():
+        if not isinstance(part, dict):
+            continue
+        module_list = part.get("module_list")
+        if not isinstance(module_list, list):
+            continue
+        for module in module_list:
+            if not isinstance(module, str) or not module.startswith(prefix):
+                continue
+            module_path = module.split(":", 1)[0]
+            if module_path.startswith("//"):
+                module_path = module_path[2:]
+            try:
+                rel_path = normalize_rel(module_path)
+            except ValueError:
+                continue
+            if rel_path and rel_path not in dirs:
+                dirs.append(rel_path)
+    return dirs
+
+
+def collect_local_gn_dependency_dirs(build_gn_path: Path, owner_rel: str) -> list[str]:
+    return collect_gn_dependency_dirs(build_gn_path, owner_rel, [])
+
+
+def collect_gn_dependency_dirs(
+    build_gn_path: Path,
+    owner_rel: str,
+    absolute_prefixes: list[str],
+) -> list[str]:
+    if not build_gn_path.is_file():
+        return []
+    text = build_gn_path.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    dirs: list[str] = []
+    normalized_prefixes = [normalize_rel(prefix) for prefix in absolute_prefixes]
+    for label in re.findall(r'"([^"]+:[^"]+)"', text):
+        label_path = label.split(":", 1)[0].strip()
+        if label_path.startswith("//"):
+            try:
+                module_dir = normalize_rel(label_path[2:])
+            except ValueError:
+                continue
+            if normalized_prefixes and not any(
+                module_dir == prefix or module_dir.startswith(f"{prefix}/")
+                for prefix in normalized_prefixes
+            ):
+                continue
+        else:
+            if not label_path:
+                module_dir = normalize_rel(owner_rel)
+            else:
+                module_dir = f"{normalize_rel(owner_rel)}/{normalize_rel(label_path)}"
+        if module_dir not in dirs:
+            dirs.append(module_dir)
+    return dirs
+
+
+def collect_target_module_closure_actions(
+    target_root: Path,
+    module_dirs: list[str],
+    text_role: str,
+    fake_role: str,
+    phase: str,
+    reason: str,
+) -> list[dict[str, Any]]:
+    actions: list[dict[str, Any]] = []
+    for module_dir in module_dirs:
+        root = target_root / module_dir
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*")):
+            if not path.is_file():
+                continue
+            rel_path = path.relative_to(target_root).as_posix()
+            if is_text_closure_file(path):
+                actions.append(copy_action(rel_path, text_role, phase, reason))
+                continue
+            actions.append(
+                generated_fake_interface_action(
+                    rel_path,
+                    fake_role,
+                    phase,
+                    (
+                        "Create a compile-only placeholder for a non-text vendor product payload "
+                        "referenced by the target module closure."
+                    ),
+                    "\n".join(
+                        [
+                            "FAKE_OPENHARMONY_PORTING_INTERFACE=1",
+                            f"dependency={path.name}",
+                            "scope=compile_only",
+                            "runtime_status=not_functional",
+                            f"reference={path}",
+                            f"reference_sha256={sha256_file(path)}",
+                            "note=replace_with_provenance_checked_vendor_payload_before_runtime_validation",
+                        ]
+                    )
+                    + "\n",
+                    f"non-text target payload {rel_path}",
+                    str(path),
+                    "replace with provenance-checked vendor payload before runtime validation",
+                )
+            )
+    return actions
+
+
+def apply_dependent_feature_deferrals(
+    subsystem_name: str,
+    component_name: str,
+    features: list[Any],
+    component_deferrals: dict[str, dict[str, Any]],
+) -> tuple[list[Any], list[str]]:
+    notes: list[str] = []
+    if component_key(subsystem_name, component_name) != "arkui:ace_engine":
+        return features, notes
+    if "web:webview" not in component_deferrals:
+        return features, notes
+
+    updated_features: list[Any] = []
+    for feature in features:
+        name = feature_name(feature)
+        if name == "ace_engine_feature_enable_web":
+            updated_features.append("ace_engine_feature_enable_web = false")
+            notes.append(
+                "arkui:ace_engine:ace_engine_feature_enable_web=false_due_to_deferred:web:webview"
+            )
+        else:
+            updated_features.append(feature)
+    return updated_features, notes
+
+
 def filter_unavailable_product_components(
     config: dict[str, Any],
     component_features: dict[str, set[str] | None] | None,
+    component_deferrals: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     filtered = copy.deepcopy(config)
     removed: list[str] = []
-    if component_features is None:
+    if component_features is None and not component_deferrals:
         return filtered, removed
     subsystems = filtered.get("subsystems")
     if not isinstance(subsystems, list):
         return filtered, removed
+    deferrals = component_deferrals or {}
     for subsystem in subsystems:
         if not isinstance(subsystem, dict):
             continue
@@ -223,6 +597,23 @@ def filter_unavailable_product_components(
                 kept.append(component)
                 continue
             component_name = clean_str(component.get("component"), "")
+            key = component_key(subsystem_name, component_name)
+            if key in deferrals:
+                reason = clean_str(deferrals[key].get("reason"), "external dependency")
+                removed.append(f"{key}:deferred_external_prebuilt:{reason}")
+                continue
+            if component_features is None:
+                features = component.get("features")
+                if isinstance(features, list):
+                    component["features"], feature_notes = apply_dependent_feature_deferrals(
+                        subsystem_name,
+                        component_name,
+                        features,
+                        deferrals,
+                    )
+                    removed.extend(feature_notes)
+                kept.append(component)
+                continue
             if (
                 not component_name
                 or component_name in component_features
@@ -231,6 +622,13 @@ def filter_unavailable_product_components(
                 supported_features = component_features.get(component_name)
                 features = component.get("features")
                 if supported_features is not None and isinstance(features, list):
+                    features, feature_notes = apply_dependent_feature_deferrals(
+                        subsystem_name,
+                        component_name,
+                        features,
+                        deferrals,
+                    )
+                    removed.extend(feature_notes)
                     kept_features = []
                     for feature in features:
                         name = feature_name(feature)
@@ -244,6 +642,66 @@ def filter_unavailable_product_components(
                 removed.append(f"{subsystem_name}:{component_name}")
         subsystem["components"] = kept
     return filtered, removed
+
+
+def is_git_lfs_pointer(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    sample = path.read_bytes()[:256]
+    return sample.startswith(b"version https://git-lfs.github.com/spec/v1\n")
+
+
+def detect_external_prebuilt_component_deferrals(
+    workspace: Path,
+    target_root: Path,
+    target: dict[str, str],
+    enabled: bool,
+) -> dict[str, dict[str, Any]]:
+    if not enabled:
+        return {}
+    deferrals: dict[str, dict[str, Any]] = {}
+    if clean_str(target.get("architecture")) != "riscv64":
+        return deferrals
+
+    webview_build = target_root / "base/web/webview/ohos_nweb/BUILD.gn"
+    webview_prebuilt_rel = "base/web/webview/ohos_nweb/prebuilts/riscv64/ArkWebCore.hap"
+    target_prebuilt = target_root / webview_prebuilt_rel
+    workspace_prebuilt = workspace / webview_prebuilt_rel
+    target_has_riscv64_branch = False
+    if webview_build.is_file():
+        webview_text = webview_build.read_text(encoding=TEXT_ENCODING, errors="ignore")
+        target_has_riscv64_branch = (
+            'target_cpu == "riscv64"' in webview_text
+            and webview_prebuilt_rel.split("base/web/webview/ohos_nweb/", 1)[-1] in webview_text
+        )
+    if target_has_riscv64_branch and target_prebuilt.is_file() and (
+        is_git_lfs_pointer(target_prebuilt) or not workspace_prebuilt.is_file()
+    ):
+        deferrals["web:webview"] = {
+            "component": "webview",
+            "subsystem": "web",
+            "reason": "riscv64 WebView requires ArkWebCore.hap external prebuilt provenance",
+            "target_prebuilt_path": str(target_prebuilt),
+            "workspace_prebuilt_path": str(workspace_prebuilt),
+            "target_prebuilt_sha256": sha256_file(target_prebuilt),
+            "target_prebuilt_is_git_lfs_pointer": is_git_lfs_pointer(target_prebuilt),
+            "workspace_prebuilt_exists": workspace_prebuilt.is_file(),
+            "policy": "defer_component_for_compile_triage_do_not_import_prebuilt",
+        }
+    return deferrals
+
+
+def target_has_riscv64_webview_stub_evidence(target_root: Path) -> bool:
+    webview_build = target_root / "base/web/webview/ohos_nweb/BUILD.gn"
+    webview_prebuilt = target_root / "base/web/webview/ohos_nweb/prebuilts/riscv64/ArkWebCore.hap"
+    if not webview_build.is_file() or not webview_prebuilt.is_file():
+        return False
+    text = webview_build.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        'target_cpu == "riscv64"' in text
+        and "prebuilts/riscv64/ArkWebCore.hap" in text
+        and is_git_lfs_pointer(webview_prebuilt)
+    )
 
 
 def target_has_riscv64_ndk_evidence(target_root: Path) -> bool:
@@ -265,7 +723,114 @@ def target_has_riscv64_curl_evidence(target_root: Path) -> bool:
     return '"${current_cpu}" == "x86_64" || "${current_cpu}" == "riscv64"' in text
 
 
-def planned_actions(seed: dict[str, Any], target_root: Path) -> tuple[list[dict[str, Any]], list[str]]:
+def target_has_riscv64_rust_prebuilt_evidence(target_root: Path) -> bool:
+    target_rust = target_root / "build/rust/BUILD.gn"
+    if not target_rust.is_file():
+        return False
+    text = target_rust.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        'current_cpu == "riscv64"' in text
+        and "prebuilts/rustc-riscv" in text
+    )
+
+
+def target_has_riscv64_libcpp_evidence(target_root: Path) -> bool:
+    target_libcpp = target_root / "build/common/libcpp/BUILD.gn"
+    target_prebuilt = (
+        target_root
+        / "prebuilts/clang/ohos/linux-x86_64/libcxx-ndk/lib/riscv64-linux-ohos/libc++_shared.so"
+    )
+    if not target_libcpp.is_file() or not target_prebuilt.is_file():
+        return False
+    text = target_libcpp.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        'target_cpu == "riscv64"' in text
+        and "riscv64-linux-ohos/libc++_shared.so" in text
+    )
+
+
+def file_has_riscv64_rofs_evidence(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    text = path.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "lume_rofs" in text
+        and 'target_cpu == "riscv64"' in text
+        and "_rv64.o" in text
+        and "assets/${output_obj}" in text
+    )
+
+
+def workspace_needs_riscv64_rofs_mapping(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    text = path.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "lume_rofs" in text
+        and "assets/${output_obj}" in text
+        and "_x64.o" in text
+        and not ('target_cpu == "riscv64"' in text and "_rv64.o" in text)
+    )
+
+
+def collect_graphic_3d_riscv64_rofs_paths(target_root: Path, workspace: Path) -> list[str]:
+    root_rel = "foundation/graphic/graphic_3d"
+    target_graphic_root = target_root / root_rel
+    if not target_graphic_root.is_dir():
+        return []
+    paths: list[str] = []
+    for target_build in sorted(target_graphic_root.rglob("BUILD.gn")):
+        if not file_has_riscv64_rofs_evidence(target_build):
+            continue
+        rel_path = target_build.relative_to(target_root).as_posix()
+        if workspace_needs_riscv64_rofs_mapping(workspace / rel_path):
+            paths.append(rel_path)
+    return paths
+
+
+def target_has_riscv64_rofs_evidence(target_root: Path, rel_path: str) -> bool:
+    target_build = target_root / rel_path
+    return file_has_riscv64_rofs_evidence(target_build)
+
+
+def target_bundle_has_feature(target_root: Path, rel_path: str, feature: str) -> bool:
+    target_bundle = target_root / rel_path
+    if not target_bundle.is_file():
+        return False
+    text = target_bundle.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return feature in text
+
+
+def component_feature_registry_action(
+    rel_path: str,
+    feature: str,
+    target_root: Path,
+    reason: str,
+) -> dict[str, Any]:
+    action = workspace_transform_action(
+        rel_path,
+        "component_feature_registry_compat",
+        "L2_source_feature_registry_stub",
+        reason,
+    )
+    action["add_component_features"] = [feature]
+    action["dependency_policy"] = "compile_only_fake_interface"
+    action["fake_interface"] = {
+        "missing_dependency": f"OpenHarmony component feature declaration {feature}",
+        "provenance_path": str(target_root / rel_path),
+        "scope": "compile_only_feature_registry",
+        "runtime_status": "not_validated",
+        "follow_up": "confirm the target implementation path or replace this feature-registry shim with the real source delta",
+    }
+    return action
+
+
+def planned_actions(
+    seed: dict[str, Any],
+    target_root: Path,
+    workspace: Path,
+    fake_missing_source_components: bool,
+) -> tuple[list[dict[str, Any]], list[str]]:
     product = clean_str(seed.get("product"), "unknown")
     vendor = clean_str(seed.get("vendor"), "unknown")
     board = clean_str(seed.get("board"), product)
@@ -319,6 +884,117 @@ def planned_actions(seed: dict[str, Any], target_root: Path) -> tuple[list[dict[
         copy_action(f"device/soc/{soc_vendor}/{soc}/soc.gni", "soc_config_gni", "L1_base_binding", "Import reviewed target SoC config GNI."),
     ]
 
+    board_root_rel = f"device/board/{vendor}/{board}"
+    board_module_dirs = collect_local_gn_dependency_dirs(
+        target_root / board_root_rel / "BUILD.gn",
+        board_root_rel,
+    )
+    actions.extend(
+        collect_target_module_closure_actions(
+            target_root,
+            board_module_dirs,
+            "board_module_text_config_closure",
+            "board_module_fake_payload",
+            "L2_board_module_text_closure",
+            "Import reviewed text/config closure for local modules directly listed by the target board root BUILD.gn.",
+        )
+    )
+    soc_root_rel = f"device/soc/{soc_vendor}/{soc}"
+    soc_module_dirs = collect_gn_dependency_dirs(
+        target_root / board_root_rel / "BUILD.gn",
+        board_root_rel,
+        [soc_root_rel],
+    )
+    soc_hardware_rel = f"{soc_root_rel}/hardware"
+    if (target_root / soc_hardware_rel / "BUILD.gn").is_file() and soc_hardware_rel not in soc_module_dirs:
+        soc_module_dirs.append(soc_hardware_rel)
+    actions.extend(
+        collect_target_module_closure_actions(
+            target_root,
+            soc_module_dirs,
+            "soc_module_text_source_closure",
+            "soc_module_fake_payload",
+            "L2_soc_module_text_closure",
+            "Import reviewed text/source closure for SoC modules directly referenced by the target board root BUILD.gn.",
+        )
+    )
+
+    for rel_path in [
+        f"vendor/{vendor}/{product}/default_app_config/BUILD.gn",
+        f"vendor/{vendor}/{product}/default_app_config/default_app.json",
+    ]:
+        if (target_root / rel_path).is_file():
+            actions.append(
+                copy_action(
+                    rel_path,
+                    "vendor_default_app_config",
+                    "L2_runtime_config_text_closure",
+                    "Import reviewed text-only default app config required by the target vendor product build.",
+                )
+            )
+
+    vendor_ohos_build_path = target_root / f"vendor/{vendor}/{product}/ohos.build"
+    vendor_module_dirs = collect_ohos_build_module_dirs(
+        vendor_ohos_build_path,
+        f"vendor/{vendor}/{product}",
+    )
+    actions.extend(
+        collect_target_module_closure_actions(
+            target_root,
+            vendor_module_dirs,
+            "vendor_product_text_config_closure",
+            "vendor_product_fake_payload",
+            "L2_vendor_product_text_closure",
+            "Import reviewed text/config closure for modules directly listed by the target vendor product ohos.build.",
+        )
+    )
+
+    bluetooth_root_rel = f"vendor/{vendor}/{product}/bluetooth"
+    bluetooth_root = target_root / bluetooth_root_rel
+    if (bluetooth_root / "BUILD.gn").is_file():
+        for path in sorted(bluetooth_root.rglob("*")):
+            if not path.is_file():
+                continue
+            rel_path = path.relative_to(target_root).as_posix()
+            if path.suffix in {".gn", ".c", ".h"}:
+                actions.append(
+                    copy_action(
+                        rel_path,
+                        "vendor_bluetooth_text_source",
+                        "L2_board_vendor_text_closure",
+                        "Import reviewed text-only vendor Bluetooth source/build closure referenced by board ohos.build.",
+                    )
+                )
+        firmware_rel = f"{bluetooth_root_rel}/BCM4362A2.hcd"
+        firmware_path = target_root / firmware_rel
+        if firmware_path.is_file():
+            actions.append(
+                generated_fake_interface_action(
+                    firmware_rel,
+                    "vendor_bluetooth_fake_firmware",
+                    "L2_external_dependency_stub",
+                    (
+                        "Create a compile-only placeholder for the missing BCM4362A2 Bluetooth firmware so "
+                        "board Bluetooth module selection remains visible while firmware provenance is reported."
+                    ),
+                    "\n".join(
+                        [
+                            "FAKE_OPENHARMONY_PORTING_INTERFACE=1",
+                            "dependency=BCM4362A2.hcd",
+                            "scope=compile_only",
+                            "runtime_status=not_functional",
+                            f"reference={firmware_path}",
+                            f"reference_sha256={sha256_file(firmware_path)}",
+                            "note=replace_with_provenance_checked_bluetooth_firmware_before_runtime_validation",
+                        ]
+                    )
+                    + "\n",
+                    "Broadcom BCM4362A2 Bluetooth firmware",
+                    str(firmware_path),
+                    "replace with provenance-checked Bluetooth firmware before runtime validation",
+                )
+            )
+
     inherit_paths: list[str] = []
     for item in product_config.get("inherit") or []:
         if isinstance(item, str) and item.strip().endswith(".json"):
@@ -359,12 +1035,214 @@ def planned_actions(seed: dict[str, Any], target_root: Path) -> tuple[list[dict[
             )
         )
 
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_riscv64_rust_prebuilt_evidence(target_root):
+        actions.append(
+            workspace_transform_action(
+                "build/rust/BUILD.gn",
+                "rust_riscv64_prebuilt_build_rule",
+                "L2_external_dependency_stub",
+                (
+                    "Add target-evidenced riscv64 Rust std/test dylib source rules; "
+                    "the actual riscv64 Rust dylibs are represented by tracked fake binary placeholders."
+                ),
+            )
+        )
+        actions.append(
+            workspace_transform_action(
+                "build/rust/tests/BUILD.gn",
+                "rust_tests_riscv64_prebuilt_build_rule",
+                "L2_external_dependency_stub",
+                (
+                    "Add target-evidenced riscv64 Rust test prebuilt source rules and target test gating; "
+                    "the actual riscv64 Rust dylib is represented by the tracked fake binary placeholder."
+                ),
+            )
+        )
+        rust_fake_pairs = [
+            (
+                "libstd.dylib.so",
+                "prebuilts/rustc/linux-x86_64/current/lib/rustlib/x86_64-unknown-linux-ohos/lib/libstd.dylib.so",
+            ),
+            (
+                "libtest.dylib.so",
+                "prebuilts/rustc/linux-x86_64/current/lib/rustlib/x86_64-unknown-linux-ohos/lib/libtest.dylib.so",
+            ),
+        ]
+        for filename, source_rel in rust_fake_pairs:
+            target_rel = (
+                "prebuilts/rustc-riscv/linux-x86_64/current/lib/rustlib/"
+                f"riscv64-unknown-linux-ohos/lib/{filename}"
+            )
+            target_prebuilt = target_root / target_rel
+            if (workspace / source_rel).is_file() and target_prebuilt.is_file():
+                actions.append(
+                    workspace_fake_binary_action(
+                        target_rel,
+                        source_rel,
+                        "rust_riscv64_fake_dylib",
+                        "L2_external_dependency_stub",
+                        (
+                            f"Create a compile-only wrong-architecture placeholder for missing riscv64 Rust {filename}; "
+                            "this keeps build graph progress while preserving dependency debt."
+                        ),
+                        f"riscv64 Rust prebuilt {filename}",
+                        str(target_prebuilt),
+                        "replace with provenance-checked prebuilts/rustc-riscv payload before runtime or packaging validation",
+                    )
+                )
+
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_riscv64_libcpp_evidence(target_root):
+        actions.append(
+            workspace_transform_action(
+                "build/common/libcpp/BUILD.gn",
+                "libcpp_riscv64_prebuilt_build_rule",
+                "L1_build_compatibility",
+                (
+                    "Add target-evidenced riscv64 libc++ shared-library prebuilt source rules so "
+                    "the build/common libcpp install target has a concrete source path."
+                ),
+            )
+        )
+        libcpp_rel = "prebuilts/clang/ohos/linux-x86_64/libcxx-ndk/lib/riscv64-linux-ohos/libc++_shared.so"
+        fallback_rel = "prebuilts/clang/ohos/linux-x86_64/libcxx-ndk/lib/x86_64-linux-ohos/libc++_shared.so"
+        if not (workspace / libcpp_rel).is_file() and (workspace / fallback_rel).is_file():
+            actions.append(
+                workspace_fake_binary_action(
+                    libcpp_rel,
+                    fallback_rel,
+                    "libcpp_riscv64_fake_shared_library",
+                    "L2_external_dependency_stub",
+                    (
+                        "Create a compile-only wrong-architecture placeholder for missing riscv64 libc++_shared.so; "
+                        "this keeps the prebuilt copy rule concrete while preserving dependency debt."
+                    ),
+                    "riscv64 libc++_shared.so prebuilt",
+                    str(target_root / libcpp_rel),
+                    "replace with provenance-checked riscv64 clang libcxx-ndk prebuilt before packaging or runtime validation",
+                )
+            )
+
+    if clean_str(seed.get("architecture")) == "riscv64":
+        for rel_path in collect_graphic_3d_riscv64_rofs_paths(target_root, workspace):
+            if target_has_riscv64_rofs_evidence(target_root, rel_path):
+                actions.append(
+                    workspace_transform_action(
+                        rel_path,
+                        "graphic_3d_riscv64_rofs_build_rule",
+                        "L1_build_compatibility",
+                        (
+                            "Add target-evidenced riscv64 rofs object mapping so graphic_3d embedded asset "
+                            "rules produce a concrete rv64 object path instead of an empty assets directory."
+                        ),
+                    )
+                )
+
+    feature_registry_shims = [
+        (
+            "base/update/updater/bundle.json",
+            "updater_feature_updater_gen_executable",
+            "Add the updater feature declaration evidenced by the target reference so product feature selection remains unchanged.",
+        ),
+        (
+            "developtools/smartperf_host/bundle.json",
+            "smartperf_host_device",
+            "Add the SmartPerf device feature declaration evidenced by the target reference so product feature selection remains unchanged.",
+        ),
+    ]
+    for rel_path, feature, reason in feature_registry_shims:
+        if target_bundle_has_feature(target_root, rel_path, feature):
+            actions.append(component_feature_registry_action(rel_path, feature, target_root, reason))
+
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_riscv64_webview_stub_evidence(target_root):
+        prebuilt_rel = "base/web/webview/ohos_nweb/prebuilts/riscv64/ArkWebCore.hap"
+        target_prebuilt = target_root / prebuilt_rel
+        actions.append(
+            copy_action(
+                "base/web/webview/ohos_nweb/BUILD.gn",
+                "webview_riscv64_build_rule",
+                "L2_external_dependency_stub",
+                (
+                    "Import the text-only WebView build rule that declares the target riscv64 "
+                    "ArkWebCore HAP path; the actual external HAP remains a tracked fake interface."
+                ),
+            )
+        )
+        actions.append(
+            generated_fake_interface_action(
+                prebuilt_rel,
+                "webview_riscv64_fake_arkwebcore_hap",
+                "L2_external_dependency_stub",
+                (
+                    "Create a compile-only placeholder for the missing riscv64 ArkWebCore HAP so "
+                    "the product keeps webview enabled while dependency provenance is reported."
+                ),
+                "\n".join(
+                    [
+                        "FAKE_OPENHARMONY_PORTING_INTERFACE=1",
+                        "dependency=ArkWebCore.hap",
+                        "architecture=riscv64",
+                        "scope=compile_only",
+                        "runtime_status=not_functional",
+                        f"reference={target_prebuilt}",
+                        f"reference_sha256={sha256_file(target_prebuilt)}",
+                        "note=replace_with_provenance_checked_vendor_or_third_party_hap_before_runtime_validation",
+                    ]
+                )
+                + "\n",
+                "WebView riscv64 ArkWebCore.hap external prebuilt",
+                str(target_prebuilt),
+            )
+        )
+
+    if fake_missing_source_components:
+        target_identity = {
+            "product": product,
+            "board": board,
+            "vendor": vendor,
+        }
+        component_features = collect_workspace_component_features(workspace, target_identity)
+        subsystem_paths = read_subsystem_paths(workspace)
+        for entry in collect_declared_target_components(product_config, target_root):
+            subsystem = entry["subsystem"]
+            component = entry["component"]
+            if component == subsystem or component in component_features:
+                continue
+            subsystem_base_path = subsystem_paths.get(subsystem)
+            if not subsystem_base_path:
+                continue
+            actions.append(
+                generated_fake_component_bundle_action(
+                    vendor,
+                    product,
+                    subsystem,
+                    component,
+                    subsystem_base_path,
+                )
+            )
+
+    deduped_actions: list[dict[str, Any]] = []
+    seen_action_paths: set[str] = set()
+    for action in actions:
+        action_path = clean_str(action.get("path"), "")
+        if action_path in seen_action_paths:
+            continue
+        seen_action_paths.add(action_path)
+        deduped_actions.append(action)
+    actions = deduped_actions
+
     notes = [
-        "Binary, firmware, bootloader, prebuilt, and kernel-module payloads are intentionally excluded.",
+        "Real binary, firmware, bootloader, prebuilt, and kernel-module payloads are intentionally excluded.",
+        "External binary/prebuilt blockers may be represented by compile-only fake interfaces so product features stay visible until dependency analysis is generated.",
+        "Missing source component registries may be represented by compile-only fake bundle.json files, with zero sub-components, to keep product selection unchanged during dependency triage.",
         "Board root BUILD.gn is included because board ohos.build references it directly; feature subdirectories remain follow-up batches.",
         "Runtime/HDF config remains a follow-up batch unless build triage shows it is a direct base-binding blocker.",
         "RISC-V NDK build-file compatibility is applied only when target-source evidence contains the riscv64 NDK mapping.",
         "RISC-V third_party/curl build compatibility is applied only when target-source evidence contains the riscv64 cflags guard.",
+        "RISC-V build/common libcpp prebuilt source mapping is applied only when target-source evidence contains the riscv64 libc++ rule.",
+        "RISC-V graphic_3d embedded-asset rofs object mappings are applied only when target-source evidence contains matching rv64 object rules.",
+        "Vendor product module text/config closures are imported only from direct target ohos.build module labels; non-text payloads become compile-only fake interfaces.",
+        "Board module text/config closures are imported only from local labels in the target board root BUILD.gn; kernel modules, bootloader images, and firmware become compile-only fake interfaces.",
+        "SoC module text/source closures are imported only from target board BUILD.gn labels under the selected SoC root; firmware and proprietary GPU/WiFi/shared-library payloads become compile-only fake interfaces.",
     ]
     return actions, notes
 
@@ -429,27 +1307,6 @@ def normalize_ohos_build_subsystem(
             parts[expected_subsystem] = template
             notes.append(f"added {expected_subsystem} part alias for OpenHarmony 6.0 device-specific part")
             changed = True
-        deferred_prefixes = [f"//vendor/{vendor}/{product}/bluetooth"]
-        removed_labels: list[str] = []
-        for part_data in parts.values():
-            if not isinstance(part_data, dict):
-                continue
-            module_list = part_data.get("module_list")
-            if not isinstance(module_list, list):
-                continue
-            kept_modules = []
-            for label in module_list:
-                text = clean_str(label, "")
-                if any(text.startswith(prefix) for prefix in deferred_prefixes):
-                    removed_labels.append(text)
-                else:
-                    kept_modules.append(label)
-            if len(kept_modules) != len(module_list):
-                part_data["module_list"] = kept_modules
-                changed = True
-        if removed_labels:
-            notes.append("deferred binary/firmware-linked board modules: " + ", ".join(dict.fromkeys(removed_labels)))
-
     if changed:
         return dump_json_bytes(build_data), notes
     return data, []
@@ -521,6 +1378,116 @@ def apply_riscv64_curl_compat(data: bytes) -> tuple[bytes, list[str]]:
     return text.encode(TEXT_ENCODING), notes
 
 
+def apply_riscv64_graphic_3d_rofs_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if 'target_cpu == "riscv64"' in text and "_rv64.o" in text:
+        return data, ["graphic_3d riscv64 rofs object mapping already present"]
+
+    pattern = re.compile(
+        r'(  if \(target_cpu == "(?:x64|x86_64)"\) \{\n'
+        r'    output_obj = "\$\{([^}]+)\}_x64\.o"\n'
+        r'  \}\n)'
+    )
+
+    def add_riscv64_branch(match: re.Match[str]) -> str:
+        variable_name = match.group(2)
+        return (
+            match.group(1)
+            + "\n"
+            + '  if (target_cpu == "riscv64") {\n'
+            + f'    output_obj = "${{{variable_name}}}_rv64.o"\n'
+            + "  }\n"
+        )
+
+    text, count = pattern.subn(add_riscv64_branch, text)
+    if count:
+        return (
+            text.encode(TEXT_ENCODING),
+            [f"added riscv64 graphic_3d rofs object mapping in {count} location(s)"],
+        )
+    return data, ["graphic_3d riscv64 rofs insertion point not found"]
+
+
+def apply_riscv64_libcpp_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    notes: list[str] = []
+
+    prebuilt_branch = (
+        '  } else if (use_hwasan == false && target_cpu == "riscv64") {\n'
+        '    source = "${clang_stl_path}/riscv64-linux-ohos/libc++_shared.so"\n'
+    )
+    if prebuilt_branch not in text:
+        old = (
+            '  } else if (use_hwasan == false && target_cpu == "arm64") {\n'
+            '    source = "${clang_stl_path}/aarch64-linux-ohos/libc++_shared.so"\n'
+            '  } else if (target_cpu == "x86_64") {'
+        )
+        new = (
+            '  } else if (use_hwasan == false && target_cpu == "arm64") {\n'
+            '    source = "${clang_stl_path}/aarch64-linux-ohos/libc++_shared.so"\n'
+            f"{prebuilt_branch}"
+            '  } else if (target_cpu == "x86_64") {'
+        )
+        if old in text:
+            text = text.replace(old, new, 1)
+            notes.append("added riscv64 libc++_shared.so source branch")
+        else:
+            notes.append("riscv64 libc++_shared.so source insertion point not found")
+    else:
+        notes.append("riscv64 libc++_shared.so source branch already present")
+
+    copy_branch = (
+        '  } else if (target_cpu == "riscv64") {\n'
+        '    sources = [ "${clang_stl_path}/riscv64-linux-ohos/libc++_shared.so" ]\n'
+    )
+    if copy_branch not in text:
+        old = (
+            '  } else if (target_cpu == "arm64") {\n'
+            '    sources = [ "${clang_stl_path}/aarch64-linux-ohos/libc++_shared.so" ]\n'
+            '  } else if (target_cpu == "x86_64") {'
+        )
+        new = (
+            '  } else if (target_cpu == "arm64") {\n'
+            '    sources = [ "${clang_stl_path}/aarch64-linux-ohos/libc++_shared.so" ]\n'
+            f"{copy_branch}"
+            '  } else if (target_cpu == "x86_64") {'
+        )
+        if old in text:
+            text = text.replace(old, new, 1)
+            notes.append("added riscv64 libc++_shared.so unstripped-copy source branch")
+        else:
+            notes.append("riscv64 libc++_shared.so unstripped-copy insertion point not found")
+    else:
+        notes.append("riscv64 libc++_shared.so unstripped-copy source branch already present")
+
+    return text.encode(TEXT_ENCODING), notes
+
+
+def apply_component_feature_compat(data: bytes, features_to_add: list[str]) -> tuple[bytes, list[str]]:
+    notes: list[str] = []
+    try:
+        bundle = json.loads(data.decode(TEXT_ENCODING))
+    except Exception:
+        return data, ["component feature transform skipped: bundle.json is not valid JSON"]
+    if not isinstance(bundle, dict):
+        return data, ["component feature transform skipped: bundle root is not an object"]
+    component = bundle.get("component")
+    if not isinstance(component, dict):
+        return data, ["component feature transform skipped: missing component object"]
+    features = component.setdefault("features", [])
+    if not isinstance(features, list):
+        return data, ["component feature transform skipped: component.features is not a list"]
+    changed = False
+    for feature in features_to_add:
+        if feature not in features:
+            features.append(feature)
+            notes.append(f"added component feature declaration {feature}")
+            changed = True
+    if not changed:
+        notes.append("component feature declarations already present")
+    return (json.dumps(bundle, ensure_ascii=False, indent=4) + "\n").encode(TEXT_ENCODING), notes
+
+
 def materialize_action(
     action: dict[str, Any],
     workspace: Path,
@@ -528,10 +1495,27 @@ def materialize_action(
     target: dict[str, str],
     normalize_subsystems: bool,
     component_features: dict[str, set[str] | None] | None,
+    component_deferrals: dict[str, dict[str, Any]] | None,
 ) -> tuple[bytes | None, str, str, list[str]]:
     rel_path = clean_str(action.get("path"), "")
+    if action.get("content_source") == "generated_fake_interface":
+        content = clean_str(action.get("generated_text"), "")
+        return content.encode(TEXT_ENCODING), "generated_fake_interface", "available", [
+            "generated compile-only fake interface; runtime implementation is intentionally absent"
+        ]
+    if action.get("content_source") == "workspace_fake_binary_from_existing":
+        source_path = workspace / clean_str(action.get("source_path"), "")
+        if not source_path.is_file():
+            return None, str(source_path), "missing_workspace_source", []
+        return source_path.read_bytes(), str(source_path), "available", [
+            "copied existing workspace binary as compile-only wrong-architecture placeholder"
+        ]
     if action.get("content_source") == "generated_from_target_vendor_config":
-        config, removed = filter_unavailable_product_components(action["generated_json"], component_features)
+        config, removed = filter_unavailable_product_components(
+            action["generated_json"],
+            component_features,
+            component_deferrals,
+        )
         notes = []
         if removed:
             notes.append("filtered unavailable components/features from generated productdefine: " + ", ".join(removed))
@@ -546,6 +1530,25 @@ def materialize_action(
             data, transforms = apply_riscv64_ndk_compat(data)
         elif rel_path == "third_party/curl/BUILD.gn" and target.get("architecture") == "riscv64":
             data, transforms = apply_riscv64_curl_compat(data)
+        elif rel_path == "build/common/libcpp/BUILD.gn" and target.get("architecture") == "riscv64":
+            data, transforms = apply_riscv64_libcpp_compat(data)
+        elif (
+            action.get("source_role") == "graphic_3d_riscv64_rofs_build_rule"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_riscv64_graphic_3d_rofs_compat(data)
+        elif rel_path in {"build/rust/BUILD.gn", "build/rust/tests/BUILD.gn"} and target.get("architecture") == "riscv64":
+            source_path = target_root / rel_path
+            if source_path.is_file():
+                data = source_path.read_bytes()
+                transforms = [f"replaced {rel_path} with target-evidenced riscv64 Rust prebuilt source rules"]
+            else:
+                transforms = [f"target {rel_path} evidence missing; no transform applied"]
+        elif action.get("add_component_features"):
+            data, transforms = apply_component_feature_compat(
+                data,
+                [clean_str(feature, "") for feature in action.get("add_component_features") or [] if clean_str(feature, "")],
+            )
         return data, str(source_path), "available", transforms
     source_path = target_root / clean_str(action.get("source_path"), "")
     if not source_path.is_file():
@@ -559,7 +1562,7 @@ def materialize_action(
         except Exception:
             config = None
         if isinstance(config, dict):
-            config, removed = filter_unavailable_product_components(config, component_features)
+            config, removed = filter_unavailable_product_components(config, component_features, component_deferrals)
             if removed:
                 transforms.append("filtered unavailable components/features from vendor config: " + ", ".join(removed))
                 data = (json.dumps(config, ensure_ascii=False, indent=2) + "\n").encode(TEXT_ENCODING)
@@ -569,7 +1572,7 @@ def materialize_action(
         except Exception:
             config = None
         if isinstance(config, dict):
-            config, removed = filter_unavailable_product_components(config, component_features)
+            config, removed = filter_unavailable_product_components(config, component_features, component_deferrals)
             if removed:
                 transforms.append("filtered unavailable components/features from product inheritance: " + ", ".join(removed))
                 data = (json.dumps(config, ensure_ascii=False, indent=2) + "\n").encode(TEXT_ENCODING)
@@ -592,6 +1595,7 @@ def render_markdown(manifest: dict[str, Any]) -> str:
         f"- Applied actions: {summary['applied_actions']}",
         f"- Skipped same-content actions: {summary['skipped_same_content_actions']}",
         f"- Blocking issues: {summary['blocking_issue_count']}",
+        f"- Fake interfaces: {summary.get('fake_interface_count', 0)}",
         "",
         "## Actions",
         "",
@@ -621,6 +1625,7 @@ def render_markdown(manifest: dict[str, Any]) -> str:
                 f"- Return code: `{build['return_code']}`",
                 f"- Timed out: `{build['timed_out']}`",
                 f"- Log: `{build['log_path']}`",
+                f"- Host env fix: `{(build.get('host_env_fix') or {}).get('reason', 'none')}`",
                 "",
             ]
         )
@@ -639,6 +1644,33 @@ def render_markdown(manifest: dict[str, Any]) -> str:
         lines.extend(["## Blocking Issues", ""])
         for issue in manifest["blocking_issues"]:
             lines.append(f"- `{issue['path']}`: {issue['reason']}")
+        lines.append("")
+    fake_interfaces = manifest.get("fake_interfaces") or []
+    if fake_interfaces:
+        lines.extend(["## Fake Interfaces", ""])
+        for item in fake_interfaces:
+            lines.extend(
+                [
+                    f"- `{item.get('path', 'unknown')}`: {item.get('missing_dependency', 'unknown dependency')}",
+                    f"  - Scope: `{item.get('scope', 'unknown')}`",
+                    f"  - Runtime status: `{item.get('runtime_status', 'unknown')}`",
+                    f"  - Provenance path: `{item.get('provenance_path', 'unknown')}`",
+                    f"  - Follow-up: {item.get('follow_up', 'replace with real dependency')}",
+                ]
+            )
+        lines.append("")
+    deferrals = manifest.get("external_prebuilt_deferrals") or []
+    if deferrals:
+        lines.extend(["## External Prebuilt Deferrals", ""])
+        for item in deferrals:
+            lines.extend(
+                [
+                    f"- `{item.get('subsystem', 'unknown')}:{item.get('component', 'unknown')}`: {item.get('reason', 'external dependency')}",
+                    f"  - Target prebuilt: `{item.get('target_prebuilt_path', 'unknown')}`",
+                    f"  - Workspace prebuilt exists: `{item.get('workspace_prebuilt_exists', 'unknown')}`",
+                    f"  - Target is Git LFS pointer: `{item.get('target_prebuilt_is_git_lfs_pointer', 'unknown')}`",
+                ]
+            )
         lines.append("")
     lines.extend(["## Notes", ""])
     for note in manifest.get("notes", []):
@@ -709,7 +1741,14 @@ def parse_build_diagnostics(
         workspace / "out" / "sdk" / "error.log",
     ]
     texts: list[tuple[Path, str]] = []
+    started_at_epoch = float(build_result.get("started_at_epoch") or 0)
     for path in candidate_logs:
+        if path != log_path and started_at_epoch:
+            try:
+                if path.stat().st_mtime < started_at_epoch - 2:
+                    continue
+            except FileNotFoundError:
+                continue
         text = read_text_sample(path)
         if text:
             texts.append((path, text))
@@ -794,7 +1833,7 @@ def parse_build_diagnostics(
                     "riscv64_webview_prebuilt_dependency",
                     "external_prebuilt_dependency",
                     "WebView lacks a riscv64 initialization branch in the current workspace; the reference branch points at a riscv64 ArkWebCore HAP prebuilt.",
-                    "Do not import the HAP through the base source patch. Provide/provenance-check the prebuilt separately, or explicitly defer the webview component for compile-only triage.",
+                    "Keep webview visible in product config; import the evidenced text build rule and use a marked compile-only fake ArkWebCore HAP until the real vendor/third-party dependency is provenance-checked.",
                     [str(log_path), str(target_prebuilt)],
                     matching_lines(all_text, ["base/web/webview/ohos_nweb/BUILD.gn", "Undefined identifier", "defines +="], 8)
                     + [prebuilt_note],
@@ -806,7 +1845,7 @@ def parse_build_diagnostics(
                     "gn_undefined_identifier",
                     "source_build_compatibility",
                     f"GN reports undefined identifier {identifier} in {gn_path}.",
-                    "Compare the current workspace file with the reference target source and decide whether this is a safe text compatibility patch or a dependency-backed feature to defer.",
+                    "Compare the current workspace file with the reference target source and decide whether this is a safe text compatibility patch or requires a tracked fake interface for a missing dependency.",
                     [str(log_path)],
                     matching_lines(all_text, [gn_path, "Undefined identifier", f"{identifier} +="], 8),
                 )
@@ -825,6 +1864,126 @@ def parse_build_diagnostics(
             )
         )
 
+    bad_subsystem_bundle_paths = sorted(set(re.findall(r"subsystem name config incorrect in '([^']+bundle\.json)'", plain_text)))
+    for bundle_path in bad_subsystem_bundle_paths[:8]:
+        diagnostics.append(
+            build_diagnostic(
+                "bundle_subsystem_path_mismatch",
+                "source_build_compatibility",
+                f"Bundle metadata path does not match subsystem_config: {bundle_path}.",
+                "Place generated or imported bundle.json files under the subsystem root from build/subsystem_config.json, such as third_party for thirdparty or drivers for hdf.",
+                [str(log_path)],
+                matching_lines(all_text, ["subsystem name config incorrect", bundle_path], 8),
+            )
+        )
+
+    unsupported_features = sorted(
+        set(
+            re.findall(
+                r"The product use a feature that is not supported by this part, part_name='([^']+)', feature='([^']+)'",
+                plain_text,
+            )
+        )
+    )
+    unsupported_features.extend(
+        sorted(
+            set(
+                (part_name, feature)
+                for vals, part_name in re.findall(
+                    r"The product use a feature vals='\[([^\]]+)\]', but that is not defined in this part bundle\.json file, part_name='([^']+)'",
+                    plain_text,
+                )
+                for feature in re.findall(r"'([^']+)'", vals)
+            )
+        )
+    )
+    unsupported_features = sorted(set(unsupported_features))
+    for part_name, feature in unsupported_features[:8]:
+        diagnostics.append(
+            build_diagnostic(
+                "unsupported_product_feature",
+                "source_feature_registry_skew",
+                f"Product selects feature {feature} for part {part_name}, but the current component registry does not declare it.",
+                "Preserve the product feature; import the target component feature declaration or add a tracked compile-only feature-registry shim before validating runtime behavior.",
+                [str(log_path)],
+                matching_lines(all_text, ["not supported by this part", part_name, feature], 8),
+            )
+        )
+
+    if "unable to find library -lstdc++" in plain_text:
+        diagnostics.append(
+            build_diagnostic(
+                "host_static_libstdcxx_missing",
+                "host_or_prebuilt_toolchain",
+                "The host clang_x64 link stage cannot find libstdc++ for -static-libstdc++.",
+                "Provide a host GCC library path containing libstdc++.a/libstdc++.so, or let the executor set a validated LIBRARY_PATH for the build subprocess.",
+                [str(log_path)],
+                matching_lines(all_text, ["unable to find library -lstdc++", "merge_abc", "-static-libstdc++"], 8),
+            )
+        )
+
+    undefined_prebuilt_sources = sorted(
+        set(re.findall(r"source must be defined for ([A-Za-z0-9_.+-]+)", plain_text))
+    )
+    for target_name in undefined_prebuilt_sources[:8]:
+        diagnostics.append(
+            build_diagnostic(
+                "prebuilt_source_undefined",
+                "external_prebuilt_dependency",
+                f"GN prebuilt target {target_name} has no source for the current architecture.",
+                "Add an evidenced architecture branch for the prebuilt rule; if the real binary is unavailable, use a tracked compile-only placeholder and report the missing dependency.",
+                [str(log_path)],
+                matching_lines(all_text, ["source must be defined", target_name], 8),
+            )
+        )
+
+    file_path_slash_errors = sorted(
+        set(re.findall(r"ERROR at //([^:\n]+):\d+:\d+: File path ends in a slash\.", plain_text))
+    )
+    for gn_path in file_path_slash_errors[:8]:
+        if (
+            clean_str(target.get("architecture")) == "riscv64"
+            and gn_path == "build/templates/cxx/prebuilt.gni"
+            and "build/common/libcpp/BUILD.gn" in plain_text
+            and "libc++_shared.so" in plain_text
+        ):
+            diagnostics.append(
+                build_diagnostic(
+                    "libcpp_riscv64_prebuilt_source_missing",
+                    "source_build_compatibility",
+                    "build/common/libcpp leaves the libc++_shared.so prebuilt source empty for riscv64, so the generic prebuilt template sees an output directory as a file.",
+                    "Apply the target-evidenced build/common/libcpp riscv64 prebuilt source rule; if the riscv64 libc++ payload is absent, use a tracked compile-only placeholder and report dependency debt.",
+                    [str(log_path), str(target_root / "build/common/libcpp/BUILD.gn")],
+                    matching_lines(all_text, ["File path ends in a slash", "build/common/libcpp/BUILD.gn", "libc++_shared.so", "libcpp_install"], 8),
+                )
+            )
+        elif (
+            clean_str(target.get("architecture")) == "riscv64"
+            and gn_path.startswith("foundation/graphic/graphic_3d/")
+            and "assets/${output_obj}" in plain_text
+        ):
+            diagnostics.append(
+                build_diagnostic(
+                    "graphic_3d_riscv64_rofs_output_obj_missing",
+                    "source_build_compatibility",
+                    f"graphic_3d rofs rule in {gn_path} leaves output_obj empty for riscv64, so GN sees the generated assets directory as a file path.",
+                    "Apply the target-evidenced riscv64 graphic_3d rofs object mapping for matching BUILD.gn files and rerun the product build.",
+                    [str(log_path), str(target_root / gn_path)],
+                    matching_lines(all_text, ["File path ends in a slash", "assets/${output_obj}", "rofs", gn_path], 8),
+                )
+            )
+        else:
+            diagnostics.append(
+                build_diagnostic(
+                    "gn_file_path_ends_in_slash",
+                    "source_build_compatibility",
+                    f"GN reports a file path ending in a slash in {gn_path}.",
+                    "Inspect the variable used in the path; it is likely empty for the current target architecture.",
+                    [str(log_path)],
+                    matching_lines(all_text, ["File path ends in a slash", gn_path], 8),
+                )
+            )
+
     component_failures = sorted(set(re.findall(r"find component ([^ ]+) failed", plain_text)))
     for component in component_failures[:8]:
         diagnostics.append(
@@ -832,11 +1991,36 @@ def parse_build_diagnostics(
                 "unavailable_product_component",
                 "product_config_version_skew",
                 f"Product configuration references unavailable component {component}.",
-                "Filter or replace the component using current workspace bundle metadata before rerunning preloader/build.",
+                "Keep the product declaration; add or import the real component registry/source, or generate a tracked zero-subcomponent fake bundle registry for compile triage.",
                 [str(log_path)],
                 matching_lines(all_text, [f"find component {component} failed"], 4),
             )
         )
+
+    ohos_component_missing = sorted(set(re.findall(r"OHOS component : \(([^)]+)\) not found", plain_text)))
+    for component in ohos_component_missing[:8]:
+        if component == "webview":
+            diagnostics.append(
+                build_diagnostic(
+                    "webview_component_visibility_lost",
+                    "product_config_dependency_skew",
+                    "A module references webview, but the webview component is not present in the loaded product parts.",
+                    "Restore the webview component in product configuration and satisfy missing external/prebuilt dependencies with tracked compile-only fake interfaces before dependency analysis.",
+                    [str(log_path)],
+                    matching_lines(all_text, ["OHOS component : (webview) not found", "webview:cj_webview_ffi", "cj_frontend"], 8),
+                )
+            )
+        else:
+            diagnostics.append(
+                build_diagnostic(
+                    "ohos_component_not_found",
+                    "product_config_dependency_skew",
+                    f"GN references OHOS component {component}, but it is not present in the loaded product parts.",
+                    "Prefer keeping the feature/component visible; import the missing text closure or add a tracked fake interface for external dependencies, then report unresolved dependency debt.",
+                    [str(log_path)],
+                    matching_lines(all_text, [f"OHOS component : ({component}) not found", component], 8),
+                )
+            )
 
     if "unsupported cpu riscv64" in plain_text and not any(diag["id"] == "riscv64_ndk_shlib_directory_mapping" for diag in diagnostics):
         diagnostics.append(
@@ -854,13 +2038,126 @@ def parse_build_diagnostics(
     return diagnostics
 
 
-def run_build(workspace: Path, out_dir: Path, product: str, timeout_sec: int) -> dict[str, Any]:
+def test_host_clang_cstdlib(clangxx: Path, env: dict[str, str] | None = None) -> bool:
+    if not clangxx.is_file():
+        return True
+    try:
+        proc = subprocess.run(
+            [str(clangxx), "-E", "-x", "c++", "-"],
+            input=b"#include <cstdlib>\n",
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            env=env,
+            timeout=15,
+            check=False,
+        )
+    except Exception:
+        return True
+    return proc.returncode == 0
+
+
+def test_host_clang_static_libstdcxx(clangxx: Path, env: dict[str, str] | None = None) -> bool:
+    if not clangxx.is_file():
+        return True
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(prefix="ohos_clang_link_", delete=False) as tmp:
+            tmp_path = tmp.name
+        proc = subprocess.run(
+            [str(clangxx), "-x", "c++", "-", "-static-libstdc++", "-o", tmp_path],
+            input=b"int main() { return 0; }\n",
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            env=env,
+            timeout=20,
+            check=False,
+        )
+        return proc.returncode == 0
+    except Exception:
+        return True
+    finally:
+        if tmp_path:
+            try:
+                Path(tmp_path).unlink()
+            except FileNotFoundError:
+                pass
+
+
+def version_sort_key(path: Path) -> tuple[int, ...]:
+    numbers = [int(part) for part in re.findall(r"\d+", path.name)]
+    return tuple(numbers) if numbers else (0,)
+
+
+def detect_host_cxx_env_fix(workspace: Path) -> dict[str, Any]:
+    clangxx = workspace / "prebuilts/clang/ohos/linux-x86_64/llvm/bin/clang++"
+    if test_host_clang_cstdlib(clangxx) and test_host_clang_static_libstdcxx(clangxx):
+        return {"applied": False, "reason": "host clang can include <cstdlib> and link -static-libstdc++ without extra environment"}
+
+    include_root = Path("/usr/include/c++")
+    arch_root = Path("/usr/include/x86_64-linux-gnu/c++")
+    candidates = sorted(
+        [path for path in include_root.iterdir() if path.is_dir()] if include_root.is_dir() else [],
+        key=version_sort_key,
+        reverse=True,
+    )
+    base_env = os.environ.copy()
+    existing = base_env.get("CPLUS_INCLUDE_PATH", "")
+    for include_dir in candidates:
+        paths = [str(include_dir)]
+        arch_dir = arch_root / include_dir.name
+        if arch_dir.is_dir():
+            paths.append(str(arch_dir))
+        if existing:
+            paths.append(existing)
+        candidate_env = base_env.copy()
+        candidate_env["CPLUS_INCLUDE_PATH"] = ":".join(paths)
+        lib_dir = Path("/usr/lib/gcc/x86_64-linux-gnu") / include_dir.name
+        existing_lib = base_env.get("LIBRARY_PATH", "")
+        lib_paths = []
+        if (lib_dir / "libstdc++.a").is_file() or (lib_dir / "libstdc++.so").is_file():
+            lib_paths.append(str(lib_dir))
+        if existing_lib:
+            lib_paths.append(existing_lib)
+        if lib_paths:
+            candidate_env["LIBRARY_PATH"] = ":".join(lib_paths)
+        if test_host_clang_cstdlib(clangxx, candidate_env) and test_host_clang_static_libstdcxx(clangxx, candidate_env):
+            exported_env = {"CPLUS_INCLUDE_PATH": candidate_env["CPLUS_INCLUDE_PATH"]}
+            if "LIBRARY_PATH" in candidate_env:
+                exported_env["LIBRARY_PATH"] = candidate_env["LIBRARY_PATH"]
+            return {
+                "applied": True,
+                "env": exported_env,
+                "reason": (
+                    "prebuilt host clang selected an incomplete GCC installation; "
+                    f"using host C++ include/library path {exported_env}"
+                ),
+                "validation": "#include <cstdlib> and -static-libstdc++ link probes passed",
+            }
+    return {
+        "applied": False,
+        "reason": "host clang still cannot include <cstdlib> with detected /usr/include/c++ candidates",
+    }
+
+
+def run_build(
+    workspace: Path,
+    out_dir: Path,
+    product: str,
+    timeout_sec: int,
+    host_env_fix: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     log_path = out_dir / f"build_{product}.log"
     command = ["./build.sh", "--product-name", product, "--ccache=false"]
     timed_out = False
     return_code = 0
+    started_at_epoch = time.time()
+    env = os.environ.copy()
+    if host_env_fix and host_env_fix.get("applied") and isinstance(host_env_fix.get("env"), dict):
+        env.update({str(key): str(value) for key, value in host_env_fix["env"].items()})
     with log_path.open("wb") as log:
         log.write((f"# Command: {' '.join(command)}\n# CWD: {workspace}\n# Started: {now()}\n\n").encode(TEXT_ENCODING))
+        if host_env_fix and host_env_fix.get("applied"):
+            log.write((f"# Host env fix: {host_env_fix.get('reason')}\n\n").encode(TEXT_ENCODING))
         try:
             proc = subprocess.run(
                 command,
@@ -868,6 +2165,7 @@ def run_build(workspace: Path, out_dir: Path, product: str, timeout_sec: int) ->
                 stdout=log,
                 stderr=subprocess.STDOUT,
                 timeout=timeout_sec,
+                env=env,
                 check=False,
             )
             return_code = proc.returncode
@@ -881,6 +2179,8 @@ def run_build(workspace: Path, out_dir: Path, product: str, timeout_sec: int) ->
         "timed_out": timed_out,
         "timeout_sec": timeout_sec,
         "log_path": str(log_path),
+        "started_at_epoch": started_at_epoch,
+        "host_env_fix": host_env_fix or {"applied": False, "reason": "not evaluated"},
     }
 
 
@@ -900,9 +2200,29 @@ def parse_args() -> argparse.Namespace:
         help="Disable compatibility normalization of product/device ohos.build subsystem names.",
     )
     parser.add_argument(
+        "--filter-unavailable-components",
+        action="store_true",
+        help="Opt in to filtering target config components/features not visible in the current workspace. Default preserves product feature declarations.",
+    )
+    parser.add_argument(
         "--no-component-visibility-filter",
         action="store_true",
-        help="Disable filtering of target config components not visible in the current workspace.",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--defer-external-prebuilt-components",
+        action="store_true",
+        help="Opt in to removing external-prebuilt-backed components from compile-triage product config. Default keeps product features visible and uses fake interfaces where implemented.",
+    )
+    parser.add_argument(
+        "--no-external-prebuilt-deferral",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--no-fake-missing-source-components",
+        action="store_true",
+        help="Disable generation of compile-only fake bundle.json registries for product components missing from the current source tree.",
     )
     return parser.parse_args()
 
@@ -939,10 +2259,28 @@ def main() -> int:
         "openharmony_version": clean_str(seed.get("openharmony_version")),
     }
 
-    actions, notes = planned_actions(seed, target_root)
-    component_features: dict[str, set[str] | None] | None = collect_workspace_component_features(workspace, target)
-    if args.no_component_visibility_filter:
-        component_features = None
+    actions, notes = planned_actions(
+        seed,
+        target_root,
+        workspace,
+        not args.no_fake_missing_source_components,
+    )
+    component_visibility_filter_enabled = bool(args.filter_unavailable_components) and not args.no_component_visibility_filter
+    component_features: dict[str, set[str] | None] | None = None
+    if component_visibility_filter_enabled:
+        component_features = collect_workspace_component_features(workspace, target)
+    external_prebuilt_deferral_enabled = bool(args.defer_external_prebuilt_components) and not args.no_external_prebuilt_deferral
+    component_deferrals = detect_external_prebuilt_component_deferrals(
+        workspace,
+        target_root,
+        target,
+        external_prebuilt_deferral_enabled,
+    )
+    if component_deferrals:
+        notes.append(
+            "External prebuilt-backed components deferred for compile triage: "
+            + ", ".join(sorted(component_deferrals))
+        )
     results: list[dict[str, Any]] = []
     blocking_issues: list[dict[str, Any]] = []
 
@@ -950,6 +2288,8 @@ def main() -> int:
         rel_path = clean_str(action["path"])
         workspace_path = workspace / rel_path
         staged_path = staged_root / rel_path
+        if staged_path.name == "bundle.json":
+            staged_path = staged_root / "_non_scanned_bundle_json" / (rel_path + ".staged")
         data, source_label, source_status, transforms = materialize_action(
             action,
             workspace,
@@ -957,9 +2297,10 @@ def main() -> int:
             target,
             not args.no_ohos6_subsystem_normalization,
             component_features,
+            component_deferrals,
         )
 
-        result = {key: value for key, value in action.items() if key != "generated_json"}
+        result = {key: value for key, value in action.items() if key not in {"generated_json", "generated_text"}}
         result.update(
             {
                 "workspace_path": str(workspace_path),
@@ -1029,9 +2370,19 @@ def main() -> int:
 
     build_result: dict[str, Any] | None = None
     if args.attempt_build and not blocking_issues:
-        build_result = run_build(workspace, out_dir, target["product"], args.build_timeout_sec)
+        host_env_fix = detect_host_cxx_env_fix(workspace)
+        build_result = run_build(workspace, out_dir, target["product"], args.build_timeout_sec, host_env_fix)
         build_result["diagnostics"] = parse_build_diagnostics(build_result, workspace, target_root, target["product"], target)
 
+    fake_interfaces = [
+        {
+            "path": item["path"],
+            "source_sha256": item.get("source_sha256", "unknown"),
+            **item.get("fake_interface", {}),
+        }
+        for item in results
+        if isinstance(item.get("fake_interface"), dict)
+    ]
     summary = {
         "planned_actions": len(results),
         "available_source_actions": sum(1 for item in results if item["source_status"] == "available"),
@@ -1039,6 +2390,7 @@ def main() -> int:
         "skipped_same_content_actions": sum(1 for item in results if item["apply_status"] == "skipped_same_content"),
         "blocking_issue_count": len(blocking_issues),
         "build_diagnostic_count": len(build_result.get("diagnostics", [])) if build_result else 0,
+        "fake_interface_count": len(fake_interfaces),
     }
     manifest = {
         "schema_version": 1,
@@ -1052,13 +2404,18 @@ def main() -> int:
         "overwrite_requested": bool(args.overwrite),
         "attempt_build": bool(args.attempt_build),
         "write_policy": "apply_only_when_flagged",
-        "dependency_policy": "exclude_binary_firmware_bootloader_prebuilt_kernel_module_payloads",
+        "dependency_policy": "exclude_real_binary_firmware_bootloader_prebuilt_kernel_module_payloads_generate_marked_compile_only_fakes_when_needed",
         "compatibility_policy": {
             "ohos6_subsystem_normalization": not args.no_ohos6_subsystem_normalization,
-            "component_visibility_filter": not args.no_component_visibility_filter,
+            "component_visibility_filter": component_visibility_filter_enabled,
+            "external_prebuilt_component_deferral": external_prebuilt_deferral_enabled,
+            "compile_only_fake_interfaces": True,
+            "fake_missing_source_components": not args.no_fake_missing_source_components,
             "reason": "OpenHarmony 6.0 preloader injects product_<product> and device_<board> subsystem paths.",
         },
         "available_component_count": len(component_features) if component_features is not None else 0,
+        "external_prebuilt_deferrals": list(component_deferrals.values()),
+        "fake_interfaces": fake_interfaces,
         "actions": results,
         "blocking_issues": blocking_issues,
         "notes": notes,

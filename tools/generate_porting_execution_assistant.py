@@ -947,8 +947,8 @@ def build_porting_work_order(
                     "signing_packaging_tool",
                 ],
                 "compatibility_policy": (
-                    "normalize_openharmony_6_0_product_device_subsystems_filter_unavailable_components_"
-                    "and_apply_evidenced_riscv64_ndk_mapping_when_needed"
+                    "normalize_openharmony_6_0_product_device_subsystems_preserve_product_features_"
+                    "apply_evidenced_riscv64_build_compat_and_generate_tracked_fake_interfaces_for_external_gaps"
                 ),
                 "dry_run_command": (
                     "python3 tools/apply_porting_base_patch.py "
@@ -968,11 +968,22 @@ def build_porting_work_order(
                 "notes": [
                     "Generated productdefine is allowed only from target seed plus reviewed target vendor config.",
                     "OpenHarmony 6.0 product/device ohos.build subsystem names may be normalized to product_<product> and device_<board> before compile triage.",
-                    "Target product/vendor components or feature flags not visible in current workspace bundle metadata may be filtered from the first compile-triage patch.",
-                    "Board module labels that point at binary or firmware follow-up areas may be deferred from the base patch.",
+                    "Target product/vendor components and feature flags are preserved by default; component filtering is an explicit diagnostic mode only.",
                     "For RISC-V targets, an evidenced minimal build/ohos/ndk/ndk.gni riscv64 mapping patch may be staged/applied before compile triage.",
                     "For RISC-V targets, an evidenced third_party/curl/BUILD.gn cflags guard patch may be staged/applied when GN reports an undefined cflags identifier.",
+                    "For RISC-V targets, an evidenced build/common/libcpp/BUILD.gn libc++ prebuilt source mapping may be staged/applied when the prebuilt template sees an empty source path.",
+                    "For RISC-V graphics builds, evidenced graphic_3d rofs rv64 object mappings may be staged/applied when GN reports empty generated asset paths.",
                     "Build attempts produce diagnostics for host/prebuilt toolchain failures, missing BUILD.gn closures, product-config skew, source/build compatibility blockers, and prebuilt-backed feature blockers such as WebView ArkWebCore.",
+                    "Components backed by missing external target payloads should remain visible where possible; use tracked compile-only fake interfaces and record dependency debt in the manifest.",
+                    "Architecture-specific prebuilt gaps may use clearly marked wrong-architecture binary placeholders only as compile-flow bridges.",
+                    "Board vendor text closures may be imported when directly referenced; firmware payloads must become tracked compile-only fake artifacts.",
+                    "Board root local-module text/config closures may be imported; kernel modules, bootloader images, and firmware must become tracked fake interfaces.",
+                    "Board-referenced SoC module text/source closures may be imported; firmware, GPU/WiFi blobs, and shared libraries must become tracked fake interfaces.",
+                    "Vendor product module text/config closures may be imported from direct target ohos.build labels; non-text payloads must become tracked fake interfaces.",
+                    "Product components missing from the current source tree may be represented by zero-subcomponent fake bundle registries before any product feature is removed.",
+                    "Target-evidenced component feature declarations may be represented by tracked feature-registry shims before any product feature is removed.",
+                    "Host clang C++ include/link-path gaps may be repaired with validated build-subprocess environment variables and must be recorded as environment fixes.",
+                    "Fake interfaces must state runtime non-functionality and the provenance-checked replacement follow-up.",
                     "Existing differing workspace files block unless the operator explicitly reruns with --overwrite.",
                     "Build pass is compile-flow evidence only and must not be promoted to boot/runtime/test status.",
                 ],

@@ -347,12 +347,22 @@ controlled_executor:
   default_mode: dry_run_stage_only
   allowed_phases: [L0_target_identity, L1_base_binding, L2_build_triage]
   excluded_payloads: [firmware, bootloader, prebuilt, kernel_module, closed_driver, signing_packaging_tool]
-  compatibility_policy: normalize_openharmony_6_0_product_device_subsystems_filter_unavailable_components_and_apply_evidenced_riscv64_ndk_mapping_when_needed
+  compatibility_policy: normalize_openharmony_6_0_product_device_subsystems_preserve_product_features_apply_evidenced_riscv64_build_compat_and_generate_fake_interfaces_when_needed
   dry_run_command: <stage-only command; no workspace write>
   apply_and_build_command: <requires explicit --apply --attempt-build>
   notes:
     - build attempts must emit diagnostics that separate host/prebuilt failures from source/build compatibility and dependency follow-up
-    - RISC-V build compatibility patches are allowed only when the reference target tree contains matching source evidence such as NDK riscv64 mapping or curl riscv64 cflags guards
+    - RISC-V build compatibility patches are allowed only when the reference target tree contains matching source evidence such as NDK riscv64 mapping, curl riscv64 cflags guards, libcpp riscv64 prebuilt source mapping, or graphic_3d rofs rv64 object mappings
+    - prebuilt-backed components should remain visible in product config where possible; use marked compile-only fake interfaces for missing external payloads
+    - architecture-specific prebuilt gaps may use wrong-architecture binary placeholders only when clearly marked and reported as compile-only dependency debt
+    - board vendor text closures may be imported, but firmware payloads must become tracked compile-only fake artifacts
+    - board root local-module text/config closures may be imported; kernel modules, bootloader images, and firmware must become tracked fake interfaces
+    - board-referenced SoC module text/source closures may be imported; firmware, GPU/WiFi blobs, and shared libraries must become tracked fake interfaces
+    - vendor product module text/config closures may be imported from direct target ohos.build labels; non-text payloads must become tracked fake interfaces
+    - missing source components should use zero-subcomponent fake bundle registries before product features are removed
+    - missing target-evidenced component features should use tracked feature-registry shims before product features are removed
+    - host C++ include/link-path gaps may be fixed by validated build-subprocess environment variables, not source edits
+    - every fake interface must be reported with missing dependency, provenance path, runtime non-functionality, and replacement follow-up
 batch_count: 0
 source_import_item_count: 0
 excluded_dependency_count: 0
