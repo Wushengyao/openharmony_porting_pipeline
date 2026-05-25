@@ -361,6 +361,7 @@ controlled_executor:
     - board-referenced SoC module text/source closures may be imported; firmware, GPU/WiFi blobs, and shared libraries must become tracked fake interfaces
     - vendor product module text/config closures may be imported from direct target ohos.build labels; non-text payloads must become tracked fake interfaces
     - WebView local text/source closures and their local GN/GNI support imports may be imported from target ohos_nweb GN labels after resolving webview_path-style variables; .idl and linker map files are text inputs, while prebuilts remain fake-interface debt
+    - WebView app_fwk_update bundle labels may be migrated from the old flat sa target to target-evidenced sa/app_fwk_update to resolve duplicate-output GN collisions
     - missing source components should use zero-subcomponent fake bundle registries before product features are removed
     - missing target-evidenced component features should use tracked feature-registry shims before product features are removed
     - host C++ include/link-path gaps may be fixed by validated build-subprocess environment variables, not source edits

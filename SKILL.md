@@ -152,6 +152,10 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   local GN/GNI support files imported by those modules; treat `.idl` and linker
   map files as text closure inputs, while prebuilt payloads remain
   fake-interface dependency debt.
+- When target evidence moves WebView `app_fwk_update` from the old flat `sa`
+  target to `sa/app_fwk_update`, migrate WebView bundle labels to the new module
+  instead of building both services and producing duplicate shared-library
+  outputs.
 - For architecture-specific prebuilt rules such as RISC-V Rust
   `libstd.dylib.so`/`libtest.dylib.so`, import only the evidenced text build
   rule and use clearly marked wrong-architecture binary placeholders when the

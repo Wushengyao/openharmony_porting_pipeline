@@ -862,6 +862,17 @@ def target_has_riscv64_ark_llvm_disable_evidence(target_root: Path) -> bool:
     )
 
 
+def target_has_webview_app_fwk_update_bundle_migration_evidence(target_root: Path) -> bool:
+    bundle = target_root / "base/web/webview/bundle.json"
+    if not bundle.is_file():
+        return False
+    text = bundle.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "//base/web/webview/sa/app_fwk_update:app_fwk_update_service" in text
+        and "//base/web/webview/sa/app_fwk_update/include" in text
+    )
+
+
 def file_has_riscv64_rofs_evidence(path: Path) -> bool:
     if not path.is_file():
         return False
@@ -1334,6 +1345,19 @@ def planned_actions(
                         ),
                     )
                 )
+        if target_has_webview_app_fwk_update_bundle_migration_evidence(target_root):
+            actions.append(
+                workspace_transform_action(
+                    "base/web/webview/bundle.json",
+                    "webview_bundle_app_fwk_update_sa_migration",
+                    "L2_webview_local_module_text_closure",
+                    (
+                        "Rewrite the WebView component registry from the old flat sa app_fwk_update "
+                        "target to the target-evidenced sa/app_fwk_update target so both services do "
+                        "not generate libapp_fwk_update_service.z.so."
+                    ),
+                )
+            )
         actions.extend(
             collect_target_module_closure_actions(
                 target_root,
@@ -1400,6 +1424,7 @@ def planned_actions(
         "Board module text/config closures are imported only from local labels in the target board root BUILD.gn; kernel modules, bootloader images, and firmware become compile-only fake interfaces.",
         "SoC module text/source closures are imported only from target board BUILD.gn labels under the selected SoC root; firmware and proprietary GPU/WiFi/shared-library payloads become compile-only fake interfaces.",
         "WebView local module text/source closures are imported from target ohos_nweb GN labels after resolving webview_path-style variables; binary/prebuilt payloads remain fake-interface debt.",
+        "WebView app_fwk_update component-registry labels are migrated to the target sa/app_fwk_update module when target evidence shows the service moved from the old flat sa target.",
     ]
     return actions, notes
 
@@ -1648,6 +1673,27 @@ def apply_riscv64_ark_llvmbackend_disable_compat(data: bytes) -> tuple[bytes, li
     return data, ["ArkCompiler riscv64 LLVM backend/codegen insertion point not found"]
 
 
+def apply_webview_bundle_app_fwk_update_migration(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    replacements = {
+        "//base/web/webview/sa:app_fwk_update_service": (
+            "//base/web/webview/sa/app_fwk_update:app_fwk_update_service"
+        ),
+        "//base/web/webview/sa/include": "//base/web/webview/sa/app_fwk_update/include",
+    }
+    notes: list[str] = []
+    for old, new in replacements.items():
+        count = text.count(old)
+        if count:
+            text = text.replace(old, new)
+            notes.append(f"rewrote {count} WebView bundle reference(s) from {old} to {new}")
+        elif new in text:
+            notes.append(f"WebView bundle reference already migrated to {new}")
+        else:
+            notes.append(f"WebView bundle migration source label not found: {old}")
+    return text.encode(TEXT_ENCODING), notes
+
+
 def apply_component_feature_compat(data: bytes, features_to_add: list[str]) -> tuple[bytes, list[str]]:
     notes: list[str] = []
     try:
@@ -1722,6 +1768,11 @@ def materialize_action(
             and target.get("architecture") == "riscv64"
         ):
             data, transforms = apply_riscv64_ark_llvmbackend_disable_compat(data)
+        elif (
+            rel_path == "base/web/webview/bundle.json"
+            and action.get("source_role") == "webview_bundle_app_fwk_update_sa_migration"
+        ):
+            data, transforms = apply_webview_bundle_app_fwk_update_migration(data)
         elif (
             action.get("source_role") == "graphic_3d_riscv64_rofs_build_rule"
             and target.get("architecture") == "riscv64"
@@ -1970,6 +2021,22 @@ def collect_gn_assertion_matches(text: str) -> list[tuple[str, list[str]]]:
     return matches
 
 
+def collect_duplicate_output_blocks(text: str) -> list[list[str]]:
+    blocks: list[list[str]] = []
+    lines = strip_ansi(text).splitlines()
+    for index, line in enumerate(lines):
+        if "Duplicate output file" not in line:
+            continue
+        block: list[str] = []
+        for context_line in lines[index : index + 24]:
+            clean_line = clean_prefixed_gn_line(context_line)
+            if clean_line:
+                block.append(clean_line)
+        if block and block not in blocks:
+            blocks.append(block)
+    return blocks
+
+
 def build_diagnostic(
     diag_id: str,
     classification: str,
@@ -2134,6 +2201,44 @@ def parse_build_diagnostics(
                     "Compare the assertion and surrounding build arguments with the reference target source before applying a scoped compatibility patch.",
                     [str(log_path)],
                     matching_lines(all_text, [gn_path, "Assertion failed"], 8),
+                )
+            )
+
+    for block in collect_duplicate_output_blocks(plain_text)[:8]:
+        block_text = "\n".join(block)
+        if (
+            "web/webview/libapp_fwk_update_service.z.so" in block_text
+            and "//base/web/webview/sa:app_fwk_update_service" in block_text
+            and "//base/web/webview/sa/app_fwk_update:app_fwk_update_service" in block_text
+        ):
+            diagnostics.append(
+                build_diagnostic(
+                    "webview_app_fwk_update_duplicate_output",
+                    "source_build_compatibility",
+                    "WebView builds both old flat sa app_fwk_update_service and the target sa/app_fwk_update service, producing the same shared library.",
+                    "Migrate base/web/webview/bundle.json app_fwk_update labels to the target-evidenced sa/app_fwk_update module and rerun GN generation.",
+                    [str(log_path), str(target_root / "base/web/webview/bundle.json")],
+                    matching_lines(
+                        all_text,
+                        [
+                            "Duplicate output file",
+                            "libapp_fwk_update_service.z.so",
+                            "//base/web/webview/sa:app_fwk_update_service",
+                            "//base/web/webview/sa/app_fwk_update:app_fwk_update_service",
+                        ],
+                        12,
+                    ),
+                )
+            )
+        else:
+            diagnostics.append(
+                build_diagnostic(
+                    "gn_duplicate_output_file",
+                    "source_build_compatibility",
+                    "GN reports duplicate output files.",
+                    "Inspect the colliding targets and migrate or rename the stale target according to target-source evidence.",
+                    [str(log_path)],
+                    matching_lines(all_text, ["Duplicate output file", "Collisions:"], 12),
                 )
             )
 
