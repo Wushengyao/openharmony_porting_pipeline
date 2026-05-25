@@ -244,10 +244,11 @@ unavailable product components, RISC-V build-compatibility gaps, and
 prebuilt-backed feature blockers such as a WebView riscv64 ArkWebCore HAP.
 For the WebView riscv64 ArkWebCore gap, the executor keeps `web:webview` enabled,
 imports the evidenced text-only build rule, writes a marked compile-only fake
-`ArkWebCore.hap`, and imports direct local WebView text/source closures from
-target `ohos_nweb` GN labels after resolving `webview_path` variables. Text
-closures include `.idl` and linker map files. Fake WebView payloads are reported
-under `fake_interfaces`. External-prebuilt component deferral is now opt-in via
+`ArkWebCore.hap`, imports direct local WebView text/source closures from target
+`ohos_nweb` GN labels after resolving `webview_path` variables, and carries the
+local GN/GNI support files those modules import. Text closures include `.idl`
+and linker map files. Fake WebView payloads are reported under `fake_interfaces`.
+External-prebuilt component deferral is now opt-in via
 `--defer-external-prebuilt-components` for cases where an operator explicitly
 wants that older compile-triage mode.
 For RISC-V Rust std/test dylib gaps, the executor imports the target-evidenced

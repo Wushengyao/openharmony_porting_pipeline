@@ -148,9 +148,10 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   reference path, hash, fake path, runtime non-functionality, and replacement
   follow-up in `base_patch_manifest`.
 - For WebView RISC-V build rules copied from target `ohos_nweb`, import direct
-  local text/source closures after resolving `webview_path` GN labels; treat
-  `.idl` and linker map files as text closure inputs, while prebuilt payloads
-  remain fake-interface dependency debt.
+  local text/source closures after resolving `webview_path` GN labels, and carry
+  local GN/GNI support files imported by those modules; treat `.idl` and linker
+  map files as text closure inputs, while prebuilt payloads remain
+  fake-interface dependency debt.
 - For architecture-specific prebuilt rules such as RISC-V Rust
   `libstd.dylib.so`/`libtest.dylib.so`, import only the evidenced text build
   rule and use clearly marked wrong-architecture binary placeholders when the

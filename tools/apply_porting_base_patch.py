@@ -545,6 +545,57 @@ def collect_webview_dependency_dirs(target_root: Path) -> list[str]:
     return [item for item in dirs if item != "base/web/webview/ohos_nweb"]
 
 
+def collect_gn_import_file_rels(
+    target_root: Path,
+    file_rels: list[str],
+    absolute_prefixes: list[str],
+    variable_paths: dict[str, str] | None = None,
+) -> list[str]:
+    normalized_prefixes = [normalize_rel(prefix) for prefix in absolute_prefixes]
+    imported: list[str] = []
+    for file_rel in file_rels:
+        rel = normalize_rel(file_rel)
+        path = target_root / rel
+        if not path.is_file():
+            continue
+        owner_rel = rel.rsplit("/", 1)[0] if "/" in rel else ""
+        text = path.read_text(encoding=TEXT_ENCODING, errors="ignore")
+        for import_label in re.findall(r'import\("([^"]+)"\)', text):
+            label_path = replace_gn_label_variables(import_label.strip(), variable_paths)
+            try:
+                if label_path.startswith("//"):
+                    import_rel = normalize_rel(label_path[2:])
+                else:
+                    import_rel = resolve_relative_gn_label(owner_rel, label_path)
+            except ValueError:
+                continue
+            if normalized_prefixes and not any(
+                import_rel == prefix or import_rel.startswith(f"{prefix}/")
+                for prefix in normalized_prefixes
+            ):
+                continue
+            if import_rel not in imported and (target_root / import_rel).is_file():
+                imported.append(import_rel)
+    return imported
+
+
+def collect_webview_import_file_rels(target_root: Path, module_dirs: list[str]) -> list[str]:
+    build_rels = ["base/web/webview/ohos_nweb/BUILD.gn"]
+    for module_dir in module_dirs:
+        build_rel = f"{normalize_rel(module_dir)}/BUILD.gn"
+        if (target_root / build_rel).is_file():
+            build_rels.append(build_rel)
+    return collect_gn_import_file_rels(
+        target_root,
+        build_rels,
+        ["base/web/webview"],
+        {
+            "webview_path": "//base/web/webview",
+            "webview_root_path": "//base/web/webview",
+        },
+    )
+
+
 def collect_target_module_closure_actions(
     target_root: Path,
     module_dirs: list[str],
@@ -1204,6 +1255,7 @@ def planned_actions(
     if clean_str(seed.get("architecture")) == "riscv64" and target_has_riscv64_webview_stub_evidence(target_root):
         prebuilt_rel = "base/web/webview/ohos_nweb/prebuilts/riscv64/ArkWebCore.hap"
         target_prebuilt = target_root / prebuilt_rel
+        webview_module_dirs = collect_webview_dependency_dirs(target_root)
         actions.append(
             copy_action(
                 "base/web/webview/ohos_nweb/BUILD.gn",
@@ -1241,10 +1293,23 @@ def planned_actions(
                 str(target_prebuilt),
             )
         )
+        for rel_path in collect_webview_import_file_rels(target_root, webview_module_dirs):
+            if is_text_closure_file(target_root / rel_path):
+                actions.append(
+                    copy_action(
+                        rel_path,
+                        "webview_imported_gni_text_closure",
+                        "L2_webview_local_module_text_closure",
+                        (
+                            "Import target WebView local GN/GNI support file required by "
+                            "the copied riscv64 WebView build rules."
+                        ),
+                    )
+                )
         actions.extend(
             collect_target_module_closure_actions(
                 target_root,
-                collect_webview_dependency_dirs(target_root),
+                webview_module_dirs,
                 "webview_local_module_text_closure",
                 "webview_local_module_fake_payload",
                 "L2_webview_local_module_text_closure",
@@ -1769,6 +1834,56 @@ def matching_lines(text: str, needles: list[str], limit: int = 8) -> list[str]:
     return matches
 
 
+GN_IDENTIFIER_KEYWORDS = {
+    "if",
+    "else",
+    "foreach",
+    "defined",
+    "true",
+    "false",
+}
+
+
+def clean_prefixed_gn_line(line: str) -> str:
+    text = re.sub(r"^\s*\[[^\]]+\]\s*\[GN\]\s*", "", line)
+    return re.sub(r"^\s*\[[^\]]+\]\s*", "", text).strip()
+
+
+def collect_undefined_identifier_matches(text: str) -> list[tuple[str, str]]:
+    matches: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    lines = strip_ansi(text).splitlines()
+    for index, line in enumerate(lines):
+        path_match = re.search(r"ERROR at //([^:\n]+):\d+:\d+: Undefined identifier", line)
+        if not path_match:
+            continue
+        gn_path = path_match.group(1)
+        identifier = ""
+        for context_line in lines[index + 1 : index + 8]:
+            clean_line = clean_prefixed_gn_line(context_line)
+            if (
+                not clean_line
+                or clean_line.startswith("^")
+                or clean_line.startswith("See ")
+                or clean_line.startswith("ERROR at ")
+            ):
+                continue
+            for token in re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", clean_line):
+                if token not in GN_IDENTIFIER_KEYWORDS:
+                    identifier = token
+                    break
+            if identifier:
+                break
+        if not identifier:
+            continue
+        key = (gn_path, identifier)
+        if key in seen:
+            continue
+        seen.add(key)
+        matches.append(key)
+    return matches
+
+
 def build_diagnostic(
     diag_id: str,
     classification: str,
@@ -1866,14 +1981,7 @@ def parse_build_diagnostics(
             )
         )
 
-    undefined_identifier_matches = sorted(
-        set(
-            re.findall(
-                r"ERROR at //([^:\n]+):\d+:\d+: Undefined identifier\.\s+([A-Za-z_][A-Za-z0-9_]*) \+=",
-                plain_text,
-            )
-        )
-    )
+    undefined_identifier_matches = collect_undefined_identifier_matches(plain_text)
     for gn_path, identifier in undefined_identifier_matches[:8]:
         if gn_path == "third_party/curl/BUILD.gn":
             continue
@@ -1910,7 +2018,7 @@ def parse_build_diagnostics(
                     f"GN reports undefined identifier {identifier} in {gn_path}.",
                     "Compare the current workspace file with the reference target source and decide whether this is a safe text compatibility patch or requires a tracked fake interface for a missing dependency.",
                     [str(log_path)],
-                    matching_lines(all_text, [gn_path, "Undefined identifier", f"{identifier} +="], 8),
+                    matching_lines(all_text, [gn_path, "Undefined identifier", identifier], 8),
                 )
             )
 
