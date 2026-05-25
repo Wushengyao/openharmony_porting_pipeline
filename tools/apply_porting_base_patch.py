@@ -43,8 +43,10 @@ TEXT_CLOSURE_SUFFIXES = {
     ".h",
     ".hcs",
     ".hpp",
+    ".idl",
     ".ini",
     ".json",
+    ".map",
     ".md",
     ".para",
     ".patch",
@@ -465,10 +467,42 @@ def collect_local_gn_dependency_dirs(build_gn_path: Path, owner_rel: str) -> lis
     return collect_gn_dependency_dirs(build_gn_path, owner_rel, [])
 
 
+def resolve_relative_gn_label(owner_rel: str, label_path: str) -> str:
+    owner_parts = normalize_rel(owner_rel).split("/") if owner_rel else []
+    parts = [part for part in owner_parts if part]
+    for part in label_path.strip().replace("\\", "/").split("/"):
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if not parts:
+                raise ValueError(f"path escapes workspace: {label_path}")
+            parts.pop()
+            continue
+        parts.append(part)
+    return "/".join(parts)
+
+
+def replace_gn_label_variables(label_path: str, variable_paths: dict[str, str] | None) -> str:
+    if not variable_paths:
+        return label_path
+    resolved = label_path
+    replacements: dict[str, str] = {}
+    for name, value in variable_paths.items():
+        clean_name = name.strip()
+        if not clean_name:
+            continue
+        replacements[f"${{{clean_name}}}"] = value
+        replacements[f"${clean_name}"] = value
+    for token, value in sorted(replacements.items(), key=lambda item: len(item[0]), reverse=True):
+        resolved = resolved.replace(token, value)
+    return resolved
+
+
 def collect_gn_dependency_dirs(
     build_gn_path: Path,
     owner_rel: str,
     absolute_prefixes: list[str],
+    variable_paths: dict[str, str] | None = None,
 ) -> list[str]:
     if not build_gn_path.is_file():
         return []
@@ -476,7 +510,7 @@ def collect_gn_dependency_dirs(
     dirs: list[str] = []
     normalized_prefixes = [normalize_rel(prefix) for prefix in absolute_prefixes]
     for label in re.findall(r'"([^"]+:[^"]+)"', text):
-        label_path = label.split(":", 1)[0].strip()
+        label_path = replace_gn_label_variables(label.split(":", 1)[0].strip(), variable_paths)
         if label_path.startswith("//"):
             try:
                 module_dir = normalize_rel(label_path[2:])
@@ -488,13 +522,27 @@ def collect_gn_dependency_dirs(
             ):
                 continue
         else:
-            if not label_path:
-                module_dir = normalize_rel(owner_rel)
-            else:
-                module_dir = f"{normalize_rel(owner_rel)}/{normalize_rel(label_path)}"
+            try:
+                module_dir = resolve_relative_gn_label(owner_rel, label_path)
+            except ValueError:
+                continue
         if module_dir not in dirs:
             dirs.append(module_dir)
     return dirs
+
+
+def collect_webview_dependency_dirs(target_root: Path) -> list[str]:
+    build_gn = target_root / "base/web/webview/ohos_nweb/BUILD.gn"
+    dirs = collect_gn_dependency_dirs(
+        build_gn,
+        "base/web/webview/ohos_nweb",
+        ["base/web/webview"],
+        {
+            "webview_path": "//base/web/webview",
+            "webview_root_path": "//base/web/webview",
+        },
+    )
+    return [item for item in dirs if item != "base/web/webview/ohos_nweb"]
 
 
 def collect_target_module_closure_actions(
@@ -523,7 +571,7 @@ def collect_target_module_closure_actions(
                     fake_role,
                     phase,
                     (
-                        "Create a compile-only placeholder for a non-text vendor product payload "
+                        "Create a compile-only placeholder for a non-text target payload "
                         "referenced by the target module closure."
                     ),
                     "\n".join(
@@ -540,7 +588,7 @@ def collect_target_module_closure_actions(
                     + "\n",
                     f"non-text target payload {rel_path}",
                     str(path),
-                    "replace with provenance-checked vendor payload before runtime validation",
+                    "replace with provenance-checked vendor/third-party payload before runtime validation",
                 )
             )
     return actions
@@ -1193,6 +1241,20 @@ def planned_actions(
                 str(target_prebuilt),
             )
         )
+        actions.extend(
+            collect_target_module_closure_actions(
+                target_root,
+                collect_webview_dependency_dirs(target_root),
+                "webview_local_module_text_closure",
+                "webview_local_module_fake_payload",
+                "L2_webview_local_module_text_closure",
+                (
+                    "Import reviewed text/source closure for local WebView modules directly "
+                    "referenced by the target riscv64 ohos_nweb BUILD.gn, including GN labels "
+                    "resolved through webview_path."
+                ),
+            )
+        )
 
     if fake_missing_source_components:
         target_identity = {
@@ -1243,6 +1305,7 @@ def planned_actions(
         "Vendor product module text/config closures are imported only from direct target ohos.build module labels; non-text payloads become compile-only fake interfaces.",
         "Board module text/config closures are imported only from local labels in the target board root BUILD.gn; kernel modules, bootloader images, and firmware become compile-only fake interfaces.",
         "SoC module text/source closures are imported only from target board BUILD.gn labels under the selected SoC root; firmware and proprietary GPU/WiFi/shared-library payloads become compile-only fake interfaces.",
+        "WebView local module text/source closures are imported from target ohos_nweb GN labels after resolving webview_path-style variables; binary/prebuilt payloads remain fake-interface debt.",
     ]
     return actions, notes
 
