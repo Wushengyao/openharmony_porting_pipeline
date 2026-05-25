@@ -250,7 +250,9 @@ local GN/GNI support files those modules import. Text closures include `.idl`
 and linker map files. Fake WebView payloads are reported under `fake_interfaces`.
 When target evidence shows `app_fwk_update` moved from the old flat `sa` target
 to `sa/app_fwk_update`, the executor rewrites WebView bundle labels to the new
-module to avoid duplicate `libapp_fwk_update_service.z.so` outputs.
+module and imports the matching app_fwk_update unit-test text closure so tests
+do not keep the old service target alive and duplicate
+`libapp_fwk_update_service.z.so`.
 External-prebuilt component deferral is now opt-in via
 `--defer-external-prebuilt-components` for cases where an operator explicitly
 wants that older compile-triage mode.

@@ -154,8 +154,8 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   fake-interface dependency debt.
 - When target evidence moves WebView `app_fwk_update` from the old flat `sa`
   target to `sa/app_fwk_update`, migrate WebView bundle labels to the new module
-  instead of building both services and producing duplicate shared-library
-  outputs.
+  and import the matching app_fwk_update unit-test text closure instead of
+  building both services and producing duplicate shared-library outputs.
 - For architecture-specific prebuilt rules such as RISC-V Rust
   `libstd.dylib.so`/`libtest.dylib.so`, import only the evidenced text build
   rule and use clearly marked wrong-architecture binary placeholders when the

@@ -873,6 +873,17 @@ def target_has_webview_app_fwk_update_bundle_migration_evidence(target_root: Pat
     )
 
 
+def target_has_webview_app_fwk_update_test_migration_evidence(target_root: Path) -> bool:
+    build_gn = target_root / "base/web/webview/test/unittest/app_fwk_update_client_test/BUILD.gn"
+    if not build_gn.is_file():
+        return False
+    text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "${webview_path}/sa/app_fwk_update:app_fwk_update_service" in text
+        and "${webview_path}/sa/app_fwk_update/src/app_fwk_update_client.cpp" in text
+    )
+
+
 def file_has_riscv64_rofs_evidence(path: Path) -> bool:
     if not path.is_file():
         return False
@@ -1358,6 +1369,20 @@ def planned_actions(
                     ),
                 )
             )
+        if target_has_webview_app_fwk_update_test_migration_evidence(target_root):
+            actions.extend(
+                collect_target_module_closure_actions(
+                    target_root,
+                    ["base/web/webview/test/unittest/app_fwk_update_client_test"],
+                    "webview_app_fwk_update_test_text_closure",
+                    "webview_app_fwk_update_test_fake_payload",
+                    "L2_webview_local_module_text_closure",
+                    (
+                        "Import the target-evidenced WebView app_fwk_update unit-test closure so "
+                        "test deps also point at sa/app_fwk_update instead of the old flat sa service."
+                    ),
+                )
+            )
         actions.extend(
             collect_target_module_closure_actions(
                 target_root,
@@ -1425,6 +1450,7 @@ def planned_actions(
         "SoC module text/source closures are imported only from target board BUILD.gn labels under the selected SoC root; firmware and proprietary GPU/WiFi/shared-library payloads become compile-only fake interfaces.",
         "WebView local module text/source closures are imported from target ohos_nweb GN labels after resolving webview_path-style variables; binary/prebuilt payloads remain fake-interface debt.",
         "WebView app_fwk_update component-registry labels are migrated to the target sa/app_fwk_update module when target evidence shows the service moved from the old flat sa target.",
+        "WebView app_fwk_update test closures are migrated with target evidence when test deps would otherwise keep the old flat sa service in the GN graph.",
     ]
     return actions, notes
 
@@ -2216,7 +2242,7 @@ def parse_build_diagnostics(
                     "webview_app_fwk_update_duplicate_output",
                     "source_build_compatibility",
                     "WebView builds both old flat sa app_fwk_update_service and the target sa/app_fwk_update service, producing the same shared library.",
-                    "Migrate base/web/webview/bundle.json app_fwk_update labels to the target-evidenced sa/app_fwk_update module and rerun GN generation.",
+                    "Migrate base/web/webview/bundle.json and WebView app_fwk_update test labels to the target-evidenced sa/app_fwk_update module and rerun GN generation.",
                     [str(log_path), str(target_root / "base/web/webview/bundle.json")],
                     matching_lines(
                         all_text,
