@@ -157,6 +157,10 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   rule and use clearly marked wrong-architecture binary placeholders when the
   real target prebuilt is unavailable. These placeholders are compile-only and
   must be replaced before packaging/runtime validation.
+- For ArkCompiler RISC-V assertion blockers, apply only the target-evidenced
+  minimal `ark_config.gni` rule that disables unsupported LLVM
+  backend/irtoc/codegen paths for `target_cpu == "riscv64"`; avoid importing the
+  broader ArkCompiler 6.1 source rename set during base compile triage.
 - For board vendor modules, import text-only C/GN/header closures when directly
   referenced by board manifests, while representing firmware payloads such as
   Bluetooth `.hcd` files with tracked compile-only fake artifacts.

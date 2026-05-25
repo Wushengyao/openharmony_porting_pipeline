@@ -255,6 +255,10 @@ For RISC-V Rust std/test dylib gaps, the executor imports the target-evidenced
 text GN rule and may copy an existing workspace Rust dylib as a clearly marked
 wrong-architecture placeholder under `prebuilts/rustc-riscv/...`; this is only a
 compile-flow bridge and is reported as fake dependency debt.
+For ArkCompiler RISC-V GN assertion gaps, the executor may apply the
+target-evidenced minimal `ark_config.gni` rule that disables unsupported
+LLVM backend/irtoc/codegen paths for `target_cpu == "riscv64"`; it does not
+import the broader 6.1 ArkCompiler source rename set as part of the base patch.
 For board-level vendor Bluetooth modules, the executor imports text C/GN/header
 closures referenced by `ohos.build`, but replaces firmware payloads such as
 `BCM4362A2.hcd` with marked compile-only fake artifacts.

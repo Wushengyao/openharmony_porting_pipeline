@@ -848,6 +848,20 @@ def target_has_riscv64_libcpp_evidence(target_root: Path) -> bool:
     )
 
 
+def target_has_riscv64_ark_llvm_disable_evidence(target_root: Path) -> bool:
+    target_ark_config = target_root / "arkcompiler/runtime_core/static_core/ark_config.gni"
+    if not target_ark_config.is_file():
+        return False
+    text = target_ark_config.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        'if (target_cpu == "riscv64")' in text
+        and "enable_codegen = false" in text
+        and "enable_irtoc = false" in text
+        and "is_llvmbackend = false" in text
+        and "is_llvm_aot = false" in text
+    )
+
+
 def file_has_riscv64_rofs_evidence(path: Path) -> bool:
     if not path.is_file():
         return False
@@ -1221,6 +1235,20 @@ def planned_actions(
                 )
             )
 
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_riscv64_ark_llvm_disable_evidence(target_root):
+        actions.append(
+            workspace_transform_action(
+                "arkcompiler/runtime_core/static_core/ark_config.gni",
+                "arkcompiler_riscv64_llvmbackend_disable",
+                "L1_build_compatibility",
+                (
+                    "Apply the target-evidenced riscv64 ArkCompiler compatibility rule that disables "
+                    "LLVM backend/irtoc/codegen for riscv64 so libllvmbackend's non-riscv64 assertion "
+                    "is not reached."
+                ),
+            )
+        )
+
     if clean_str(seed.get("architecture")) == "riscv64":
         for rel_path in collect_graphic_3d_riscv64_rofs_paths(target_root, workspace):
             if target_has_riscv64_rofs_evidence(target_root, rel_path):
@@ -1366,6 +1394,7 @@ def planned_actions(
         "RISC-V NDK build-file compatibility is applied only when target-source evidence contains the riscv64 NDK mapping.",
         "RISC-V third_party/curl build compatibility is applied only when target-source evidence contains the riscv64 cflags guard.",
         "RISC-V build/common libcpp prebuilt source mapping is applied only when target-source evidence contains the riscv64 libc++ rule.",
+        "RISC-V ArkCompiler LLVM backend/codegen disablement is applied only when target-source evidence contains the riscv64 ark_config rule.",
         "RISC-V graphic_3d embedded-asset rofs object mappings are applied only when target-source evidence contains matching rv64 object rules.",
         "Vendor product module text/config closures are imported only from direct target ohos.build module labels; non-text payloads become compile-only fake interfaces.",
         "Board module text/config closures are imported only from local labels in the target board root BUILD.gn; kernel modules, bootloader images, and firmware become compile-only fake interfaces.",
@@ -1591,6 +1620,34 @@ def apply_riscv64_libcpp_compat(data: bytes) -> tuple[bytes, list[str]]:
     return text.encode(TEXT_ENCODING), notes
 
 
+def apply_riscv64_ark_llvmbackend_disable_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if 'if (target_cpu == "riscv64")' in text and "is_llvmbackend = false" in text:
+        return data, ["ArkCompiler riscv64 LLVM backend/codegen disablement already present"]
+
+    riscv64_block = (
+        'if (target_cpu == "riscv64") {\n'
+        '  enable_irtoc = false\n'
+        '  enable_codegen = false\n'
+        '  is_llvmbackend = false\n'
+        '  is_llvm_interpreter = false\n'
+        '  is_llvm_fastpath = false\n'
+        '  is_llvm_aot = false\n'
+        '}\n\n'
+    )
+    insertion_marker = (
+        'if (!is_llvmbackend) {\n'
+        '  assert(!is_llvm_interpreter,'
+    )
+    if insertion_marker in text:
+        text = text.replace(insertion_marker, riscv64_block + insertion_marker, 1)
+        return (
+            text.encode(TEXT_ENCODING),
+            ["added target-evidenced ArkCompiler riscv64 LLVM backend/codegen disablement"],
+        )
+    return data, ["ArkCompiler riscv64 LLVM backend/codegen insertion point not found"]
+
+
 def apply_component_feature_compat(data: bytes, features_to_add: list[str]) -> tuple[bytes, list[str]]:
     notes: list[str] = []
     try:
@@ -1660,6 +1717,11 @@ def materialize_action(
             data, transforms = apply_riscv64_curl_compat(data)
         elif rel_path == "build/common/libcpp/BUILD.gn" and target.get("architecture") == "riscv64":
             data, transforms = apply_riscv64_libcpp_compat(data)
+        elif (
+            rel_path == "arkcompiler/runtime_core/static_core/ark_config.gni"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_riscv64_ark_llvmbackend_disable_compat(data)
         elif (
             action.get("source_role") == "graphic_3d_riscv64_rofs_build_rule"
             and target.get("architecture") == "riscv64"
@@ -1884,6 +1946,30 @@ def collect_undefined_identifier_matches(text: str) -> list[tuple[str, str]]:
     return matches
 
 
+def collect_gn_assertion_matches(text: str) -> list[tuple[str, list[str]]]:
+    matches: list[tuple[str, list[str]]] = []
+    seen: set[str] = set()
+    lines = strip_ansi(text).splitlines()
+    for index, line in enumerate(lines):
+        path_match = re.search(r"ERROR at //([^:\n]+):\d+:\d+: Assertion failed", line)
+        if not path_match:
+            continue
+        gn_path = path_match.group(1)
+        if gn_path in seen:
+            continue
+        context: list[str] = []
+        for context_line in lines[index + 1 : index + 8]:
+            clean_line = clean_prefixed_gn_line(context_line)
+            if not clean_line or clean_line.startswith("^") or clean_line.startswith("See "):
+                continue
+            context.append(clean_line)
+            if len(context) >= 3:
+                break
+        seen.add(gn_path)
+        matches.append((gn_path, context))
+    return matches
+
+
 def build_diagnostic(
     diag_id: str,
     classification: str,
@@ -2019,6 +2105,35 @@ def parse_build_diagnostics(
                     "Compare the current workspace file with the reference target source and decide whether this is a safe text compatibility patch or requires a tracked fake interface for a missing dependency.",
                     [str(log_path)],
                     matching_lines(all_text, [gn_path, "Undefined identifier", identifier], 8),
+                )
+            )
+
+    for gn_path, context in collect_gn_assertion_matches(plain_text)[:8]:
+        context_text = " ".join(context)
+        if (
+            gn_path == "arkcompiler/runtime_core/static_core/libllvmbackend/BUILD.gn"
+            and "target_cpu" in context_text
+            and clean_str(target.get("architecture")) == "riscv64"
+        ):
+            diagnostics.append(
+                build_diagnostic(
+                    "riscv64_arkcompiler_llvmbackend_disable_missing",
+                    "source_build_compatibility",
+                    "ArkCompiler libllvmbackend asserts the target CPU set before riscv64 can pass GN generation.",
+                    "Apply the target-evidenced ark_config.gni riscv64 rule that disables LLVM backend/irtoc/codegen for riscv64 and rerun the product build.",
+                    [str(log_path), str(target_root / "arkcompiler/runtime_core/static_core/ark_config.gni")],
+                    matching_lines(all_text, ["libllvmbackend/BUILD.gn", "Assertion failed", "target_cpu"], 8),
+                )
+            )
+        else:
+            diagnostics.append(
+                build_diagnostic(
+                    "gn_assertion_failed",
+                    "source_build_compatibility",
+                    f"GN assertion failed in {gn_path}.",
+                    "Compare the assertion and surrounding build arguments with the reference target source before applying a scoped compatibility patch.",
+                    [str(log_path)],
+                    matching_lines(all_text, [gn_path, "Assertion failed"], 8),
                 )
             )
 
