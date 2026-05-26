@@ -210,6 +210,12 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   generated `out/<product>/gen/.../LumeAssetCompiler` binary lacks `-riscv64`,
   remove that generated directory before rebuilding so Ninja cannot reuse stale
   host tooling.
+- When a RISC-V `graphic_3d` Lume shared library such as
+  `libPluginAGP3DText.z.so` fails with mixed floating-point ABI and the response
+  file starts with a generated `*_rv64.o` rofs object, set the generated RISC-V
+  ELF header flags to `EF_RISCV_RVC | EF_RISCV_FLOAT_ABI_DOUBLE` in
+  `LumeAssetCompiler` and remove stale generated `*_rv64.o` outputs before
+  rerunning.
 - For RISC-V resource object generation, add target-evidenced
   `build/scripts/run_objcopy.py` `riscv64` output/BFD mappings when Ninja
   reports `KeyError: 'riscv64'` from `run_objcopy.py`.

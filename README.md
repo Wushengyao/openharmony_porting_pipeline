@@ -242,7 +242,11 @@ target-evidenced Lume rofs asset-compiler riscv64 support when
 `CompilerAsset.sh` reports `Invalid argument!` while generating `rofs_rv64.o`;
 the executor now also declares the Lume host asset-compiler source inputs and
 cleans a stale generated `LumeAssetCompiler` binary when patched sources support
-`-riscv64` but the old tool does not.
+`-riscv64` but the old tool does not. If a generated `*_rv64.o` rofs object
+later causes a mixed floating-point ABI link in a `graphic_3d` Lume shared
+library, the executor sets the generated RISC-V ELF flags to
+`EF_RISCV_RVC | EF_RISCV_FLOAT_ABI_DOUBLE` and removes stale generated rv64
+rofs objects before rebuilding.
 It also adds
 target-evidenced `build/scripts/run_objcopy.py` riscv64 mappings when resource
 object generation raises `KeyError: 'riscv64'`. The same mapping is applied to

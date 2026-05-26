@@ -1072,6 +1072,20 @@ def workspace_lume_asset_compiler_sources_support_riscv64(workspace: Path) -> bo
     return "{ \"-riscv64\"" in app_text and "BUILD_RV64" in app_text and "EM_RISCV64" in elf_text
 
 
+def workspace_lume_asset_compiler_sources_set_riscv64_float_abi(workspace: Path) -> bool:
+    app_path = workspace / "foundation/graphic/graphic_3d/lume/LumeBinaryCompile/lumeassetcompiler/src/app.cpp"
+    elf_path = workspace / "foundation/graphic/graphic_3d/lume/LumeBinaryCompile/lumeassetcompiler/src/elf_common.h"
+    if not (app_path.is_file() and elf_path.is_file()):
+        return False
+    app_text = app_path.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    elf_text = elf_path.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "EF_RISCV_FLOAT_ABI_DOUBLE" in elf_text
+        and "EF_RISCV_RVC" in elf_text
+        and "o.head.e_flags = EF_RISCV_RVC | EF_RISCV_FLOAT_ABI_DOUBLE;" in app_text
+    )
+
+
 def generated_lume_asset_compiler_path(workspace: Path, product: str) -> Path:
     return (
         workspace
@@ -1089,6 +1103,20 @@ def generated_lume_asset_compiler_supports_riscv64(workspace: Path, product: str
         return b"-riscv64" in binary_path.read_bytes()
     except OSError:
         return False
+
+
+def generated_riscv64_elf_object_lacks_float_abi(path: Path) -> bool:
+    try:
+        data = path.read_bytes()[:64]
+    except OSError:
+        return False
+    if len(data) < 52 or data[:4] != b"\x7fELF" or data[4] != 2 or data[5] != 1:
+        return False
+    machine = int.from_bytes(data[18:20], "little")
+    if machine != 243:
+        return False
+    flags = int.from_bytes(data[48:52], "little")
+    return (flags & 0x0004) == 0
 
 
 def target_has_riscv64_objcopy_evidence(target_root: Path, rel_path: str = "build/scripts/run_objcopy.py") -> bool:
@@ -2485,13 +2513,34 @@ def apply_lume_asset_compiler_declared_inputs(data: bytes) -> tuple[bytes, list[
 
 def apply_lume_asset_compiler_riscv64_elf_machine(data: bytes) -> tuple[bytes, list[str]]:
     text = data.decode(TEXT_ENCODING, errors="ignore")
-    if "EM_RISCV64" in text:
-        return data, ["Lume asset compiler RISC-V ELF machine id already present"]
+    notes: list[str] = []
     anchor = "#define EM_AARCH64 183 /* ARM 64 bit */\n"
-    if anchor in text:
-        text = text.replace(anchor, anchor + "#define EM_RISCV64 243 /* RISCV 64 bit */\n", 1)
-        return text.encode(TEXT_ENCODING), ["added Lume asset compiler EM_RISCV64 id"]
-    return data, ["Lume asset compiler EM_RISCV64 insertion point not found"]
+
+    if "EM_RISCV64" not in text:
+        if anchor in text:
+            text = text.replace(anchor, anchor + "#define EM_RISCV64 243 /* RISCV 64 bit */\n", 1)
+            notes.append("added Lume asset compiler EM_RISCV64 id")
+        else:
+            notes.append("Lume asset compiler EM_RISCV64 insertion point not found")
+    else:
+        notes.append("Lume asset compiler RISC-V ELF machine id already present")
+
+    if "EF_RISCV_FLOAT_ABI_DOUBLE" not in text:
+        riscv_anchor = "#define EM_RISCV64 243 /* RISCV 64 bit */\n"
+        riscv_flags = (
+            riscv_anchor
+            + "#define EF_RISCV_RVC 0x0001\n"
+            + "#define EF_RISCV_FLOAT_ABI_DOUBLE 0x0004\n"
+        )
+        if riscv_anchor in text:
+            text = text.replace(riscv_anchor, riscv_flags, 1)
+            notes.append("added Lume asset compiler RISC-V ELF double-float ABI flag constants")
+        else:
+            notes.append("Lume asset compiler RISC-V ELF flag insertion point not found")
+    else:
+        notes.append("Lume asset compiler RISC-V ELF ABI flag constants already present")
+
+    return text.encode(TEXT_ENCODING), notes
 
 
 def apply_lume_asset_compiler_riscv64_platform(data: bytes) -> tuple[bytes, list[str]]:
@@ -2584,6 +2633,22 @@ def apply_lume_asset_compiler_riscv64_platform(data: bytes) -> tuple[bytes, list
             notes.append("Lume asset compiler rv64 ELF writer insertion point not found")
     else:
         notes.append("Lume asset compiler rv64 ELF object writer already present")
+
+    if "o.head.e_flags = EF_RISCV_RVC | EF_RISCV_FLOAT_ABI_DOUBLE;" not in text:
+        old = "    o.head.e_machine = arch; // machine id..\n"
+        new = (
+            old
+            + "    if (arch == EM_RISCV64) {\n"
+            + "        o.head.e_flags = EF_RISCV_RVC | EF_RISCV_FLOAT_ABI_DOUBLE;\n"
+            + "    }\n"
+        )
+        if old in text:
+            text = text.replace(old, new, 1)
+            notes.append("set RISC-V generated ELF objects to RVC double-float ABI")
+        else:
+            notes.append("Lume asset compiler RISC-V ELF e_flags insertion point not found")
+    else:
+        notes.append("Lume asset compiler RISC-V ELF e_flags already set to double-float ABI")
 
     return text.encode(TEXT_ENCODING), notes
 
@@ -4648,6 +4713,40 @@ def parse_build_diagnostics(
         )
 
     if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "cannot link object files with different floating-point ABI" in plain_text
+        and "graphic/graphic_3d/libPluginAGP3DText.z.so" in plain_text
+        and (
+            "lume_3dtext_rv64.o" in plain_text
+            or "foundation/graphic/graphic_3d/lume/Lume_3DText" in plain_text
+        )
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "graphic_3d_lume_rofs_riscv64_float_abi_flags_missing",
+                "source_build_compatibility",
+                "LumeAssetCompiler generated a RISC-V rofs object for libPluginAGP3DText without the double-float ELF e_flags expected by the rest of the riscv64 link.",
+                "Patch the LumeAssetCompiler RISC-V ELF writer to set EF_RISCV_RVC | EF_RISCV_FLOAT_ABI_DOUBLE on generated rv64 objects, remove stale generated *_rv64.o rofs outputs, and rerun the build.",
+                [
+                    str(log_path),
+                    str(workspace / "out" / product / "gen/foundation/graphic/graphic_3d/lume/Lume_3DText/assets/lume_3dtext_rv64.o"),
+                    str(workspace / "foundation/graphic/graphic_3d/lume/LumeBinaryCompile/lumeassetcompiler/src/app.cpp"),
+                    str(workspace / "foundation/graphic/graphic_3d/lume/LumeBinaryCompile/lumeassetcompiler/src/elf_common.h"),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "libPluginAGP3DText.z.so",
+                        "lume_3dtext_rv64.o",
+                        "cannot link object files with different floating-point ABI",
+                        "Lume_3DText",
+                    ],
+                    16,
+                ),
+            )
+        )
+
+    if (
         "FileNotFoundError" in plain_text
         and "out/" in plain_text
         and "error.log" in plain_text
@@ -4891,36 +4990,52 @@ def prepare_generated_artifacts_for_build(workspace: Path, product: str, target:
         return cleanups
 
     binary_path = generated_lume_asset_compiler_path(workspace, product)
-    if not binary_path.is_file() or generated_lume_asset_compiler_supports_riscv64(workspace, product):
-        return cleanups
-
-    generated_dir = binary_path.parent
     workspace_resolved = workspace.resolve()
-    generated_resolved = generated_dir.resolve()
-    allowed_prefix = (
+    allowed_compiler_dir = (
         workspace_resolved
         / "out"
         / product
         / "gen/foundation/graphic/graphic_3d/lume/LumeBinaryCompile/lumeassetcompiler"
     ).resolve()
-    if generated_resolved != allowed_prefix or workspace_resolved not in generated_resolved.parents:
+
+    if binary_path.is_file() and not generated_lume_asset_compiler_supports_riscv64(workspace, product):
+        generated_dir = binary_path.parent
+        generated_resolved = generated_dir.resolve()
+        if generated_resolved != allowed_compiler_dir or workspace_resolved not in generated_resolved.parents:
+            cleanups.append(
+                {
+                    "path": str(generated_dir),
+                    "status": "skipped_path_safety_check_failed",
+                    "reason": "refused to remove generated LumeAssetCompiler path outside the expected out/<product>/gen subtree",
+                }
+            )
+            return cleanups
+
+        shutil.rmtree(generated_dir)
         cleanups.append(
             {
                 "path": str(generated_dir),
-                "status": "skipped_path_safety_check_failed",
-                "reason": "refused to remove generated LumeAssetCompiler path outside the expected out/<product>/gen subtree",
+                "status": "removed",
+                "reason": "stale generated LumeAssetCompiler lacked -riscv64 while patched sources require riscv64 support",
             }
         )
-        return cleanups
 
-    shutil.rmtree(generated_dir)
-    cleanups.append(
-        {
-            "path": str(generated_dir),
-            "status": "removed",
-            "reason": "stale generated LumeAssetCompiler lacked -riscv64 while patched sources require riscv64 support",
-        }
-    )
+    if workspace_lume_asset_compiler_sources_set_riscv64_float_abi(workspace):
+        generated_lume_root = (
+            workspace_resolved / "out" / product / "gen/foundation/graphic/graphic_3d/lume"
+        ).resolve()
+        if generated_lume_root.is_dir() and workspace_resolved in generated_lume_root.parents:
+            for rv64_obj in sorted(generated_lume_root.rglob("*_rv64.o")):
+                if not generated_riscv64_elf_object_lacks_float_abi(rv64_obj):
+                    continue
+                rv64_obj.unlink()
+                cleanups.append(
+                    {
+                        "path": str(rv64_obj),
+                        "status": "removed",
+                        "reason": "stale generated RISC-V rofs object lacked double-float ELF e_flags",
+                    }
+                )
     return cleanups
 
 
