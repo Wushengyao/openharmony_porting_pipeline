@@ -226,6 +226,13 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   `ffrt_fiber_storage_size` is undeclared, add only the target-evidenced
   `__riscv` fiber storage-size branch (`64`) unless a later build error proves
   broader FFRT API migration is required.
+- When FFRT coroutine compilation reports undeclared `STACK_MAGIC`, add the
+  target-evidenced `__riscv && __riscv_xlen == 64` branch in
+  `foundation/resourceschedule/ffrt/include/eu/co_routine.h`.
+- When `cj_environment.cpp` reports `unsupported platform` on RISC-V, add the
+  target-evidenced `APP_USE_RISCV64` GN define and the matching
+  `APP_LIB_NAME "riscv64"` source branch; do not import unrelated host/macOS
+  dynamic-loader changes unless they become build blockers.
 - When the riscv64 musl `libc.so` link reports mixed floating-point ABI objects,
   align both musl `build/config/components/musl/BUILD.gn` compile/link cflags
   and `build/config/compiler/BUILD.gn` riscv64 `ldflags` with the target-evidenced

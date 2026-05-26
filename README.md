@@ -253,8 +253,10 @@ architecture key gap. If `third_party/libunwind` references missing
 RISC-V source lists after confirming the shared libunwind archive lacks that
 file. If FFRT public headers trip the `unsupported architecture` guard for
 `ffrt_fiber_storage_size`, the executor adds the target-evidenced `__riscv`
-storage-size branch without importing broader 6.1 API enum changes. If musl
-`libc.so` linking reports mixed riscv64
+storage-size branch without importing broader 6.1 API enum changes. It also
+handles the follow-on FFRT coroutine `STACK_MAGIC` RISC-V branch and
+`cj_environment`'s `APP_USE_RISCV64`/`APP_LIB_NAME "riscv64"` platform mapping
+when those errors appear. If musl `libc.so` linking reports mixed riscv64
 floating-point ABI objects, the executor aligns musl compile/link cflags and
 global riscv64 `ldflags` with the target-evidenced
 `-march=rv64imafdc`/`-mabi=lp64d` ABI instead of removing musl or target

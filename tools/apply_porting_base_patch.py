@@ -1099,6 +1099,32 @@ def target_has_ffrt_riscv64_fiber_storage_evidence(target_root: Path) -> bool:
     )
 
 
+def target_has_ffrt_riscv64_stack_magic_evidence(target_root: Path) -> bool:
+    header = target_root / "foundation/resourceschedule/ffrt/include/eu/co_routine.h"
+    if not header.is_file():
+        return False
+    text = header.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "constexpr size_t STACK_MAGIC = 0x7BCDABCDABCDABCD;" in text
+        and "#elif defined(__riscv) && __riscv_xlen == 64" in text
+    )
+
+
+def target_has_cj_environment_riscv64_evidence(target_root: Path) -> bool:
+    build_gn = target_root / "foundation/ability/ability_runtime/cj_environment/frameworks/cj_environment/BUILD.gn"
+    source = target_root / "foundation/ability/ability_runtime/cj_environment/frameworks/cj_environment/src/cj_environment.cpp"
+    if not (build_gn.is_file() and source.is_file()):
+        return False
+    build_text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    source_text = source.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        'target_cpu == "riscv64"' in build_text
+        and '"APP_USE_RISCV64"' in build_text
+        and "APP_USE_RISCV64" in source_text
+        and '#define APP_LIB_NAME "riscv64"' in source_text
+    )
+
+
 def target_has_riscv64_compiler_mabi_evidence(target_root: Path) -> bool:
     target_compiler = target_root / "build/config/compiler/BUILD.gn"
     if not target_compiler.is_file():
@@ -1656,6 +1682,41 @@ def planned_actions(
                 ),
             )
         )
+
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_ffrt_riscv64_stack_magic_evidence(target_root):
+        actions.append(
+            workspace_transform_action(
+                "foundation/resourceschedule/ffrt/include/eu/co_routine.h",
+                "ffrt_riscv64_stack_magic",
+                "L1_build_compatibility",
+                (
+                    "Add the target-evidenced RISC-V STACK_MAGIC branch so FFRT coroutine code "
+                    "compiles for riscv64."
+                ),
+            )
+        )
+
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_cj_environment_riscv64_evidence(target_root):
+        for rel_path, role, reason in [
+            (
+                "foundation/ability/ability_runtime/cj_environment/frameworks/cj_environment/BUILD.gn",
+                "cj_environment_riscv64_app_define",
+                "Add the target-evidenced APP_USE_RISCV64 define for cj_environment.",
+            ),
+            (
+                "foundation/ability/ability_runtime/cj_environment/frameworks/cj_environment/src/cj_environment.cpp",
+                "cj_environment_riscv64_app_lib_name",
+                "Add the target-evidenced riscv64 app-library subdirectory mapping for cj_environment.",
+            ),
+        ]:
+            actions.append(
+                workspace_transform_action(
+                    rel_path,
+                    role,
+                    "L1_build_compatibility",
+                    reason,
+                )
+            )
 
     arkui_objcopy_rel = "foundation/arkui/ace_engine/build/tools/run_objcopy.py"
     if clean_str(seed.get("architecture")) == "riscv64" and target_has_riscv64_objcopy_evidence(target_root, arkui_objcopy_rel):
@@ -2296,6 +2357,42 @@ def apply_ffrt_riscv64_fiber_storage_compat(data: bytes) -> tuple[bytes, list[st
     return data, ["FFRT riscv fiber storage-size insertion point not found"]
 
 
+def apply_ffrt_riscv64_stack_magic_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if "#elif defined(__riscv) && __riscv_xlen == 64" in text and "STACK_MAGIC = 0x7BCDABCDABCDABCD" in text:
+        return data, ["FFRT riscv STACK_MAGIC branch already present"]
+    old = "#elif defined(__x86_64__)\nconstexpr size_t STACK_MAGIC = 0x7BCDABCDABCDABCD;\n"
+    new = old + "#elif defined(__riscv) && __riscv_xlen == 64\nconstexpr size_t STACK_MAGIC = 0x7BCDABCDABCDABCD;\n"
+    if old in text:
+        text = text.replace(old, new, 1)
+        return text.encode(TEXT_ENCODING), ["added FFRT riscv STACK_MAGIC branch"]
+    return data, ["FFRT riscv STACK_MAGIC insertion point not found"]
+
+
+def apply_cj_environment_riscv64_app_define(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if '"APP_USE_RISCV64"' in text:
+        return data, ["cj_environment APP_USE_RISCV64 define already present"]
+    old = '  } else if (target_cpu == "x86_64") {\n    defines += [ "APP_USE_X86_64" ]\n'
+    new = old + '  } else if (target_cpu == "riscv64") {\n    defines += [ "APP_USE_RISCV64" ]\n'
+    if old in text:
+        text = text.replace(old, new, 1)
+        return text.encode(TEXT_ENCODING), ["added cj_environment APP_USE_RISCV64 define"]
+    return data, ["cj_environment APP_USE_RISCV64 define insertion point not found"]
+
+
+def apply_cj_environment_riscv64_app_lib_name(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if "APP_USE_RISCV64" in text and '#define APP_LIB_NAME "riscv64"' in text:
+        return data, ["cj_environment riscv64 APP_LIB_NAME branch already present"]
+    old = '#elif defined(NAPI_TARGET_ARM64)\n#define APP_LIB_NAME "arm64"\n'
+    new = old + '#elif defined(APP_USE_RISCV64)\n#define APP_LIB_NAME "riscv64"\n'
+    if old in text:
+        text = text.replace(old, new, 1)
+        return text.encode(TEXT_ENCODING), ["added cj_environment riscv64 APP_LIB_NAME branch"]
+    return data, ["cj_environment riscv64 APP_LIB_NAME insertion point not found"]
+
+
 def apply_riscv64_compiler_ldflags_mabi_compat(data: bytes) -> tuple[bytes, list[str]]:
     text = data.decode(TEXT_ENCODING, errors="ignore")
     notes: list[str] = []
@@ -2803,6 +2900,24 @@ def materialize_action(
             and target.get("architecture") == "riscv64"
         ):
             data, transforms = apply_ffrt_riscv64_fiber_storage_compat(data)
+        elif (
+            rel_path == "foundation/resourceschedule/ffrt/include/eu/co_routine.h"
+            and action.get("source_role") == "ffrt_riscv64_stack_magic"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_ffrt_riscv64_stack_magic_compat(data)
+        elif (
+            rel_path == "foundation/ability/ability_runtime/cj_environment/frameworks/cj_environment/BUILD.gn"
+            and action.get("source_role") == "cj_environment_riscv64_app_define"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_cj_environment_riscv64_app_define(data)
+        elif (
+            rel_path == "foundation/ability/ability_runtime/cj_environment/frameworks/cj_environment/src/cj_environment.cpp"
+            and action.get("source_role") == "cj_environment_riscv64_app_lib_name"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_cj_environment_riscv64_app_lib_name(data)
         elif (
             rel_path == "foundation/arkui/ace_engine/build/tools/run_objcopy.py"
             and action.get("source_role") == "arkui_run_objcopy_riscv64_compat"
@@ -3780,6 +3895,55 @@ def parse_build_diagnostics(
                 matching_lines(
                     all_text,
                     ["type_def.h", "unsupported architecture", "ffrt_fiber_storage_size"],
+                    12,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "foundation/resourceschedule/ffrt/src/eu/co_routine.cpp" in plain_text
+        and "STACK_MAGIC" in plain_text
+        and "use of undeclared identifier" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "ffrt_co_routine_riscv64_stack_magic_missing",
+                "source_build_compatibility",
+                "FFRT coroutine code uses STACK_MAGIC, but co_routine.h lacks the RISC-V STACK_MAGIC branch.",
+                "Apply the target-evidenced foundation/resourceschedule/ffrt/include/eu/co_routine.h patch that defines STACK_MAGIC for __riscv && __riscv_xlen == 64, then rerun the build.",
+                [
+                    str(log_path),
+                    str(target_root / "foundation/resourceschedule/ffrt/include/eu/co_routine.h"),
+                ],
+                matching_lines(
+                    all_text,
+                    ["co_routine.cpp", "STACK_MAGIC", "use of undeclared identifier"],
+                    12,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "foundation/ability/ability_runtime/cj_environment/frameworks/cj_environment/src/cj_environment.cpp" in plain_text
+        and "unsupported platform" in plain_text
+        and "APP_LIB_NAME" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "cj_environment_riscv64_platform_mapping_missing",
+                "source_build_compatibility",
+                "cj_environment lacks an APP_USE_RISCV64 define and APP_LIB_NAME riscv64 branch, so RISC-V compilation hits the unsupported platform guard.",
+                "Apply the target-evidenced cj_environment BUILD.gn/source patch adding APP_USE_RISCV64 and APP_LIB_NAME \"riscv64\", then rerun the build.",
+                [
+                    str(log_path),
+                    str(target_root / "foundation/ability/ability_runtime/cj_environment/frameworks/cj_environment/BUILD.gn"),
+                    str(target_root / "foundation/ability/ability_runtime/cj_environment/frameworks/cj_environment/src/cj_environment.cpp"),
+                ],
+                matching_lines(
+                    all_text,
+                    ["cj_environment.cpp", "unsupported platform", "APP_LIB_NAME"],
                     12,
                 ),
             )
