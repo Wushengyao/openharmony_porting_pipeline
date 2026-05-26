@@ -1096,10 +1096,13 @@ def planned_actions(
 
     board_root_rel = f"device/board/{vendor}/{board}"
     board_kernel_source_rel = collect_board_kernel_source_rel(target_root, board_root_rel)
+    workspace_kernel_source_is_real = bool(
+        board_kernel_source_rel and (workspace / board_kernel_source_rel / "Makefile").is_file()
+    )
     if (
         board_kernel_source_rel
         and (target_root / board_kernel_source_rel).is_dir()
-        and not (workspace / board_kernel_source_rel).exists()
+        and not workspace_kernel_source_is_real
     ):
         fake_kernel_marker_rel = f"{board_kernel_source_rel}/.openharmony_porting_fake_kernel_source"
         actions.append(
