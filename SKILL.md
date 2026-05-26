@@ -222,8 +222,16 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
 - For ArkCompiler static_core RISC-V runtime failures, import only the
   target-evidenced minimal runtime support needed for compile progress:
   RISC-V `Arch`/`ArchTraits` mapping, runtime/fiber/signal context mappings,
-  RISC-V runtime assembly sources, and guarded object accessor overloads. Keep
-  this as source compatibility work, not product feature filtering.
+  RISC-V runtime assembly sources, `THREAD_REG`/`MAKE_ASM_NAME` assembly macro
+  support, and guarded object accessor overloads. Keep this as source
+  compatibility work, not product feature filtering. When
+  `cross_values_generator.rb` fails because no arch-name is passed, add only the
+  target-evidenced `cross_values/BUILD.gn` `current_cpu == "riscv64"` ->
+  `RISCV64` mapping; do not import broader ArkCompiler 6.1 rename churn.
+- When ArkCompiler RISC-V bridge assembly reports tp-relative offsets outside
+  the signed 12-bit immediate range, classify it as source/build compatibility
+  debt and iterate toward a target-scoped large-offset access helper; do not
+  hide it by removing ArkCompiler runtime targets or by fake binary substitution.
 - For RISC-V graphics builds, add target-evidenced `graphic_3d` rofs `rv64`
   object mappings to compile files when GN reports empty generated asset paths;
   this is a build-compatibility source fix, not a product feature removal.
@@ -319,9 +327,10 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
 - If prebuilt host clang selects an incomplete host GCC installation and cannot
   include `<cstdlib>` or cannot link `-static-libstdc++`, validate the detected
   host paths, but do not export host `CPLUS_INCLUDE_PATH` globally into a target
-  product build. Treat host include paths as probe-only unless a later host-only
-  scope is available; `LIBRARY_PATH` may be exported after validation. Record
-  this as an environment-scope fix, not a source patch.
+  product build. Scope validated include/library paths to the linux `clang_x64`
+  host toolchain through `extra_cxxflags`/`extra_ldflags`; `LIBRARY_PATH` may be
+  exported after validation for host `-static-libstdc++` repair. Record this as
+  a host/prebuilt toolchain fix, not fake dependency debt or target-source work.
 - Use `target_dependency_inventory` to summarize binary, firmware, bootloader,
   prebuilt, and closed-driver candidates from selected evidence without
   promoting them to source fixes.

@@ -377,15 +377,24 @@ checked for absence.
 When ArkCompiler static_core reaches RISC-V runtime compilation, the executor
 adds the target-evidenced minimal runtime support set: RISC-V `Arch` and
 `ArchTraits` mapping, runtime/fiber/signal context mappings, RISC-V runtime
-assembly sources, and guarded object accessor overloads. These are treated as
-source compatibility patches, not product feature filtering.
-Build attempts also probe the prebuilt host clang `<cstdlib>` include path. If
-clang selected an incomplete host GCC installation, the executor validates the
-candidate host paths but keeps `CPLUS_INCLUDE_PATH` probe-only for target product
-builds, because a global host include path can contaminate riscv64 musl/libcxx
-compiles. A validated `LIBRARY_PATH` may still be exported for host
-`-static-libstdc++` link repair, and the manifest records the environment-scope
-decision.
+assembly sources, `THREAD_REG`/`MAKE_ASM_NAME` assembly macro support, and
+guarded object accessor overloads. These are treated as source compatibility
+patches, not product feature filtering. If
+`cross_values_generator.rb` receives no arch-name for RISC-V, the executor may
+also add the target-evidenced `cross_values/BUILD.gn` `RISCV64` arch mapping
+without importing unrelated ArkCompiler 6.1 rename churn.
+If RISC-V bridge assembly later reports tp-relative ManagedThread offsets
+outside the signed 12-bit immediate range, the manifest classifies that as a
+source/build compatibility blocker for a target-scoped large-offset helper, not
+as external binary dependency debt.
+Build attempts also probe the prebuilt host clang C++ standard-library include
+path. If clang selected an incomplete host GCC installation, the executor
+validates the candidate paths and scopes them to `build/toolchain/linux:clang_x64`
+through `extra_cxxflags`/`extra_ldflags`; it keeps `CPLUS_INCLUDE_PATH`
+probe-only for target product builds because a global host include path can
+contaminate riscv64 musl/libcxx compiles. A validated `LIBRARY_PATH` may still
+be exported for host `-static-libstdc++` link repair, and the manifest records
+the environment-scope decision.
 
 Minimum local checks for the new execution-assistant layer:
 

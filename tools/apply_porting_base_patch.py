@@ -65,6 +65,29 @@ TEE_RISCV64_BARRIER_SOURCE_RELS = [
     "base/tee/tee_client/services/teecd/src/fs_work_agent.c",
     "base/tee/tee_client/services/teecd/src/misc_work_agent.c",
 ]
+CXX_STDLIB_HEADER_NAMES = {
+    "algorithm",
+    "array",
+    "atomic",
+    "bitset",
+    "cinttypes",
+    "condition_variable",
+    "cstddef",
+    "cstdint",
+    "cstdlib",
+    "ctime",
+    "functional",
+    "list",
+    "map",
+    "memory",
+    "mutex",
+    "optional",
+    "string",
+    "type_traits",
+    "unordered_map",
+    "utility",
+    "vector",
+}
 
 
 def now() -> str:
@@ -1228,6 +1251,14 @@ def target_has_arkcompiler_runtime_riscv64_support_evidence(target_root: Path) -
     )
 
 
+def target_has_arkcompiler_cross_values_riscv64_evidence(target_root: Path) -> bool:
+    cross_values_build = target_root / "arkcompiler/runtime_core/static_core/cross_values/BUILD.gn"
+    if not cross_values_build.is_file():
+        return False
+    text = cross_values_build.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return 'current_cpu == "riscv64"' in text and 'arch = "RISCV64"' in text
+
+
 def target_has_compile_standard_whitelist_prefix_evidence(target_root: Path, prefix: str) -> bool:
     whitelist = target_root / "build/compile_standard_whitelist.json"
     if not whitelist.is_file():
@@ -1256,6 +1287,45 @@ def target_has_compile_app_root_ohpm_evidence(target_root: Path) -> bool:
         and 'os.path.join(root_dir, "prebuilts/tool/command-line-tools/ohpm/bin/ohpm")' in text
         and "ohpm_install_cmd = [ohpm_path, 'install']" in text
     )
+
+
+def host_clang_x64_stdlib_fix_actions(workspace: Path) -> list[dict[str, Any]]:
+    host_fix = detect_host_cxx_env_fix(workspace)
+    include_paths = [clean_str(path, "") for path in host_fix.get("include_paths") or [] if clean_str(path, "")]
+    if not include_paths:
+        return []
+    if not (workspace / "build/toolchain/linux/BUILD.gn").is_file():
+        return []
+    library_paths = [
+        clean_str(path, "") for path in host_fix.get("library_paths") or [] if clean_str(path, "")
+    ]
+    linux_action = workspace_transform_action(
+        "build/toolchain/linux/BUILD.gn",
+        "host_clang_x64_cxx_stdlib_paths",
+        "L1_host_toolchain_compatibility",
+        (
+            "Scope detected host GCC C++ standard-library include/library paths to the "
+            "linux clang_x64 host toolchain only; this repairs host ArkCompiler tools "
+            "without exporting CPLUS_INCLUDE_PATH into riscv64 target compilation."
+        ),
+    )
+    linux_action["host_cxx_include_paths"] = include_paths
+    linux_action["host_cxx_library_paths"] = library_paths
+    linux_action["host_cxx_probe_validation"] = clean_str(host_fix.get("validation"), "")
+    linux_action["dependency_policy"] = "host_toolchain_config"
+
+    forward_action = workspace_transform_action(
+        "build/toolchain/gcc_toolchain.gni",
+        "clang_toolchain_extra_flags_forwarding",
+        "L1_host_toolchain_compatibility",
+        (
+            "Forward extra_cxxflags/extra_ldflags through the clang_toolchain wrapper so "
+            "the host-only clang_x64 stdlib repair variables are consumed instead of "
+            "triggering GN 'Assignment had no effect'."
+        ),
+    )
+    forward_action["dependency_policy"] = "host_toolchain_config"
+    return [linux_action, forward_action]
 
 
 def target_compile_standard_whitelist_prefixes(target: dict[str, Any]) -> list[str]:
@@ -2319,7 +2389,7 @@ def planned_actions(
             (
                 "arkcompiler/runtime_core/static_core/runtime/arch/asm_support.h",
                 "arkcompiler_runtime_riscv64_asm_support",
-                "Add target-evidenced RISC-V THREAD_REG assembly support.",
+                "Add target-evidenced RISC-V THREAD_REG and MAKE_ASM_NAME assembly support.",
             ),
             (
                 "arkcompiler/runtime_core/static_core/runtime/fibers/fiber_context.h",
@@ -2379,6 +2449,19 @@ def planned_actions(
                 )
             )
 
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_arkcompiler_cross_values_riscv64_evidence(target_root):
+        actions.append(
+            workspace_transform_action(
+                "arkcompiler/runtime_core/static_core/cross_values/BUILD.gn",
+                "arkcompiler_cross_values_riscv64_arch",
+                "L1_build_compatibility",
+                (
+                    "Add the target-evidenced RISCV64 arch-name mapping for ArkCompiler "
+                    "cross_values generation so the generator receives input, output, and arch-name."
+                ),
+            )
+        )
+
     compile_standard_whitelist_prefixes = target_compile_standard_whitelist_prefixes(seed)
     if any(
         target_has_compile_standard_whitelist_prefix_evidence(target_root, prefix)
@@ -2410,6 +2493,8 @@ def planned_actions(
                 ),
             )
         )
+
+    actions.extend(host_clang_x64_stdlib_fix_actions(workspace))
 
     if clean_str(seed.get("architecture")) == "riscv64":
         for rel_path in collect_graphic_3d_riscv64_rofs_paths(target_root, workspace):
@@ -3838,13 +3923,67 @@ def apply_ark_runtime_riscv64_memory_helpers(data: bytes) -> tuple[bytes, list[s
 
 def apply_ark_runtime_riscv64_asm_support(data: bytes) -> tuple[bytes, list[str]]:
     text = data.decode(TEXT_ENCODING, errors="ignore")
+    notes: list[str] = []
+
     if "PANDA_TARGET_RISCV64" in text and "THREAD_REG tp" in text:
-        return data, ["ArkCompiler RISCV64 asm THREAD_REG already present"]
-    old = "#elif defined(PANDA_TARGET_AMD64)\n// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)\n#define THREAD_REG r15\n#else"
-    new = "#elif defined(PANDA_TARGET_AMD64)\n// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)\n#define THREAD_REG r15\n#elif defined(PANDA_TARGET_RISCV64)\n#define THREAD_REG tp\n#else"
-    if old in text:
-        return text.replace(old, new, 1).encode(TEXT_ENCODING), ["added target-evidenced RISCV64 asm THREAD_REG"]
-    return data, ["ArkCompiler RISCV64 asm support insertion point not found"]
+        notes.append("ArkCompiler RISCV64 asm THREAD_REG already present")
+    else:
+        old = (
+            "#elif defined(PANDA_TARGET_AMD64)\n"
+            "// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)\n"
+            "#define THREAD_REG r15\n"
+            "#else"
+        )
+        new = (
+            "#elif defined(PANDA_TARGET_AMD64)\n"
+            "// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)\n"
+            "#define THREAD_REG r15\n"
+            "#elif defined(PANDA_TARGET_RISCV64)\n"
+            "#define THREAD_REG tp\n"
+            "#else"
+        )
+        if old in text:
+            text = text.replace(old, new, 1)
+            notes.append("added target-evidenced RISCV64 asm THREAD_REG")
+        else:
+            notes.append("ArkCompiler RISCV64 asm THREAD_REG insertion point not found")
+
+    if "MAKE_ASM_NAME(name)" in text:
+        notes.append("ArkCompiler MAKE_ASM_NAME macro already present")
+    else:
+        old_type_function = (
+            "#ifndef PANDA_TARGET_WINDOWS\n"
+            "// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)\n"
+            "#define TYPE_FUNCTION(name) .type name, %function\n"
+            "#else\n"
+            "#define TYPE_FUNCTION(name)\n"
+            "#endif\n"
+        )
+        new_type_function = (
+            "#if !defined(PANDA_TARGET_WINDOWS) && !defined(PANDA_TARGET_MACOS)\n"
+            "// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)\n"
+            "#define TYPE_FUNCTION(name) .type name, %function\n"
+            "#else\n"
+            "#define TYPE_FUNCTION(name)\n"
+            "#endif\n"
+            "\n"
+            "#ifdef PANDA_TARGET_MACOS\n"
+            "/* CC-OFFNXT(G.PRE.02) name part*/\n"
+            "// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)\n"
+            "#define MAKE_ASM_NAME(name) _##name\n"
+            "#else\n"
+            "/* CC-OFFNXT(G.PRE.02) name part*/\n"
+            "// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)\n"
+            "#define MAKE_ASM_NAME(name) name\n"
+            "#endif\n"
+        )
+        if old_type_function in text:
+            text = text.replace(old_type_function, new_type_function, 1)
+            notes.append("added target-evidenced MAKE_ASM_NAME macro for ArkCompiler assembly labels")
+        else:
+            notes.append("ArkCompiler MAKE_ASM_NAME insertion point not found")
+
+    return text.encode(TEXT_ENCODING), notes or ["ArkCompiler RISCV64 asm support already present"]
 
 
 def apply_ark_runtime_riscv64_fiber_context(data: bytes) -> tuple[bytes, list[str]]:
@@ -3932,6 +4071,19 @@ def apply_ark_runtime_riscv64_build_sources(data: bytes) -> tuple[bytes, list[st
             "added target-evidenced RISCV64 runtime arch/bridge/fiber sources"
         ]
     return data, ["ArkCompiler RISCV64 runtime BUILD.gn source insertion point not found"]
+
+
+def apply_ark_cross_values_riscv64_arch(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if 'current_cpu == "riscv64"' in text and 'arch = "RISCV64"' in text:
+        return data, ["ArkCompiler cross_values RISCV64 arch mapping already present"]
+    old = '  } else if (current_cpu == "amd64" || current_cpu == "x64" ||\n'
+    new = '  } else if (current_cpu == "riscv64") {\n    arch = "RISCV64"\n' + old
+    if old in text:
+        return text.replace(old, new, 1).encode(TEXT_ENCODING), [
+            "added target-evidenced RISCV64 arch mapping to cross_values generation"
+        ]
+    return data, ["ArkCompiler cross_values RISCV64 arch insertion point not found"]
 
 
 def apply_target_compile_standard_whitelist_prefix_entries(
@@ -4038,6 +4190,98 @@ def apply_compile_app_root_ohpm_path_resolution(data: bytes) -> tuple[bytes, lis
             notes.append("compile_app.py already resolves ohpm from the OpenHarmony source root")
         return text.encode(TEXT_ENCODING), notes
     return data, notes or ["compile_app.py ohpm path transform skipped: insertion point not found"]
+
+
+def gn_flag_path(path: str) -> str:
+    path = path.strip()
+    if not path or re.search(r"[\s\"$]", path):
+        return ""
+    return path
+
+
+def apply_host_clang_x64_cxx_stdlib_paths(
+    data: bytes,
+    include_paths: list[str],
+    library_paths: list[str],
+) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    marker = 'clang_toolchain("clang_x64") {'
+    start = text.find(marker)
+    if start < 0:
+        return data, ["linux clang_x64 toolchain block not found"]
+
+    brace = text.find("{", start)
+    depth = 0
+    end = -1
+    for index in range(brace, len(text)):
+        char = text[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                end = index + 1
+                break
+    if end < 0:
+        return data, ["linux clang_x64 toolchain block end not found"]
+
+    block = text[start:end]
+    sentinel = "# OpenHarmony porting: scope host GCC C++ stdlib paths to clang_x64 only."
+    if sentinel in block:
+        return data, ["host clang_x64 C++ stdlib paths already scoped in toolchain block"]
+    if "extra_cxxflags" in block:
+        return data, ["host clang_x64 C++ stdlib transform skipped: extra_cxxflags already defined"]
+
+    safe_includes = [gn_flag_path(path) for path in include_paths]
+    safe_includes = [path for path in safe_includes if path]
+    if not safe_includes:
+        return data, ["host clang_x64 C++ stdlib transform skipped: no safe include paths"]
+    safe_libs = [gn_flag_path(path) for path in library_paths]
+    safe_libs = [path for path in safe_libs if path]
+
+    lines = [
+        "",
+        f"  {sentinel}",
+        '  extra_cxxflags = "' + " ".join(f"-isystem{path}" for path in safe_includes) + '"',
+    ]
+    if safe_libs and "extra_ldflags" not in block:
+        lines.append('  extra_ldflags = "' + " ".join(f"-L{path}" for path in safe_libs) + '"')
+    elif safe_libs:
+        lines.append("  # Host C++ library paths detected but extra_ldflags is already defined in this block.")
+    insertion = "\n".join(lines) + "\n"
+
+    anchor = "  enable_linker_map = true\n"
+    anchor_index = block.find(anchor)
+    if anchor_index < 0:
+        return data, ["host clang_x64 C++ stdlib insertion point not found"]
+    insert_at = anchor_index + len(anchor)
+    new_block = block[:insert_at] + insertion + block[insert_at:]
+    new_text = text[:start] + new_block + text[end:]
+    notes = [
+        "scoped host C++ stdlib include paths to linux clang_x64 extra_cxxflags",
+        f"include_paths={safe_includes}",
+    ]
+    if safe_libs:
+        notes.append(f"library_paths={safe_libs}")
+    return new_text.encode(TEXT_ENCODING), notes
+
+
+def apply_clang_toolchain_extra_flags_forwarding(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if '"extra_cxxflags"' in text and '"extra_ldflags"' in text:
+        return data, ["clang_toolchain already forwards extra_cxxflags and extra_ldflags"]
+    anchor = '                             "rust_abi_target",\n'
+    if anchor not in text:
+        return data, ["clang_toolchain extra flag forwarding insertion point not found"]
+    insertion = (
+        anchor
+        + '                             "extra_cxxflags",\n'
+        + '                             "extra_ldflags",\n'
+    )
+    new_text = text.replace(anchor, insertion, 1)
+    return new_text.encode(TEXT_ENCODING), [
+        "forwarded extra_cxxflags and extra_ldflags from clang_toolchain invoker to gcc_toolchain"
+    ]
 
 
 def apply_webview_bundle_app_fwk_update_migration(data: bytes) -> tuple[bytes, list[str]]:
@@ -4318,6 +4562,12 @@ def materialize_action(
         ):
             data, transforms = apply_ark_runtime_riscv64_build_sources(data)
         elif (
+            rel_path == "arkcompiler/runtime_core/static_core/cross_values/BUILD.gn"
+            and action.get("source_role") == "arkcompiler_cross_values_riscv64_arch"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_ark_cross_values_riscv64_arch(data)
+        elif (
             rel_path == "build/compile_standard_whitelist.json"
             and action.get("source_role")
             in {"soc_display_compile_standard_whitelist_entries", "target_compile_standard_whitelist_entries"}
@@ -4334,6 +4584,20 @@ def materialize_action(
             and action.get("source_role") == "compile_app_root_ohpm_path_resolution"
         ):
             data, transforms = apply_compile_app_root_ohpm_path_resolution(data)
+        elif (
+            rel_path == "build/toolchain/linux/BUILD.gn"
+            and action.get("source_role") == "host_clang_x64_cxx_stdlib_paths"
+        ):
+            data, transforms = apply_host_clang_x64_cxx_stdlib_paths(
+                data,
+                [clean_str(path, "") for path in action.get("host_cxx_include_paths") or []],
+                [clean_str(path, "") for path in action.get("host_cxx_library_paths") or []],
+            )
+        elif (
+            rel_path == "build/toolchain/gcc_toolchain.gni"
+            and action.get("source_role") == "clang_toolchain_extra_flags_forwarding"
+        ):
+            data, transforms = apply_clang_toolchain_extra_flags_forwarding(data)
         elif (
             rel_path == "base/web/webview/bundle.json"
             and action.get("source_role") == "webview_bundle_app_fwk_update_sa_migration"
@@ -5164,16 +5428,158 @@ def parse_build_diagnostics(
     plain_text = strip_ansi(all_text)
     diagnostics: list[dict[str, Any]] = []
 
-    if "'cstdlib' file not found" in plain_text:
-        evidence_paths = [str(path) for path, text in texts if "'cstdlib' file not found" in strip_ansi(text)]
+    missing_stdlib_headers = sorted(
+        {
+            header
+            for header in re.findall(r"fatal error: '([^']+)' file not found", plain_text)
+            if header in CXX_STDLIB_HEADER_NAMES
+        }
+    )
+    if missing_stdlib_headers and (
+        "clang_x64/" in plain_text
+        or "//build/toolchain/linux:clang_x64" in plain_text
+        or "prebuilts/clang/ohos/linux-x86_64/llvm/bin/clang++" in plain_text
+    ):
+        evidence_paths = [
+            str(path)
+            for path, text in texts
+            if any(f"'{header}' file not found" in strip_ansi(text) for header in missing_stdlib_headers)
+        ]
         diagnostics.append(
             build_diagnostic(
-                "host_sdk_cxx_stdlib_header_missing",
+                "host_sdk_cxx_stdlib_headers_missing",
                 "host_or_prebuilt_toolchain",
-                "The SDK/host clang_x64 stage cannot find the C++ standard header <cstdlib>.",
-                "Repair or provision the host/prebuilt C++ standard library before treating this as a target-source porting failure.",
+                (
+                    "The SDK/host clang_x64 stage cannot find C++ standard headers: "
+                    + ", ".join(f"<{header}>" for header in missing_stdlib_headers[:8])
+                    + (" ..." if len(missing_stdlib_headers) > 8 else "")
+                    + "."
+                ),
+                (
+                    "Scope the detected host GCC C++ include/library paths to build/toolchain/linux:clang_x64 "
+                    "instead of exporting CPLUS_INCLUDE_PATH globally; keep this classified as host/prebuilt "
+                    "toolchain repair rather than target-source porting."
+                ),
                 evidence_paths,
-                matching_lines(all_text, ["cstdlib", "ResourceLimits.cpp"], 6),
+                matching_lines(all_text, ["fatal error:", "clang_x64", *missing_stdlib_headers[:6]], 12),
+            )
+        )
+
+    if (
+        "Assignment had no effect" in plain_text
+        and "extra_cxxflags" in plain_text
+        and 'clang_toolchain("clang_x64")' in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "clang_x64_extra_cxxflags_not_forwarded",
+                "host_or_prebuilt_toolchain_build_config",
+                "GN rejected the host clang_x64 stdlib repair because clang_toolchain does not forward extra_cxxflags/extra_ldflags to gcc_toolchain.",
+                "Patch build/toolchain/gcc_toolchain.gni so clang_toolchain forwards extra_cxxflags and extra_ldflags from invoker, then rerun GN/build.",
+                [
+                    str(path)
+                    for path, text in texts
+                    if "Assignment had no effect" in strip_ansi(text) and "extra_cxxflags" in strip_ansi(text)
+                ]
+                or [str(log_path)],
+                matching_lines(
+                    all_text,
+                    ["Assignment had no effect", "extra_cxxflags", 'clang_toolchain("clang_x64")'],
+                    12,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "cross_values_generator.rb" in plain_text
+        and "Failed: input file, output file and arch-name required" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "arkcompiler_cross_values_riscv64_arch_missing",
+                "source_build_compatibility",
+                "ArkCompiler cross_values_generate produced _values_gen.h without an arch-name because cross_values/BUILD.gn lacks the riscv64 -> RISCV64 mapping.",
+                "Apply the target-evidenced minimal cross_values/BUILD.gn patch adding current_cpu == \"riscv64\" with arch = \"RISCV64\", without importing broader ArkCompiler 6.1 libarkbase renames.",
+                [
+                    str(path)
+                    for path, text in texts
+                    if "cross_values_generator.rb" in strip_ansi(text)
+                    and "arch-name required" in strip_ansi(text)
+                ]
+                or [str(log_path), str(target_root / "arkcompiler/runtime_core/static_core/cross_values/BUILD.gn")],
+                matching_lines(
+                    all_text,
+                    ["cross_values_generator.rb", "_values_gen.h", "arch-name required", "cross_values_generate"],
+                    12,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "compiled_code_to_runtime_bridge_riscv64.S" in plain_text
+        and "MAKE_ASM_NAME" in plain_text
+        and ("expected register" in plain_text or "unexpected token" in plain_text)
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "arkcompiler_riscv64_asm_make_asm_name_missing",
+                "source_build_compatibility",
+                "ArkCompiler RISC-V bridge assembly references MAKE_ASM_NAME, but asm_support.h has not imported the target-evidenced symbol-name macro support.",
+                "Patch runtime/arch/asm_support.h with the target-evidenced MAKE_ASM_NAME macro block, together with the existing riscv64 THREAD_REG support.",
+                [
+                    str(path)
+                    for path, text in texts
+                    if "compiled_code_to_runtime_bridge_riscv64.S" in strip_ansi(text)
+                    and "MAKE_ASM_NAME" in strip_ansi(text)
+                ]
+                or [
+                    str(log_path),
+                    str(target_root / "arkcompiler/runtime_core/static_core/runtime/arch/asm_support.h"),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "compiled_code_to_runtime_bridge_riscv64.S",
+                        "MAKE_ASM_NAME",
+                        "expected register",
+                        "unexpected token",
+                    ],
+                    16,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "operand must be a symbol with %lo/%pcrel_lo/%tprel_lo modifier" in plain_text
+        and "(tp)" in plain_text
+        and "compiled_code_to_runtime_bridge_riscv64.S" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "arkcompiler_riscv64_thread_offset_large_immediate",
+                "source_build_compatibility",
+                "ArkCompiler RISC-V bridge assembly emitted direct tp-relative loads/stores whose generated ManagedThread offsets exceed the signed 12-bit immediate range.",
+                "Introduce a minimal, target-scoped RISC-V large-offset thread access helper for the affected bridge assembly, or reconcile the generated ManagedThread layout before treating this as external dependency debt.",
+                [
+                    str(path)
+                    for path, text in texts
+                    if "operand must be a symbol with %lo/%pcrel_lo/%tprel_lo modifier" in strip_ansi(text)
+                    and "(tp)" in strip_ansi(text)
+                ]
+                or [str(log_path)],
+                matching_lines(
+                    all_text,
+                    [
+                        "operand must be a symbol with %lo/%pcrel_lo/%tprel_lo modifier",
+                        "(tp)",
+                        "compiled_code_to_runtime_bridge_riscv64.S",
+                        "MANAGED_THREAD_",
+                    ],
+                    16,
+                ),
             )
         )
 
@@ -6397,6 +6803,9 @@ def detect_host_cxx_env_fix(workspace: Path) -> dict[str, Any]:
             return {
                 "applied": bool(exported_env),
                 "env": exported_env,
+                "include_paths": paths,
+                "library_paths": lib_paths,
+                "gcc_version": include_dir.name,
                 "probe_only_env": {"CPLUS_INCLUDE_PATH": candidate_env["CPLUS_INCLUDE_PATH"]},
                 "omitted_global_env": ["CPLUS_INCLUDE_PATH"],
                 "reason": (
