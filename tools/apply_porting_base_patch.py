@@ -88,7 +88,19 @@ GRAPHIC_2D_VSYNC_LOG_REL = "foundation/graphic/graphic_2d/rosen/modules/composer
 LUME_STATIC_PLUGIN_DECL_REL = "foundation/graphic/graphic_3d/lume/LumeEngine/src/static_plugin_decl.h"
 ARK_ETS_RUNTIME_BUILD_REL = "arkcompiler/ets_runtime/BUILD.gn"
 ARK_ETS_RUNTIME_RISCV64_TRAMPOLINE_REL = "arkcompiler/ets_runtime/ecmascript/trampoline/riscv64/raw_asm_stub.S"
+ARK_RUNTIME_ASM_SUPPORT_CPP_REL = "arkcompiler/runtime_core/static_core/runtime/arch/asm_support.cpp"
+ARK_ETS_SUBPROJECT_SOURCES_REL = "arkcompiler/runtime_core/static_core/plugins/ets/subproject_sources.gn"
+ARK_ETS_PROXY_ENTRYPOINTS_CPP_REL = "arkcompiler/runtime_core/static_core/plugins/ets/runtime/entrypoints/ets_proxy_entrypoints.cpp"
+ARK_ETS_RISCV64_BRIDGE_SOURCE_RELS = [
+    "arkcompiler/runtime_core/static_core/plugins/ets/runtime/interop_js/arch/riscv64/call_bridge_riscv64.S",
+    "arkcompiler/runtime_core/static_core/plugins/ets/runtime/napi/arch/riscv64/ets_napi_entry_point_riscv64.S",
+    "arkcompiler/runtime_core/static_core/plugins/ets/runtime/napi/arch/riscv64/ets_async_entry_point_riscv64.S",
+    ARK_ETS_PROXY_ENTRYPOINTS_CPP_REL,
+    "arkcompiler/runtime_core/static_core/plugins/ets/runtime/entrypoints/arch/riscv64/ets_proxy_entry_point_riscv64.S",
+    "arkcompiler/runtime_core/static_core/runtime/bridge/arch/riscv64/proxy_entrypoint_riscv64.S",
+]
 SKIA_RASTER_PIPELINE_OPTS_REL = "third_party/skia/m133/src/opts/SkRasterPipeline_opts.h"
+RUN_OBJCOPY_REL = "build/scripts/run_objcopy.py"
 CXX_STDLIB_HEADER_NAMES = {
     "algorithm",
     "array",
@@ -260,6 +272,47 @@ def generated_fake_interface_action(
             "follow_up": follow_up,
         },
     }
+
+
+def ark_ets_proxy_entrypoints_compile_only_stub(target_root: Path) -> str:
+    return "\n".join(
+        [
+            "/* Auto-generated compile-only OpenHarmony porting source stub.",
+            f" * Reference dependency: {target_root / ARK_ETS_PROXY_ENTRYPOINTS_CPP_REL}",
+            " * The real ETS proxy invoke runtime depends on the newer ETS reflection API.",
+            " * Runtime implementation is intentionally absent.",
+            " */",
+            "#include <cstdint>",
+            "",
+            "namespace ark::ets::entrypoints {",
+            "",
+            "extern \"C\" void EtsProxyEntryPoint();",
+            "",
+            "const void *GetEtsProxyEntryPoint()",
+            "{",
+            "    return reinterpret_cast<const void *>(EtsProxyEntryPoint);",
+            "}",
+            "",
+            "extern \"C\" int64_t EtsProxyMethodInvoke(void *method, uint8_t *args, uint8_t *inStackArgs)",
+            "{",
+            "    (void)method;",
+            "    (void)args;",
+            "    (void)inStackArgs;",
+            "    return 0;",
+            "}",
+            "",
+            "}  // namespace ark::ets::entrypoints",
+        ]
+    ) + "\n"
+
+
+def workspace_lacks_ark_ets_reflect_proxy_runtime(workspace: Path) -> bool:
+    reflect_method = workspace / "arkcompiler/runtime_core/static_core/plugins/ets/runtime/types/ets_reflect_method.h"
+    platform_types = workspace / "arkcompiler/runtime_core/static_core/plugins/ets/runtime/ets_platform_types.h"
+    if not reflect_method.is_file() or not platform_types.is_file():
+        return True
+    text = platform_types.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return "coreReflectProxyInvoke" not in text or "coreReflectInstanceMethod" not in text
 
 
 def generated_fake_shared_library_action(
@@ -1604,6 +1657,38 @@ def target_has_ark_jsruntime_riscv64_trampoline_evidence(target_root: Path) -> b
     )
 
 
+def target_has_ark_runtime_riscv64_osr_guard_evidence(target_root: Path) -> bool:
+    asm_support = target_root / ARK_RUNTIME_ASM_SUPPORT_CPP_REL
+    runtime_build = target_root / "arkcompiler/runtime_core/static_core/runtime/BUILD.gn"
+    if not asm_support.is_file() or not runtime_build.is_file():
+        return False
+    asm_text = asm_support.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    build_text = runtime_build.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "#if !defined(PANDA_TARGET_RISCV64)" in asm_text
+        and "OsrEntryAfterCFrame" in asm_text
+        and 'current_cpu == "riscv64"' in build_text
+        and "arch/riscv64/osr_riscv64.S" in build_text
+    )
+
+
+def target_has_ark_ets_riscv64_bridge_source_evidence(target_root: Path) -> bool:
+    subproject_sources = target_root / ARK_ETS_SUBPROJECT_SOURCES_REL
+    if not subproject_sources.is_file():
+        return False
+    text = subproject_sources.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    required_text = [
+        'srcs_runtime += [ "runtime/interop_js/arch/riscv64/call_bridge_riscv64.S" ]',
+        '"runtime/napi/arch/riscv64/ets_napi_entry_point_riscv64.S"',
+        '"runtime/napi/arch/riscv64/ets_async_entry_point_riscv64.S"',
+        '"runtime/entrypoints/ets_proxy_entrypoints.cpp"',
+        '"runtime/entrypoints/arch/riscv64/ets_proxy_entry_point_riscv64.S"',
+    ]
+    return all(item in text for item in required_text) and all(
+        (target_root / rel_path).is_file() for rel_path in ARK_ETS_RISCV64_BRIDGE_SOURCE_RELS
+    )
+
+
 def target_has_skia_raster_pipeline_riscv64_sqrt_evidence(target_root: Path) -> bool:
     opts = target_root / SKIA_RASTER_PIPELINE_OPTS_REL
     if not opts.is_file():
@@ -2666,6 +2751,66 @@ def planned_actions(
                 )
             )
 
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_ark_runtime_riscv64_osr_guard_evidence(target_root):
+        actions.append(
+            workspace_transform_action(
+                ARK_RUNTIME_ASM_SUPPORT_CPP_REL,
+                "arkcompiler_runtime_riscv64_osr_fallback_guard",
+                "L1_build_compatibility",
+                (
+                    "Apply the target-evidenced asm_support.cpp OSR fallback guard so the "
+                    "C++ UNREACHABLE fallback does not duplicate the riscv64 osr_riscv64.S symbols."
+                ),
+            )
+        )
+
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_ark_ets_riscv64_bridge_source_evidence(target_root):
+        actions.append(
+            workspace_transform_action(
+                ARK_ETS_SUBPROJECT_SOURCES_REL,
+                "arkcompiler_ets_riscv64_bridge_sources",
+                "L1_build_compatibility",
+                (
+                    "Add the target-evidenced ETS RISC-V NAPI entry, interop JS bridge, "
+                    "and proxy entry source branches so libarkruntime has the required "
+                    "Ets*/JSRuntime* bridge symbols."
+                ),
+            )
+        )
+        for rel_path in ARK_ETS_RISCV64_BRIDGE_SOURCE_RELS:
+            if rel_path == ARK_ETS_PROXY_ENTRYPOINTS_CPP_REL and workspace_lacks_ark_ets_reflect_proxy_runtime(workspace):
+                actions.append(
+                    generated_fake_interface_action(
+                        rel_path,
+                        "arkcompiler_ets_riscv64_proxy_method_compile_only_stub",
+                        "L2_source_compatibility_stub",
+                        (
+                            "Generate a compile-only EtsProxyMethodInvoke bridge because the "
+                            "target-evidenced implementation depends on the newer ETS reflection "
+                            "runtime API that is absent from the OpenHarmony 6.0 base tree."
+                        ),
+                        ark_ets_proxy_entrypoints_compile_only_stub(target_root),
+                        "Ark ETS reflection proxy runtime API for real EtsProxyMethodInvoke",
+                        str(target_root / rel_path),
+                        (
+                            "replace with a provenance-checked ETS reflection proxy source closure "
+                            "before runtime, JS interop proxy, or managed proxy validation"
+                        ),
+                    )
+                )
+                continue
+            actions.append(
+                copy_action(
+                    rel_path,
+                    "arkcompiler_ets_riscv64_bridge_source",
+                    "L1_build_compatibility",
+                    (
+                        "Import target-evidenced RISC-V ETS NAPI/interop bridge source "
+                        "needed by libarkruntime."
+                    ),
+                )
+            )
+
     if clean_str(seed.get("architecture")) == "riscv64" and target_has_arkcompiler_cross_values_riscv64_evidence(target_root):
         actions.append(
             workspace_transform_action(
@@ -2791,12 +2936,13 @@ def planned_actions(
     if clean_str(seed.get("architecture")) == "riscv64" and target_has_riscv64_objcopy_evidence(target_root):
         actions.append(
             workspace_transform_action(
-                "build/scripts/run_objcopy.py",
+                RUN_OBJCOPY_REL,
                 "build_scripts_run_objcopy_riscv64_compat",
                 "L1_build_compatibility",
                 (
-                    "Add target-evidenced riscv64 llvm-objcopy output and BFD arch mappings so "
-                    "binary-to-object resource generation does not fail with KeyError: 'riscv64'."
+                    "Add target-evidenced riscv64 llvm-objcopy output/BFD arch mappings and set "
+                    "RISC-V generated object ELF flags to RVC double-float ABI so binary-to-object "
+                    "resources can link with lp64d targets."
                 ),
             )
         )
@@ -3711,6 +3857,22 @@ def apply_riscv64_objcopy_compat(data: bytes) -> tuple[bytes, list[str]]:
             notes.append("riscv64 objcopy BFD architecture insertion point not found")
     else:
         notes.append("riscv64 llvm-objcopy BFD architecture mapping already present")
+
+    if '"--elf-flags", "5"' not in text:
+        marker = "    ]\n\n    process = subprocess.Popen(\n"
+        insertion = (
+            "    ]\n\n"
+            "    if args.arch == \"riscv64\":\n"
+            "        cmd.extend([\"--elf-flags\", \"5\"])\n\n"
+            "    process = subprocess.Popen(\n"
+        )
+        if marker in text:
+            text = text.replace(marker, insertion, 1)
+            notes.append("set riscv64 binary-to-object ELF flags to RVC double-float ABI")
+        else:
+            notes.append("riscv64 objcopy ELF flags insertion point not found")
+    else:
+        notes.append("riscv64 binary-to-object ELF flags already set to double-float ABI")
 
     return text.encode(TEXT_ENCODING), notes
 
@@ -4784,6 +4946,121 @@ def apply_ark_runtime_riscv64_build_sources(data: bytes) -> tuple[bytes, list[st
     return data, ["ArkCompiler RISCV64 runtime BUILD.gn source insertion point not found"]
 
 
+def apply_ark_runtime_riscv64_osr_fallback_guard(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if "#if !defined(PANDA_TARGET_RISCV64)" in text and "OsrEntryAfterCFrame" in text:
+        return data, ["ArkCompiler RISCV64 OSR fallback guard already present"]
+    old = "#if !defined(PANDA_TARGET_ARM64)\nextern \"C\" void OsrEntryAfterCFrame"
+    new = "#if !defined(PANDA_TARGET_RISCV64)\nextern \"C\" void OsrEntryAfterCFrame"
+    if old in text:
+        return text.replace(old, new, 1).encode(TEXT_ENCODING), [
+            "guarded asm_support.cpp OSR fallback symbols when riscv64 osr_riscv64.S is linked"
+        ]
+    return data, ["ArkCompiler RISCV64 OSR fallback guard insertion point not found"]
+
+
+def apply_ark_ets_riscv64_bridge_sources(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    notes: list[str] = []
+
+    interop_line = '    srcs_runtime += [ "runtime/interop_js/arch/riscv64/call_bridge_riscv64.S" ]'
+    if interop_line not in text:
+        old = (
+            '  } else if (current_cpu == "arm") {\n'
+            '    srcs_runtime += [ "runtime/interop_js/arch/arm32/call_bridge_arm32.S" ]\n'
+            "  }\n"
+        )
+        new = (
+            '  } else if (current_cpu == "arm") {\n'
+            '    srcs_runtime += [ "runtime/interop_js/arch/arm32/call_bridge_arm32.S" ]\n'
+            '  } else if (current_cpu == "riscv64") {\n'
+            f"{interop_line}\n"
+            "  }\n"
+        )
+        if old in text:
+            text = text.replace(old, new, 1)
+            notes.append("added ETS interop JS RISC-V call bridge source branch")
+        else:
+            notes.append("ETS interop JS RISC-V call bridge insertion point not found")
+    else:
+        notes.append("ETS interop JS RISC-V call bridge source branch already present")
+
+    napi_marker = '"runtime/napi/arch/riscv64/ets_napi_entry_point_riscv64.S"'
+    if napi_marker not in text:
+        old = (
+            '} else if (current_cpu == "arm") {\n'
+            "  srcs_runtime += [\n"
+            '    "runtime/napi/arch/arm32/ets_napi_entry_point_arm32.S",\n'
+            '    "runtime/napi/arch/arm32/ets_async_entry_point_arm32.S",\n'
+            "  ]\n"
+            "}\n"
+        )
+        new = (
+            '} else if (current_cpu == "arm") {\n'
+            "  srcs_runtime += [\n"
+            '    "runtime/napi/arch/arm32/ets_napi_entry_point_arm32.S",\n'
+            '    "runtime/napi/arch/arm32/ets_async_entry_point_arm32.S",\n'
+            "  ]\n"
+            '} else if (current_cpu == "riscv64") {\n'
+            "  srcs_runtime += [\n"
+            '    "runtime/napi/arch/riscv64/ets_napi_entry_point_riscv64.S",\n'
+            '    "runtime/napi/arch/riscv64/ets_async_entry_point_riscv64.S",\n'
+            '    "runtime/entrypoints/arch/riscv64/ets_proxy_entry_point_riscv64.S",\n'
+            "  ]\n"
+            "}\n"
+        )
+        if old in text:
+            text = text.replace(old, new, 1)
+            notes.append("added ETS NAPI/proxy RISC-V entry source branch")
+        else:
+            notes.append("ETS NAPI/proxy RISC-V entry insertion point not found")
+    else:
+        notes.append("ETS NAPI/proxy RISC-V entry source branch already present")
+
+    proxy_cpp_line = '  "runtime/entrypoints/ets_proxy_entrypoints.cpp",'
+    if proxy_cpp_line not in text:
+        inserted = False
+        for anchor in (
+            '  "runtime/static_type_converter.cpp",\n',
+            '  "stdlib/native/init_native_methods.cpp",\n',
+        ):
+            if anchor in text:
+                text = text.replace(anchor, proxy_cpp_line + "\n" + anchor, 1)
+                inserted = True
+                break
+        if inserted:
+            notes.append("added ETS proxy entrypoint C++ runtime source")
+        else:
+            notes.append("ETS proxy entrypoint C++ runtime source insertion point not found")
+    else:
+        notes.append("ETS proxy entrypoint C++ runtime source already present")
+
+    return text.encode(TEXT_ENCODING), notes
+
+
+def apply_ark_riscv64_proxy_entrypoint_large_thread_offsets(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    text, helper_notes = ensure_ark_riscv64_thread_access_helpers(text)
+    text, notes = replace_asm_lines(
+        text,
+        [
+            (
+                "    lbu   s4, MANAGED_THREAD_FRAME_KIND_OFFSET(THREAD_REG)",
+                "    ARK_LOAD_THREAD_U8 s4, MANAGED_THREAD_FRAME_KIND_OFFSET",
+            ),
+            (
+                "    sd    s0, MANAGED_THREAD_FRAME_OFFSET(THREAD_REG)",
+                "    ARK_STORE_THREAD_X s0, MANAGED_THREAD_FRAME_OFFSET, t0",
+            ),
+            (
+                "    ld    t1, MANAGED_THREAD_EXCEPTION_OFFSET(THREAD_REG)",
+                "    ARK_LOAD_THREAD_X t1, MANAGED_THREAD_EXCEPTION_OFFSET",
+            ),
+        ],
+    )
+    return text.encode(TEXT_ENCODING), helper_notes + notes
+
+
 def apply_ark_cross_values_riscv64_arch(data: bytes) -> tuple[bytes, list[str]]:
     text = data.decode(TEXT_ENCODING, errors="ignore")
     if 'current_cpu == "riscv64"' in text and 'arch = "RISCV64"' in text:
@@ -5273,6 +5550,24 @@ def materialize_action(
         ):
             data, transforms = apply_ark_runtime_riscv64_build_sources(data)
         elif (
+            rel_path == ARK_RUNTIME_ASM_SUPPORT_CPP_REL
+            and action.get("source_role") == "arkcompiler_runtime_riscv64_osr_fallback_guard"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_ark_runtime_riscv64_osr_fallback_guard(data)
+        elif (
+            rel_path == ARK_ETS_SUBPROJECT_SOURCES_REL
+            and action.get("source_role") == "arkcompiler_ets_riscv64_bridge_sources"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_ark_ets_riscv64_bridge_sources(data)
+        elif (
+            rel_path == "arkcompiler/runtime_core/static_core/runtime/bridge/arch/riscv64/proxy_entrypoint_riscv64.S"
+            and action.get("source_role") == "arkcompiler_ets_riscv64_bridge_source"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_ark_riscv64_proxy_entrypoint_large_thread_offsets(data)
+        elif (
             rel_path == "arkcompiler/runtime_core/static_core/cross_values/BUILD.gn"
             and action.get("source_role") == "arkcompiler_cross_values_riscv64_arch"
             and target.get("architecture") == "riscv64"
@@ -5362,7 +5657,7 @@ def materialize_action(
         ):
             data, transforms = apply_lume_asset_compiler_riscv64_platform(data)
         elif (
-            rel_path == "build/scripts/run_objcopy.py"
+            rel_path == RUN_OBJCOPY_REL
             and target.get("architecture") == "riscv64"
         ):
             data, transforms = apply_riscv64_objcopy_compat(data)
@@ -5547,6 +5842,13 @@ def materialize_action(
         elif rel_path == "arkcompiler/runtime_core/static_core/runtime/arch/riscv64/tlab.S":
             data, asm_transforms = apply_ark_riscv64_tlab_large_thread_offsets(data)
             transforms.extend(asm_transforms)
+    if (
+        target.get("architecture") == "riscv64"
+        and action.get("source_role") == "arkcompiler_ets_riscv64_bridge_source"
+        and rel_path == "arkcompiler/runtime_core/static_core/runtime/bridge/arch/riscv64/proxy_entrypoint_riscv64.S"
+    ):
+        data, asm_transforms = apply_ark_riscv64_proxy_entrypoint_large_thread_offsets(data)
+        transforms.extend(asm_transforms)
     data, subsystem_transforms = normalize_ohos_build_subsystem(data, action, target, normalize_subsystems)
     transforms.extend(subsystem_transforms)
     return data, str(source_path), "available", transforms
@@ -5716,6 +6018,40 @@ def check_fake_shared_library_elf_headers(
     }
 
 
+def check_riscv64_generated_objcopy_elf_flags(workspace: Path, product: str, target: dict[str, Any]) -> dict[str, Any]:
+    if clean_str(target.get("architecture")) != "riscv64":
+        return skipped_regression_check(
+            "riscv64_generated_objcopy_elf_flags",
+            "run_objcopy.py generated RISC-V resource objects advertise RVC double-float ABI",
+            "target architecture is not riscv64",
+        )
+    candidates = [
+        workspace / "out" / product / "obj/developtools/syscap_codec/napi/query_syscap.o",
+    ]
+    existing = [path for path in candidates if path.is_file()]
+    if not existing:
+        return skipped_regression_check(
+            "riscv64_generated_objcopy_elf_flags",
+            "run_objcopy.py generated RISC-V resource objects advertise RVC double-float ABI",
+            "syscap generated object has not been produced yet",
+        )
+    failures: list[dict[str, str]] = []
+    for path in existing:
+        header = readelf_header_text(workspace, path)
+        if "Machine:" not in header or "RISC-V" not in header:
+            failures.append({"path": str(path), "reason": "ELF machine is not RISC-V"})
+        elif "double-float ABI" not in header or "RVC" not in header:
+            failures.append({"path": str(path), "reason": "RISC-V generated object is missing RVC double-float ABI flags"})
+    return {
+        "id": "riscv64_generated_objcopy_elf_flags",
+        "status": "pass" if not failures else "fail",
+        "checked_count": len(existing),
+        "sample_failures": failures[:10],
+        "command": "llvm-readelf -h",
+        "expectation": "run_objcopy.py generated RISC-V resource objects advertise RVC double-float ABI",
+    }
+
+
 def check_rust_fake_archive_archives(workspace: Path, product: str, target: dict[str, Any]) -> dict[str, Any]:
     if clean_str(target.get("architecture")) != "riscv64" or not workspace_fake_rust_driver_enabled(workspace):
         return skipped_regression_check(
@@ -5806,6 +6142,35 @@ def check_build_log_old_errors_absent(build_result: dict[str, Any] | None) -> di
             "arkcompiler/ets_runtime/libark_jsruntime.so",
             "undefined symbol: LazyDeoptEntry",
         ],
+        "old_riscv64_generated_objcopy_elf_flags_missing": [
+            "libsystemcapability",
+            "query_syscap.o",
+            "cannot link object files with different floating-point ABI",
+        ],
+        "old_ark_runtime_riscv64_osr_duplicate_symbols": [
+            "duplicate symbol: OsrEntryAfterCFrame",
+            "asm_support.o",
+            "osr_riscv64.o",
+        ],
+        "old_ark_ets_riscv64_bridge_sources_missing": [
+            "arkcompiler/runtime_core/libarkruntime.so",
+            "undefined symbol: EtsAsyncEntryPoint",
+            "undefined symbol: JSRuntimeCallJSBridge",
+        ],
+        "old_ark_ets_riscv64_proxy_large_thread_offsets": [
+            "ets_proxy_entry_point_riscv64.S",
+            "operand must be a symbol",
+            "2392(tp)",
+        ],
+        "old_ark_ets_riscv64_proxy_method_invoke_missing": [
+            "arkcompiler/runtime_core/libarkruntime.so",
+            "undefined protected symbol: EtsProxyMethodInvoke",
+            "ets_proxy_entry_point_riscv64.S",
+        ],
+        "old_ark_ets_riscv64_proxy_reflect_api_gap": [
+            "ets_proxy_entrypoints.cpp",
+            "fatal error: 'plugins/ets/runtime/types/ets_reflect_method.h' file not found",
+        ],
     }
     if not build_result:
         return {
@@ -5864,6 +6229,11 @@ def run_regression_checks(
                 "regression checks are skipped for pure dry-run planning",
             ),
             skipped_regression_check(
+                "riscv64_generated_objcopy_elf_flags",
+                "run_objcopy.py generated RISC-V resource objects advertise RVC double-float ABI",
+                "regression checks are skipped for pure dry-run planning",
+            ),
+            skipped_regression_check(
                 "build_log_old_error_absence",
                 "previously fixed build-log blockers remain absent",
                 "regression checks are skipped for pure dry-run planning",
@@ -5872,6 +6242,7 @@ def run_regression_checks(
     return [
         check_fake_shared_library_elf_headers(workspace, target, results),
         check_rust_fake_archive_archives(workspace, product, target),
+        check_riscv64_generated_objcopy_elf_flags(workspace, product, target),
         check_build_log_old_errors_absent(build_result),
     ]
 
@@ -7675,6 +8046,208 @@ def parse_build_diagnostics(
                         "SkRasterPipeline_opts.h",
                         "subscripted value is not an array",
                         "SkOpts.o",
+                    ],
+                    18,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "cannot link object files with different floating-point ABI" in plain_text
+        and "query_syscap.o" in plain_text
+        and "libsystemcapability" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "riscv64_generated_objcopy_elf_flags_missing",
+                "source_build_compatibility",
+                "gen_js_obj produced query_syscap.o as RISC-V ELF with flags 0x0, which cannot link with lp64d RISC-V objects in libsystemcapability.",
+                (
+                    "Keep syscap JSAPI selected; patch build/scripts/run_objcopy.py so riscv64 "
+                    "binary-to-object resources are emitted with ELF flags 5 "
+                    "(RVC | double-float ABI), then rerun the build."
+                ),
+                [
+                    str(log_path),
+                    str(workspace / "out" / product / "obj/developtools/syscap_codec/napi/query_syscap.o"),
+                    str(workspace / RUN_OBJCOPY_REL),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "libsystemcapability",
+                        "query_syscap.o",
+                        "cannot link object files with different floating-point ABI",
+                    ],
+                    16,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "duplicate symbol: OsrEntryAfterCFrame" in plain_text
+        and "osr_riscv64.o" in plain_text
+        and "asm_support.o" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "ark_runtime_riscv64_osr_fallback_duplicate_symbols",
+                "source_build_compatibility",
+                "Ark runtime links both the riscv64 osr_riscv64.S OSR entries and asm_support.cpp fallback OSR symbols into libarkruntime.",
+                (
+                    "Apply the target-evidenced asm_support.cpp guard that excludes the C++ "
+                    "UNREACHABLE OSR fallback when PANDA_TARGET_RISCV64 is defined."
+                ),
+                [
+                    str(log_path),
+                    str(target_root / ARK_RUNTIME_ASM_SUPPORT_CPP_REL),
+                    str(target_root / "arkcompiler/runtime_core/static_core/runtime/arch/riscv64/osr_riscv64.S"),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "duplicate symbol: OsrEntryAfterCFrame",
+                        "asm_support.o",
+                        "osr_riscv64.o",
+                    ],
+                    18,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "arkcompiler/runtime_core/libarkruntime.so" in plain_text
+        and (
+            "undefined symbol: EtsAsyncEntryPoint" in plain_text
+            or "undefined symbol: EtsNapiEntryPoint" in plain_text
+            or "undefined symbol: JSRuntimeCallJSBridge" in plain_text
+            or "undefined symbol: CallJSProxyBridge" in plain_text
+        )
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "ark_ets_riscv64_bridge_sources_missing",
+                "source_build_compatibility",
+                "libarkruntime references ETS NAPI and JS interop bridge entrypoints, but the RISC-V bridge assembly sources are not selected in plugins/ets/subproject_sources.gn.",
+                (
+                    "Import the target-evidenced RISC-V ETS bridge assembly closure and add "
+                    "the riscv64 subproject_sources.gn branches for call_bridge_riscv64.S, "
+                    "ets_napi_entry_point_riscv64.S, ets_async_entry_point_riscv64.S, and "
+                    "ets_proxy_entry_point_riscv64.S."
+                ),
+                [str(log_path), str(target_root / ARK_ETS_SUBPROJECT_SOURCES_REL)]
+                + [str(target_root / rel_path) for rel_path in ARK_ETS_RISCV64_BRIDGE_SOURCE_RELS],
+                matching_lines(
+                    all_text,
+                    [
+                        "arkcompiler/runtime_core/libarkruntime.so",
+                        "undefined symbol:",
+                        "EtsAsyncEntryPoint",
+                        "JSRuntimeCallJSBridge",
+                        "CallJSProxyBridge",
+                    ],
+                    24,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "ets_proxy_entry_point_riscv64.S" in plain_text
+        and "proxy_entrypoint_riscv64.S" in plain_text
+        and "operand must be a symbol" in plain_text
+        and "2392(tp)" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "ark_ets_riscv64_proxy_entrypoint_large_thread_offsets",
+                "source_build_compatibility",
+                "ETS RISC-V proxy entrypoint includes target proxy_entrypoint_riscv64.S, whose direct THREAD_REG large-offset loads/stores exceed the RISC-V 12-bit immediate range.",
+                (
+                    "During target-source import, rewrite proxy_entrypoint_riscv64.S to use the "
+                    "local ARK_LOAD_THREAD_* / ARK_STORE_THREAD_X helper macros for "
+                    "MANAGED_THREAD_FRAME_OFFSET and MANAGED_THREAD_EXCEPTION_OFFSET."
+                ),
+                [
+                    str(log_path),
+                    str(target_root / "arkcompiler/runtime_core/static_core/runtime/bridge/arch/riscv64/proxy_entrypoint_riscv64.S"),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "ets_proxy_entry_point_riscv64.S",
+                        "proxy_entrypoint_riscv64.S",
+                        "operand must be a symbol",
+                        "2392(tp)",
+                        "2400(tp)",
+                    ],
+                    18,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "arkcompiler/runtime_core/libarkruntime.so" in plain_text
+        and "undefined protected symbol: EtsProxyMethodInvoke" in plain_text
+        and "ets_proxy_entry_point_riscv64.S" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "ark_ets_riscv64_proxy_method_invoke_source_missing",
+                "source_build_compatibility",
+                "The RISC-V ETS proxy assembly is now linked, but libarkruntime still lacks the C++ EtsProxyMethodInvoke implementation selected by the reference target.",
+                (
+                    "Import the target-evidenced plugins/ets/runtime/entrypoints/ets_proxy_entrypoints.cpp "
+                    "source and add it to plugins/ets/subproject_sources.gn srcs_runtime."
+                ),
+                [
+                    str(log_path),
+                    str(target_root / "arkcompiler/runtime_core/static_core/plugins/ets/runtime/entrypoints/ets_proxy_entrypoints.cpp"),
+                    str(target_root / ARK_ETS_SUBPROJECT_SOURCES_REL),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "arkcompiler/runtime_core/libarkruntime.so",
+                        "undefined protected symbol: EtsProxyMethodInvoke",
+                        "ets_proxy_entry_point_riscv64.S",
+                    ],
+                    18,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "ets_proxy_entrypoints.cpp" in plain_text
+        and "plugins/ets/runtime/types/ets_reflect_method.h" in plain_text
+        and "file not found" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "ark_ets_riscv64_proxy_method_reflect_api_gap",
+                "source_build_compatibility",
+                "The target-evidenced ETS proxy method implementation depends on the newer ETS reflection runtime API that is absent from this OpenHarmony 6.0 base tree.",
+                (
+                    "During compile triage, replace ets_proxy_entrypoints.cpp with a tracked "
+                    "compile-only EtsProxyMethodInvoke stub and record the real ETS reflection "
+                    "proxy implementation as dependency debt."
+                ),
+                [
+                    str(log_path),
+                    str(target_root / ARK_ETS_PROXY_ENTRYPOINTS_CPP_REL),
+                    str(target_root / "arkcompiler/runtime_core/static_core/plugins/ets/runtime/types/ets_reflect_method.h"),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "ets_proxy_entrypoints.cpp",
+                        "ets_reflect_method.h",
+                        "file not found",
                     ],
                     18,
                 ),
