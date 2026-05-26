@@ -866,6 +866,28 @@ def target_has_riscv64_rust_prebuilt_evidence(target_root: Path) -> bool:
     )
 
 
+def target_has_riscv64_rust_toolchain_evidence(target_root: Path) -> bool:
+    target_toolchain = target_root / "build/rust/rustc_toolchain.gni"
+    target_ohos_toolchain = target_root / "build/toolchain/ohos/BUILD.gn"
+    if not target_toolchain.is_file() or not target_ohos_toolchain.is_file():
+        return False
+    toolchain_text = target_toolchain.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    ohos_toolchain_text = target_ohos_toolchain.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "enable_rust_riscv" in toolchain_text
+        and "prebuilts/rustc-riscv" in toolchain_text
+        and 'rust_abi_target = "riscv64-unknown-linux-ohos"' in ohos_toolchain_text
+    )
+
+
+def target_has_riscv64_buildconfig_arch_evidence(target_root: Path) -> bool:
+    target_buildconfig = target_root / "build/config/BUILDCONFIG.gn"
+    if not target_buildconfig.is_file():
+        return False
+    text = target_buildconfig.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return 'if (current_cpu == "riscv64")' in text and 'arch = "riscv64"' in text
+
+
 def target_has_riscv64_libcpp_evidence(target_root: Path) -> bool:
     target_libcpp = target_root / "build/common/libcpp/BUILD.gn"
     target_prebuilt = (
@@ -1147,6 +1169,110 @@ def target_has_riscv64_compiler_mabi_evidence(target_root: Path) -> bool:
         and '"-march=rv64imafdc"' in text
         and '"-mabi=lp64d"' in text
     )
+
+
+def fake_rust_driver_script() -> str:
+    return """#!/usr/bin/env python3
+# Compile-only fake rustc/clippy-driver for missing riscv64 Rust prebuilts.
+# It emits minimal RISC-V ELF placeholders so C/C++ porting can continue to
+# the next real blocker. Replace rustc-riscv before runtime/package validation.
+import pathlib
+import subprocess
+import sys
+import tempfile
+
+
+def find_arg_value(args, name):
+    for index, arg in enumerate(args):
+        if arg == name and index + 1 < len(args):
+            return args[index + 1]
+        if arg.startswith(name + "="):
+            return arg.split("=", 1)[1]
+    return None
+
+
+def find_emit_depfile(args):
+    for arg in args:
+        if not arg.startswith("--emit="):
+            continue
+        for item in arg.split("=", 1)[1].split(","):
+            if item.startswith("dep-info="):
+                return item.split("=", 1)[1]
+    return None
+
+
+def find_workspace_root():
+    cwd = pathlib.Path.cwd().resolve()
+    for candidate in [cwd, *cwd.parents]:
+        clang = candidate / "prebuilts/clang/ohos/linux-x86_64/llvm/bin/clang"
+        if clang.is_file():
+            return candidate
+    return cwd
+
+
+def crate_type(args):
+    value = find_arg_value(args, "--crate-type")
+    if value:
+        return value
+    for arg in args:
+        if arg.startswith("--crate-type="):
+            return arg.split("=", 1)[1]
+    return ""
+
+
+def write_depfile(path, output):
+    if not path:
+        return
+    dep = pathlib.Path(path)
+    dep.parent.mkdir(parents=True, exist_ok=True)
+    dep.write_text(f"{output}:\\n", encoding="utf-8")
+
+
+def compile_placeholder(output, args):
+    out = pathlib.Path(output)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    root = find_workspace_root()
+    clang = root / "prebuilts/clang/ohos/linux-x86_64/llvm/bin/clang"
+    ar = root / "prebuilts/clang/ohos/linux-x86_64/llvm/bin/llvm-ar"
+    kind = crate_type(args)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        src = pathlib.Path(tmpdir) / "fake_rust.c"
+        obj = pathlib.Path(tmpdir) / "fake_rust.o"
+        src.write_text("int __ohos_fake_rust_dependency(void) { return 0; }\\n", encoding="utf-8")
+        base = [
+            str(clang),
+            "--target=riscv64-linux-ohos",
+            "-march=rv64imafdc",
+            "-mabi=lp64d",
+            "-fPIC",
+        ]
+        if out.suffix in {".a", ".rlib"} or kind in {"rlib", "staticlib"}:
+            subprocess.check_call([*base, "-c", str(src), "-o", str(obj)])
+            subprocess.check_call([str(ar), "crs", str(out), str(obj)])
+        elif out.suffix == ".so" or kind in {"cdylib", "dylib", "proc-macro"}:
+            subprocess.check_call([*base, "-shared", "-nostdlib", str(src), "-Wl,-soname," + out.name, "-o", str(out)])
+        else:
+            entry = pathlib.Path(tmpdir) / "fake_rust_entry.c"
+            entry.write_text("void __ohos_fake_rust_entry(void) { for (;;) {} }\\n", encoding="utf-8")
+            subprocess.check_call([*base, "-nostdlib", str(entry), "-Wl,-e,__ohos_fake_rust_entry", "-o", str(out)])
+
+
+def main():
+    args = sys.argv[1:]
+    if args and args[0].endswith("rustc"):
+        args = args[1:]
+    output = find_arg_value(args, "-o")
+    if output:
+        compile_placeholder(output, args)
+    depfile = find_emit_depfile(args)
+    if depfile and output:
+        write_depfile(depfile, output)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+"""
 
 
 def target_bundle_has_feature(target_root: Path, rel_path: str, feature: str) -> bool:
@@ -1470,6 +1596,19 @@ def planned_actions(
             )
         )
 
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_riscv64_buildconfig_arch_evidence(target_root):
+        actions.append(
+            workspace_transform_action(
+                "build/config/BUILDCONFIG.gn",
+                "riscv64_buildconfig_arch_mapping",
+                "L1_build_compatibility",
+                (
+                    "Add the target-evidenced riscv64 arch mapping so board/toolchain-derived "
+                    "target triples do not fall back to arm defaults."
+                ),
+            )
+        )
+
     if clean_str(seed.get("architecture")) == "riscv64" and target_has_riscv64_rust_prebuilt_evidence(target_root):
         actions.append(
             workspace_transform_action(
@@ -1525,6 +1664,55 @@ def planned_actions(
                         "replace with provenance-checked prebuilts/rustc-riscv payload before runtime or packaging validation",
                     )
                 )
+
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_riscv64_rust_toolchain_evidence(target_root):
+        actions.append(
+            copy_action(
+                "build/rust/rustc_toolchain.gni",
+                "rust_riscv64_toolchain_gni",
+                "L1_build_compatibility",
+                (
+                    "Import the target-evidenced rustc-riscv toolchain selection so Rust targets "
+                    "use the riscv64 OpenHarmony target triple instead of host x86 linking."
+                ),
+            )
+        )
+        actions.append(
+            workspace_transform_action(
+                "build/toolchain/ohos/BUILD.gn",
+                "ohos_toolchain_riscv64_rust_abi_target",
+                "L1_build_compatibility",
+                (
+                    "Switch the riscv64 OHOS toolchain Rust target from the GNU tuple to the "
+                    "target-evidenced riscv64-unknown-linux-ohos tuple."
+                ),
+            )
+        )
+        for rel_path, role in [
+            (
+                "prebuilts/rustc-riscv/linux-x86_64/current/bin/rustc",
+                "rust_riscv64_fake_rustc_driver",
+            ),
+            (
+                "prebuilts/rustc-riscv/linux-x86_64/current/bin/clippy-driver",
+                "rust_riscv64_fake_clippy_driver",
+            ),
+        ]:
+            action = generated_fake_interface_action(
+                rel_path,
+                role,
+                "L2_external_dependency_stub",
+                (
+                    "Create a compile-only fake Rust driver for the missing riscv64 rustc-riscv "
+                    "prebuilt; it emits minimal placeholder ELF outputs while preserving dependency debt."
+                ),
+                fake_rust_driver_script(),
+                "riscv64 rustc-riscv compiler prebuilt",
+                str(target_root / rel_path),
+                "replace with provenance-checked prebuilts/rustc-riscv toolchain before Rust/runtime validation",
+            )
+            action["force_executable"] = True
+            actions.append(action)
 
     if clean_str(seed.get("architecture")) == "riscv64" and target_has_riscv64_libcpp_evidence(target_root):
         actions.append(
@@ -1801,6 +1989,17 @@ def planned_actions(
                 (
                     "Align riscv64 compiler and linker ABI flags with the target-evidenced "
                     "hard-float ABI when lld reports mixed floating-point ABI objects."
+                ),
+            )
+        )
+        actions.append(
+            workspace_transform_action(
+                "build/config/compiler/compiler.gni",
+                "riscv64_disable_thin_lto_compat",
+                "L1_build_compatibility",
+                (
+                    "Disable default ThinLTO for riscv64 on the OpenHarmony 6.0 clang/lld stack "
+                    "when lld-generated lto.tmp or thinlto-cache objects do not retain rv64imafdc/lp64d."
                 ),
             )
         )
@@ -2491,6 +2690,81 @@ def apply_riscv64_compiler_ldflags_mabi_compat(data: bytes) -> tuple[bytes, list
     return text.encode(TEXT_ENCODING), notes
 
 
+def apply_riscv64_disable_thin_lto_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    guard = (
+        '  if (current_cpu == "riscv64") {\n'
+        "    # OpenHarmony 6.0 clang/lld can emit ThinLTO temp objects without rv64imafdc/lp64d.\n"
+        "    use_thin_lto = false\n"
+        "  }\n"
+    )
+    if guard in text:
+        return data, ["riscv64 ThinLTO default is already disabled"]
+    anchor = (
+        "  if (use_libfuzzer) {\n"
+        "    use_thin_lto = is_cfi || (is_ohos_or_android && is_official_build)\n"
+        "  } else {\n"
+        "    use_thin_lto = is_cfi || is_ohos_or_android\n"
+        "  }\n"
+    )
+    if anchor in text:
+        text = text.replace(anchor, anchor + "\n" + guard, 1)
+        return text.encode(TEXT_ENCODING), ["disabled default ThinLTO for riscv64"]
+    return data, ["riscv64 ThinLTO insertion point not found"]
+
+
+def apply_riscv64_buildconfig_arch_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if 'if (current_cpu == "riscv64") {\n    arch = "riscv64"\n  }\n' in text:
+        return data, ["riscv64 buildconfig arch mapping already present"]
+    old = (
+        '  } else if (current_cpu == "riscv32") {\n'
+        '    arch = "riscv32"\n'
+        '  } else if (current_cpu == "loongarch64") {\n'
+    )
+    new = (
+        '  } else if (current_cpu == "riscv32") {\n'
+        '    arch = "riscv32"\n'
+        '  } else if (current_cpu == "riscv64") {\n'
+        '    arch = "riscv64"\n'
+        '  } else if (current_cpu == "loongarch64") {\n'
+    )
+    if old in text:
+        text = text.replace(old, new, 1)
+        return text.encode(TEXT_ENCODING), ["added buildconfig riscv64 arch mapping"]
+    old_split = (
+        '  if (current_cpu == "arm64") {\n'
+        '    arch = "aarch64"\n'
+        "  }\n\n"
+        '  if (current_cpu == "loongarch64") {\n'
+    )
+    new_split = (
+        '  if (current_cpu == "arm64") {\n'
+        '    arch = "aarch64"\n'
+        "  }\n\n"
+        '  if (current_cpu == "riscv64") {\n'
+        '    arch = "riscv64"\n'
+        "  }\n\n"
+        '  if (current_cpu == "loongarch64") {\n'
+    )
+    if old_split in text:
+        text = text.replace(old_split, new_split, 1)
+        return text.encode(TEXT_ENCODING), ["added buildconfig riscv64 arch mapping"]
+    return data, ["buildconfig riscv64 arch insertion point not found"]
+
+
+def apply_ohos_toolchain_riscv64_rust_abi_target(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    target = 'rust_abi_target = "riscv64-unknown-linux-ohos"'
+    if target in text:
+        return data, ["riscv64 OHOS Rust ABI target already uses OpenHarmony tuple"]
+    old = 'rust_abi_target = "riscv64-unknown-linux-gnu"'
+    if old in text:
+        text = text.replace(old, target, 1)
+        return text.encode(TEXT_ENCODING), ["changed riscv64 Rust ABI target from GNU to OpenHarmony tuple"]
+    return data, ["riscv64 Rust ABI target insertion point not found"]
+
+
 def apply_riscv64_musl_cflags_mabi_compat(data: bytes) -> tuple[bytes, list[str]]:
     text = data.decode(TEXT_ENCODING, errors="ignore")
     notes: list[str] = []
@@ -3079,11 +3353,29 @@ def materialize_action(
         ):
             data, transforms = apply_riscv64_objcopy_compat(data)
         elif (
+            rel_path == "build/config/BUILDCONFIG.gn"
+            and action.get("source_role") == "riscv64_buildconfig_arch_mapping"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_riscv64_buildconfig_arch_compat(data)
+        elif (
+            rel_path == "build/toolchain/ohos/BUILD.gn"
+            and action.get("source_role") == "ohos_toolchain_riscv64_rust_abi_target"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_ohos_toolchain_riscv64_rust_abi_target(data)
+        elif (
             rel_path == "build/config/compiler/BUILD.gn"
             and action.get("source_role") == "riscv64_compiler_ldflags_mabi_compat"
             and target.get("architecture") == "riscv64"
         ):
             data, transforms = apply_riscv64_compiler_ldflags_mabi_compat(data)
+        elif (
+            rel_path == "build/config/compiler/compiler.gni"
+            and action.get("source_role") == "riscv64_disable_thin_lto_compat"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_riscv64_disable_thin_lto_compat(data)
         elif (
             rel_path == "build/config/components/musl/BUILD.gn"
             and action.get("source_role") == "riscv64_musl_cflags_mabi_compat"
@@ -4157,6 +4449,59 @@ def parse_build_diagnostics(
                 f"Apply the target-evidenced riscv64 OUTPUT_TARGET and BUILD_ID_LINK_OUTPUT mappings in {objcopy_rel} and rerun the compile flow.",
                 [str(log_path), str(target_root / objcopy_rel)],
                 matching_lines(all_text, ["run_objcopy.py", "KeyError: 'riscv64'", "--arch riscv64"], 10),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "cannot link object files with different floating-point ABI" in plain_text
+        and ("-flto=thin" in plain_text or "thinlto-cache" in plain_text or "lto.tmp" in plain_text)
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "riscv64_global_thinlto_float_abi_mismatch",
+                "source_build_compatibility",
+                "RISC-V target links fail while ThinLTO is enabled because lld-generated lto.tmp or thinlto-cache objects do not retain the same rv64imafdc/lp64d ABI as the final link.",
+                "Disable the default riscv64 ThinLTO path in build/config/compiler/compiler.gni for this OpenHarmony 6.0 toolchain, keep product features selected, and rerun the compile flow.",
+                [
+                    str(log_path),
+                    str(workspace / "build/config/compiler/compiler.gni"),
+                    str(workspace / "build/config/compiler/BUILD.gn"),
+                ],
+                matching_lines(
+                    all_text,
+                    ["cannot link object files with different floating-point ABI", "-flto=thin", "thinlto-cache", "lto.tmp"],
+                    14,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "rustc_wrapper.py" in plain_text
+        and (
+            "unrecognized argument in option '-mabi=lp64d'" in plain_text
+            or "unrecognized command line option '--target=riscv64-linux-ohos'" in plain_text
+            or 'rust_abi_target = "riscv64-unknown-linux-gnu"' in plain_text
+        )
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "riscv64_rust_host_linker_misconfigured",
+                "external_prebuilt_dependency",
+                "Rust targets are being compiled or linked through the host x86 Rust toolchain/linker while RISC-V OHOS linker flags are present.",
+                "Import the target-evidenced rustc-riscv toolchain selection and riscv64-unknown-linux-ohos toolchain tuple; if the real rustc-riscv prebuilt is unavailable, use a tracked compile-only fake driver and report the missing prebuilt.",
+                [
+                    str(log_path),
+                    str(target_root / "build/rust/rustc_toolchain.gni"),
+                    str(target_root / "build/toolchain/ohos/BUILD.gn"),
+                    str(target_root / "prebuilts/rustc-riscv/linux-x86_64/current/bin/rustc"),
+                ],
+                matching_lines(
+                    all_text,
+                    ["rustc_wrapper.py", "-mabi=lp64d", "--target=riscv64-linux-ohos", "cc: error"],
+                    14,
+                ),
             )
         )
 

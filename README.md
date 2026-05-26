@@ -264,7 +264,15 @@ musl hook LTO cflags, and global riscv64 compiler/linker flags with the target-e
 CRT-object, and archive inputs are already `lp64d` but LLD still emits mixed-ABI
 `lto.tmp` objects, it uses musl's existing `musl_use_flto` switch to disable
 riscv64 shared-musl LTO as a compile-only compatibility bridge instead of
-removing musl or target libraries. Build attempts emit diagnostics
+removing musl or target libraries. If the same mixed-ABI error then appears
+across ordinary riscv64 executables/shared libraries through `lto.tmp` or
+`thinlto-cache`, the executor disables the default riscv64 ThinLTO path in
+`build/config/compiler/compiler.gni` as an optimization-only off-ramp for the
+OpenHarmony 6.0 clang/lld stack. For Rust targets that fall back to host `cc`
+while carrying riscv64 linker flags, it imports the target-evidenced
+`rustc-riscv` toolchain mapping and uses an executable compile-only fake Rust
+driver when the real prebuilt compiler is unavailable, recording that fake as
+dependency debt. Build attempts emit diagnostics
 in `base_patch_manifest.yaml` and `.md` for known blockers such as
 host/prebuilt C++ header gaps, missing `BUILD.gn` closures, unavailable product
 components, RISC-V build-compatibility gaps, directly invoked script executable

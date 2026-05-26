@@ -247,6 +247,18 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   `third_party/musl/BUILD.gn` to disable riscv64 shared-musl LTO as a
   compile-only compatibility bridge instead of removing musl or target
   libraries.
+- When many riscv64 links fail from `lto.tmp` or `thinlto-cache` mixed
+  floating-point ABI objects after musl itself links, disable the default
+  riscv64 ThinLTO path in `build/config/compiler/compiler.gni` for the
+  OpenHarmony 6.0 clang/lld stack. This is an optimization off-ramp, not a
+  product-feature removal.
+- For riscv64 Rust failures where `rustc_wrapper.py` ends up invoking host
+  `cc` with `--target=riscv64-linux-ohos` or `-mabi=lp64d`, import the
+  target-evidenced `build/rust/rustc_toolchain.gni` and
+  `build/toolchain/ohos/BUILD.gn` Rust tuple mapping. If the real
+  `prebuilts/rustc-riscv` compiler is missing, use an executable compile-only
+  fake Rust driver that emits placeholder RISC-V ELF outputs and record it as
+  dependency debt.
 - Preserve target-evidenced executable bits for build scripts invoked directly
   through `/usr/bin/env`, such as `param_fixer.py` and board
   `build_kernel.sh`; content-identical files may still need a mode-only update.
