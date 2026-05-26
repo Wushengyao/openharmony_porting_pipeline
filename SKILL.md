@@ -187,6 +187,11 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   `NAPI_TARGET_RISCV64`/`_RISCV64_` defines and import the matching
   `cj_support.cpp` ELF typedef/LIBS_NAME support instead of disabling CJ or
   ArkUI features.
+- For graphic_2d VSync RISC-V format blockers, when `VPUBI64`/`VPUBU64`
+  produce `-Werror=format` for LP64 `int64_t`/`uint64_t`, apply the
+  target-evidenced `vsync_log.h` branch that treats
+  `(__riscv && __riscv_xlen == 64)` like the existing 64-bit `%ld`/`%lu`
+  platforms.
 - For SmartPerf split blockers, when target evidence shows SmartPerf is owned by
   `developtools/smartperf_host`, remove legacy `developtools/profiler/host/smartperf`
   labels from the hiprofiler bundle registry to avoid duplicate fuzz outputs.

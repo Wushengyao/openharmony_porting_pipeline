@@ -270,7 +270,10 @@ when those errors appear. If ArkUI NAPI CJ support reports
 `current platform not supported` for riscv64, the executor adds the
 target-evidenced `NAPI_TARGET_RISCV64`/`_RISCV64_` defines and imports
 `cj_support.cpp` with the target `LIBS_NAME "riscv_64"` and ELF-width typedefs
-instead of disabling CJ or ArkUI features. When TEE `teecd` agents still contain ARM-only
+instead of disabling CJ or ArkUI features. If graphic_2d VSync fails
+`-Werror=format` because `uint64_t`/`int64_t` are LP64 `long` on riscv64, the
+executor applies the target-evidenced `vsync_log.h` condition that maps
+RISC-V 64-bit to the existing `%ld`/`%lu` logging macros. When TEE `teecd` agents still contain ARM-only
 `isb`/`dsb sy` barriers, the executor applies the target-evidenced
 aarch64/riscv guard in `secfile_load_agent.c`, `fs_work_agent.c`, and
 `misc_work_agent.c`, using `fence.i` and `fence iorw, iorw` for RISC-V instead

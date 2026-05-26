@@ -84,6 +84,7 @@ PROFILER_NATIVE_DAEMON_RISCV64_SOURCE_RELS = [
     ),
 ]
 ARKUI_NAPI_RISCV64_CJ_SUPPORT_REL = "foundation/arkui/napi/native_engine/impl/ark/cj_support.cpp"
+GRAPHIC_2D_VSYNC_LOG_REL = "foundation/graphic/graphic_2d/rosen/modules/composer/vsync/include/vsync_log.h"
 CXX_STDLIB_HEADER_NAMES = {
     "algorithm",
     "array",
@@ -1546,6 +1547,18 @@ def target_has_arkui_napi_riscv64_evidence(target_root: Path) -> bool:
     )
 
 
+def target_has_graphic_2d_vsync_riscv64_log_evidence(target_root: Path) -> bool:
+    vsync_log = target_root / GRAPHIC_2D_VSYNC_LOG_REL
+    if not vsync_log.is_file():
+        return False
+    text = vsync_log.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "(defined(__riscv) && __riscv_xlen == 64)" in text
+        and '#define VPUBI64  "%{public}ld"' in text
+        and '#define VPUBU64  "%{public}lu"' in text
+    )
+
+
 def file_has_riscv64_rofs_evidence(path: Path) -> bool:
     if not path.is_file():
         return False
@@ -2829,6 +2842,19 @@ def planned_actions(
             )
         )
 
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_graphic_2d_vsync_riscv64_log_evidence(target_root):
+        actions.append(
+            workspace_transform_action(
+                GRAPHIC_2D_VSYNC_LOG_REL,
+                "graphic_2d_vsync_riscv64_log_format_macros",
+                "L1_build_compatibility",
+                (
+                    "Add the target-evidenced riscv64 LP64 condition to VSync logging format "
+                    "macros so uint64_t/int64_t arguments compile with -Werror=format."
+                ),
+            )
+        )
+
     if clean_str(seed.get("architecture")) == "riscv64" and target_has_tee_riscv64_barrier_evidence(target_root):
         for rel_path in TEE_RISCV64_BARRIER_SOURCE_RELS:
             actions.append(
@@ -3699,6 +3725,19 @@ def apply_arkui_napi_riscv64_target_defines(data: bytes) -> tuple[bytes, list[st
             notes.append("ArkUI NAPI _RISCV64_ define insertion point not found")
 
     return text.encode(TEXT_ENCODING), notes or ["ArkUI NAPI RISC-V target defines unchanged"]
+
+
+def apply_graphic_2d_vsync_riscv64_log_format_macros(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    riscv_condition = "(defined(__riscv) && __riscv_xlen == 64)"
+    if riscv_condition in text:
+        return data, ["graphic_2d vsync RISC-V LP64 log-format branch already present"]
+    old = "#if (defined(__aarch64__) || defined(__x86_64__))\n"
+    new = f"#if (defined(__aarch64__) || defined(__x86_64__) || {riscv_condition})\n"
+    if old in text:
+        text = text.replace(old, new, 1)
+        return text.encode(TEXT_ENCODING), ["added graphic_2d vsync RISC-V LP64 log-format branch"]
+    return data, ["graphic_2d vsync RISC-V log-format insertion point not found"]
 
 
 def apply_riscv64_compiler_ldflags_mabi_compat(data: bytes) -> tuple[bytes, list[str]]:
@@ -5176,6 +5215,12 @@ def materialize_action(
         ):
             data, transforms = apply_arkui_napi_riscv64_target_defines(data)
         elif (
+            rel_path == GRAPHIC_2D_VSYNC_LOG_REL
+            and action.get("source_role") == "graphic_2d_vsync_riscv64_log_format_macros"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_graphic_2d_vsync_riscv64_log_format_macros(data)
+        elif (
             rel_path == "foundation/arkui/ace_engine/build/tools/run_objcopy.py"
             and action.get("source_role") == "arkui_run_objcopy_riscv64_compat"
             and target.get("architecture") == "riscv64"
@@ -5522,6 +5567,11 @@ def check_build_log_old_errors_absent(build_result: dict[str, Any] | None) -> di
             "foundation/arkui/napi/native_engine/impl/ark/cj_support.cpp",
             "current platform not supported",
             "LIBS_NAME",
+        ],
+        "old_graphic_2d_vsync_riscv64_log_format_mismatch": [
+            "foundation/graphic/graphic_2d/rosen/modules/composer/vsync",
+            "format specifies type",
+            "VPUB",
         ],
     }
     if not build_result:
@@ -6214,6 +6264,40 @@ def parse_build_diagnostics(
                         "NAPI_TARGET_RISCV64",
                     ],
                     16,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "foundation/graphic/graphic_2d/rosen/modules/composer/vsync" in plain_text
+        and "format specifies type" in plain_text
+        and ("uint64_t" in plain_text or "int64_t" in plain_text)
+        and ("VPUBU64" in plain_text or "VPUBI64" in plain_text)
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "graphic_2d_vsync_riscv64_log_format_macros",
+                "source_build_compatibility",
+                "graphic_2d VSync logging macros still treat riscv64 as LLP64-style, so LP64 uint64_t/int64_t arguments fail -Werror=format.",
+                (
+                    "Apply the target-evidenced vsync_log.h condition that groups "
+                    "(__riscv && __riscv_xlen == 64) with aarch64/x86_64 for VPUBI64/VPUBU64."
+                ),
+                [
+                    str(log_path),
+                    str(target_root / GRAPHIC_2D_VSYNC_LOG_REL),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "foundation/graphic/graphic_2d/rosen/modules/composer/vsync",
+                        "format specifies type",
+                        "uint64_t",
+                        "int64_t",
+                        "VPUB",
+                    ],
+                    18,
                 ),
             )
         )
