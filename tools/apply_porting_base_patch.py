@@ -101,6 +101,27 @@ def write_bytes(path: Path, data: bytes) -> None:
     path.write_bytes(data)
 
 
+def apply_mode(path: Path, mode: int | None) -> None:
+    if mode is None:
+        return
+    path.chmod(mode)
+
+
+def executable_source_mode(source_label: str, force_executable: bool = False) -> int | None:
+    if force_executable:
+        return 0o775
+    try:
+        source_path = Path(source_label)
+    except Exception:
+        return None
+    if not source_path.is_file():
+        return None
+    mode = source_path.stat().st_mode & 0o777
+    if mode & 0o111:
+        return mode
+    return None
+
+
 def clean_str(value: Any, default: str = "unknown") -> str:
     if isinstance(value, str) and value.strip():
         return value.strip()
@@ -1412,6 +1433,21 @@ def planned_actions(
             )
         )
 
+    param_fixer_rel = "base/startup/init/services/etc/param/param_fixer.py"
+    target_param_fixer = target_root / param_fixer_rel
+    if target_param_fixer.is_file() and (target_param_fixer.stat().st_mode & 0o111):
+        actions.append(
+            copy_action(
+                param_fixer_rel,
+                "startup_param_fixer_executable_script",
+                "L1_build_compatibility",
+                (
+                    "Preserve the target-evidenced executable bit for param_fixer.py; "
+                    "GN/Ninja invokes it directly through /usr/bin/env during parameter generation."
+                ),
+            )
+        )
+
     feature_registry_shims = [
         (
             "base/update/updater/bundle.json",
@@ -1586,6 +1622,7 @@ def planned_actions(
         "RISC-V ArkCompiler LLVM backend/codegen disablement is applied only when target-source evidence contains the riscv64 ark_config rule.",
         "RISC-V graphic_3d embedded-asset rofs object mappings are applied only when target-source evidence contains matching rv64 object rules.",
         "RISC-V run_objcopy architecture mappings are applied only when target-source evidence contains riscv64 BFD/output mappings.",
+        "Target-evidenced executable bits are preserved for directly invoked build scripts such as param_fixer.py and board build_kernel.sh.",
         "SmartPerf split component-registry migration removes legacy hiprofiler-hosted SmartPerf labels only when target evidence shows SmartPerf is owned by smartperf_host.",
         "Vendor product module text/config closures are imported only from direct target ohos.build module labels; non-text payloads become compile-only fake interfaces.",
         "Board module text/config closures are imported only from local labels in the target board root BUILD.gn; kernel modules, bootloader images, and firmware become compile-only fake interfaces.",
@@ -2668,6 +2705,29 @@ def parse_build_diagnostics(
                 )
             )
 
+    permission_denied_scripts: list[str] = []
+    for line in plain_text.splitlines():
+        if "/usr/bin/env:" not in line or not ("权限不够" in line or "Permission denied" in line):
+            continue
+        match = re.search(r"/usr/bin/env:\s*[“\"']([^”\"']+)[”\"']", line)
+        if match:
+            permission_denied_scripts.append(match.group(1))
+        else:
+            permission_denied_scripts.append(line.strip())
+    for script_path in sorted(set(permission_denied_scripts))[:8]:
+        normalized_script = normalize_ninja_source_path(script_path, workspace)
+        diagnostics.append(
+            build_diagnostic(
+                "direct_invoked_script_not_executable",
+                "source_file_mode_compatibility",
+                f"Ninja invokes {normalized_script} directly through /usr/bin/env, but the file is not executable.",
+                "Preserve the target-evidenced executable bit when staging/applying directly invoked build scripts, then rerun the compile flow.",
+                [str(log_path), str(target_root / normalized_script)],
+                matching_lines(all_text, [script_path, "权限不够", "Permission denied"], 10)
+                + [f"normalized_script={normalized_script}"],
+            )
+        )
+
     bad_subsystem_bundle_paths = sorted(set(re.findall(r"subsystem name config incorrect in '([^']+bundle\.json)'", plain_text)))
     for bundle_path in bad_subsystem_bundle_paths[:8]:
         diagnostics.append(
@@ -3130,6 +3190,8 @@ def main() -> int:
                 "workspace_status": "missing",
                 "source_sha256": "unknown",
                 "workspace_sha256": "unknown",
+                "workspace_mode": "unknown",
+                "desired_mode": "unknown",
                 "apply_status": "not_requested",
                 "backup_path": "none",
                 "compatibility_transforms": transforms,
@@ -3143,12 +3205,17 @@ def main() -> int:
             continue
 
         result["source_sha256"] = sha256_bytes(data)
+        desired_mode = executable_source_mode(source_label, bool(action.get("force_executable")))
+        if desired_mode is not None:
+            result["desired_mode"] = oct(desired_mode)
         write_bytes(staged_path, data)
+        apply_mode(staged_path, desired_mode)
 
         if workspace_path.exists():
             if workspace_path.is_file():
                 result["workspace_status"] = "present"
                 result["workspace_sha256"] = sha256_file(workspace_path)
+                result["workspace_mode"] = oct(workspace_path.stat().st_mode & 0o777)
             else:
                 result["workspace_status"] = "present_non_file"
                 result["apply_status"] = "blocked_non_file_target"
@@ -3160,8 +3227,28 @@ def main() -> int:
             results.append(result)
             continue
 
-        if result["workspace_status"] == "present" and result["workspace_sha256"] == result["source_sha256"]:
+        mode_needs_update = (
+            desired_mode is not None
+            and result["workspace_status"] == "present"
+            and (workspace_path.stat().st_mode & 0o777) != desired_mode
+        )
+        if (
+            result["workspace_status"] == "present"
+            and result["workspace_sha256"] == result["source_sha256"]
+            and not mode_needs_update
+        ):
             result["apply_status"] = "skipped_same_content"
+            results.append(result)
+            continue
+        if (
+            result["workspace_status"] == "present"
+            and result["workspace_sha256"] == result["source_sha256"]
+            and mode_needs_update
+        ):
+            apply_mode(workspace_path, desired_mode)
+            result["apply_status"] = "applied_mode_updated"
+            result["workspace_mode_after"] = oct(workspace_path.stat().st_mode & 0o777)
+            result["workspace_sha256_after"] = sha256_file(workspace_path)
             results.append(result)
             continue
 
@@ -3178,8 +3265,10 @@ def main() -> int:
             result["backup_path"] = str(backup_path)
 
         write_bytes(workspace_path, data)
+        apply_mode(workspace_path, desired_mode)
         result["apply_status"] = "applied_created" if result["workspace_status"] == "missing" else "applied_overwritten_with_backup"
         result["workspace_sha256_after"] = sha256_file(workspace_path)
+        result["workspace_mode_after"] = oct(workspace_path.stat().st_mode & 0o777)
         results.append(result)
 
     if args.apply:

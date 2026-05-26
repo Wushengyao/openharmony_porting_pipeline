@@ -196,6 +196,9 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
 - For RISC-V resource object generation, add target-evidenced
   `build/scripts/run_objcopy.py` `riscv64` output/BFD mappings when Ninja
   reports `KeyError: 'riscv64'` from `run_objcopy.py`.
+- Preserve target-evidenced executable bits for build scripts invoked directly
+  through `/usr/bin/env`, such as `param_fixer.py` and board
+  `build_kernel.sh`; content-identical files may still need a mode-only update.
 - When a product references a component that has no real current-workspace
   `bundle.json`, generate a zero-subcomponent fake component registry under
   that subsystem's root from `build/subsystem_config.json` instead of deleting

@@ -369,6 +369,7 @@ controlled_executor:
     - missing source components should use zero-subcomponent fake bundle registries before product features are removed
     - missing target-evidenced component features should use tracked feature-registry shims before product features are removed
     - host C++ include/link-path gaps may be fixed by validated build-subprocess environment variables, not source edits
+    - directly invoked scripts should preserve target-evidenced executable bits; mode-only updates are allowed when content already matches
     - every fake interface must be reported with missing dependency, provenance path, runtime non-functionality, and replacement follow-up
 batch_count: 0
 source_import_item_count: 0

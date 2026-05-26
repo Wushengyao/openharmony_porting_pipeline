@@ -242,8 +242,12 @@ target-evidenced `build/scripts/run_objcopy.py` riscv64 mappings when resource
 object generation raises `KeyError: 'riscv64'`. Build attempts emit diagnostics
 in `base_patch_manifest.yaml` and `.md` for known blockers such as
 host/prebuilt C++ header gaps, missing `BUILD.gn` closures, unavailable product
-components, RISC-V build-compatibility gaps, Ninja missing-source follow-ups,
-and prebuilt-backed feature blockers such as a WebView riscv64 ArkWebCore HAP.
+components, RISC-V build-compatibility gaps, directly invoked script executable
+bit mismatches, Ninja missing-source follow-ups, and prebuilt-backed feature
+blockers such as a WebView riscv64 ArkWebCore HAP.
+The apply step preserves target-evidenced executable bits for scripts invoked
+through `/usr/bin/env`; content-identical files such as `param_fixer.py` or a
+board `build_kernel.sh` may still receive a mode-only update.
 For the WebView riscv64 ArkWebCore gap, the executor keeps `web:webview` enabled,
 imports the evidenced text-only build rule, writes a marked compile-only fake
 `ArkWebCore.hap`, imports direct local WebView text/source closures from target
