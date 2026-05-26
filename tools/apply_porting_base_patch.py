@@ -51,6 +51,7 @@ TEXT_CLOSURE_SUFFIXES = {
     ".para",
     ".patch",
     ".rc",
+    ".py",
     ".sh",
     ".txt",
     ".xml",
@@ -683,6 +684,73 @@ def collect_webview_import_file_rels(target_root: Path, module_dirs: list[str]) 
             "webview_root_path": "//base/web/webview",
         },
     )
+
+
+def collect_gn_quoted_file_rels(
+    target_root: Path,
+    file_rels: list[str],
+    absolute_prefixes: list[str],
+    variable_paths: dict[str, str] | None = None,
+) -> list[str]:
+    normalized_prefixes = [normalize_rel(prefix) for prefix in absolute_prefixes]
+    collected: list[str] = []
+    for file_rel in file_rels:
+        owner_rel = normalize_rel(file_rel).rsplit("/", 1)[0] if "/" in normalize_rel(file_rel) else ""
+        path = target_root / normalize_rel(file_rel)
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding=TEXT_ENCODING, errors="ignore")
+        for quoted in re.findall(r'"([^"]+)"', text):
+            label_path = replace_gn_label_variables(quoted.strip(), variable_paths)
+            if ":" in label_path:
+                continue
+            try:
+                if label_path.startswith("//"):
+                    rel_path = normalize_rel(label_path[2:])
+                else:
+                    rel_path = resolve_relative_gn_label(owner_rel, label_path)
+            except ValueError:
+                continue
+            if normalized_prefixes and not any(
+                rel_path == prefix or rel_path.startswith(f"{prefix}/")
+                for prefix in normalized_prefixes
+            ):
+                continue
+            if rel_path not in collected and (target_root / rel_path).is_file():
+                collected.append(rel_path)
+    return collected
+
+
+def collect_webview_glue_prepare_input_file_rels(target_root: Path) -> list[str]:
+    interface_build_rel = "base/web/webview/ohos_interface/BUILD.gn"
+    collected = [interface_build_rel] if (target_root / interface_build_rel).is_file() else []
+    for rel_path in collect_gn_quoted_file_rels(
+        target_root,
+        [interface_build_rel],
+        [
+            "base/web/webview/copy_files.py",
+            "base/web/webview/web_aafwk.gni",
+        ],
+        {
+            "webview_path": "//base/web/webview",
+            "webview_root_path": "//base/web/webview",
+        },
+    ):
+        if rel_path not in collected:
+            collected.append(rel_path)
+    return collected
+
+
+def webview_glue_prepare_input_dirs() -> list[str]:
+    return [
+        "base/web/webview/ohos_interface/include/ohos_nweb",
+        "base/web/webview/ohos_interface/ohos_glue/base",
+        "base/web/webview/ohos_interface/ohos_glue/scripts",
+        "base/web/webview/ohos_interface/ohos_glue/ohos_nweb/include",
+        "base/web/webview/ohos_interface/ohos_glue/ohos_nweb/bridge/webview",
+        "base/web/webview/ohos_interface/ohos_glue/ohos_nweb/cpptoc/webview",
+        "base/web/webview/ohos_interface/ohos_glue/ohos_nweb/ctocpp/webview",
+    ]
 
 
 def collect_target_module_closure_actions(
@@ -2867,6 +2935,34 @@ def planned_actions(
                         ),
                     )
                 )
+        for rel_path in collect_webview_glue_prepare_input_file_rels(target_root):
+            if is_text_closure_file(target_root / rel_path):
+                actions.append(
+                    copy_action(
+                        rel_path,
+                        "webview_glue_prepare_input_text_closure",
+                        "L2_webview_local_module_text_closure",
+                        (
+                            "Import target WebView ohos_interface BUILD/input files used by "
+                            "webview_glue_*_prepare actions so generated glue sources match "
+                            "the copied ohos_glue BUILD rules instead of being faked under out/gen."
+                        ),
+                    )
+                )
+        actions.extend(
+            collect_target_module_closure_actions(
+                target_root,
+                webview_glue_prepare_input_dirs(),
+                "webview_glue_prepare_input_text_closure",
+                "webview_glue_prepare_input_fake_payload",
+                "L2_webview_local_module_text_closure",
+                (
+                    "Import the target WebView ohos_interface base/scripts plus nweb include "
+                    "and glue input directories that copy_files.py copies into the generated "
+                    "ohos_glue tree before translator.py creates the final wrapper/ctocpp outputs."
+                ),
+            )
+        )
         if target_has_webview_app_fwk_update_bundle_migration_evidence(target_root):
             actions.append(
                 workspace_transform_action(
@@ -2966,6 +3062,7 @@ def planned_actions(
         "Missing board BSP kernel source trees may use a tracked fake kernel-source marker plus a build_kernel.sh fake-output bridge so image generation remains visible during dependency triage.",
         "SoC module text/source closures are imported only from target board BUILD.gn labels under the selected SoC root; firmware and proprietary GPU/WiFi/shared-library payloads become compile-only fake interfaces.",
         "WebView local module text/source closures are imported from target ohos_nweb GN labels after resolving webview_path-style variables; binary/prebuilt payloads remain fake-interface debt.",
+        "WebView generated glue sources are not faked: target-evidenced ohos_interface BUILD/base/scripts/input files are imported so the existing prepare/translator actions regenerate out/gen sources.",
         "WebView app_fwk_update component-registry labels are migrated to the target sa/app_fwk_update module when target evidence shows the service moved from the old flat sa target.",
         "WebView app_fwk_update test closures are migrated with target evidence when test deps would otherwise keep the old flat sa service in the GN graph.",
     ]
@@ -6329,6 +6426,94 @@ def parse_build_diagnostics(
                     evidence_lines,
                 )
             )
+
+    webview_missing_generated_sources = sorted(
+        set(
+            re.findall(
+                r"(?:clang\+\+|clang): error: no such file or directory: '([^']*gen/base/web/webview/ohos_glue/ohos_nweb/[^']+\.(?:cpp|h))'",
+                plain_text,
+            )
+        )
+    )
+    for raw_source_path in webview_missing_generated_sources[:8]:
+        missing_rel = normalize_ninja_source_path(raw_source_path, workspace)
+        evidence_lines = matching_lines(all_text, ["no such file or directory", raw_source_path], 8)
+        evidence_lines.append(f"normalized_missing_generated_source={missing_rel}")
+        diagnostics.append(
+            build_diagnostic(
+                "webview_glue_generated_source_missing",
+                "source_text_closure_missing",
+                (
+                    "WebView ohos_glue BUILD rules expect generated glue source "
+                    f"{missing_rel}, but the prepare inputs did not produce it."
+                ),
+                (
+                    "Import the target-evidenced base/web/webview/ohos_interface BUILD/input "
+                    "text closure so prepare.sh/copy_files.py/translator.py regenerate the "
+                    "missing out/gen source; do not hand-write a fake generated .cpp/.h file."
+                ),
+                [
+                    str(log_path),
+                    str(target_root / "base/web/webview/ohos_interface/BUILD.gn"),
+                    str(target_root / "base/web/webview/ohos_interface/ohos_glue/ohos_nweb"),
+                ],
+                evidence_lines,
+            )
+        )
+
+    webview_translate_type_failures = sorted(
+        set(re.findall(r"Exception: Failed to translate type: ([A-Za-z0-9_]+)", plain_text))
+    )
+    if webview_translate_type_failures and (
+        "base/web/webview/ohos_glue:ohos_glue_nweb_prepare" in plain_text
+        or "base/web/webview/prepare.sh translate" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "webview_glue_translator_type_missing",
+                "source_text_closure_missing",
+                (
+                    "WebView glue translator does not recognize target type(s): "
+                    + ", ".join(webview_translate_type_failures[:8])
+                    + (" ..." if len(webview_translate_type_failures) > 8 else "")
+                    + "."
+                ),
+                (
+                    "Import the target-evidenced ohos_interface/ohos_glue base and scripts "
+                    "text closure together with the nweb glue input closure; keep the generated "
+                    "out/gen files produced by translator.py instead of faking them."
+                ),
+                [
+                    str(log_path),
+                    str(target_root / "base/web/webview/ohos_interface/ohos_glue/scripts"),
+                    str(target_root / "base/web/webview/ohos_interface/ohos_glue/base"),
+                ],
+                matching_lines(all_text, ["Failed to translate type", "ohos_glue_nweb_prepare", "prepare.sh translate"], 12),
+            )
+        )
+
+    fake_python_script_paths = sorted(
+        set(re.findall(r'File "([^"]+\.py)", line \d+.*\n\s*reference=', plain_text))
+    )
+    if fake_python_script_paths and "SyntaxError: invalid syntax" in plain_text:
+        diagnostics.append(
+            build_diagnostic(
+                "python_script_misclassified_as_fake_payload",
+                "source_text_closure_missing",
+                (
+                    "A Python build/generator script was executed as a compile-only fake marker: "
+                    + ", ".join(fake_python_script_paths[:4])
+                    + (" ..." if len(fake_python_script_paths) > 4 else "")
+                    + "."
+                ),
+                (
+                    "Treat .py files as text/source closure inputs and copy the target-evidenced "
+                    "script content; fake payloads are only for real binary/prebuilt/non-text dependencies."
+                ),
+                [str(log_path)],
+                matching_lines(all_text, ["SyntaxError: invalid syntax", "reference=", ".py"], 12),
+            )
+        )
 
     permission_denied_scripts: list[str] = []
     for line in plain_text.splitlines():

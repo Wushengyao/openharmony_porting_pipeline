@@ -157,6 +157,14 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   local GN/GNI support files imported by those modules; treat `.idl` and linker
   map files as text closure inputs, while prebuilt payloads remain
   fake-interface dependency debt.
+- When WebView `ohos_glue` build rules fail on missing generated files under
+  `gen/base/web/webview/ohos_glue`, import the target-evidenced
+  `ohos_interface/BUILD.gn`, base glue support, generator scripts, and the glue
+  input files listed by its prepare actions so the normal copy/translator
+  pipeline regenerates them; do not fake generated `.cpp` or `.h` outputs.
+- Treat Python build/generator scripts as text closure inputs. Compile-only fake
+  payloads are for binary, prebuilt, firmware, kernel-module, and other non-text
+  dependencies, not for `.py` source files that Ninja executes.
 - When target evidence moves WebView `app_fwk_update` from the old flat `sa`
   target to `sa/app_fwk_update`, migrate WebView bundle labels to the new module
   and import the matching app_fwk_update unit-test text closure instead of

@@ -304,6 +304,14 @@ imports the evidenced text-only build rule, writes a marked compile-only fake
 `ohos_nweb` GN labels after resolving `webview_path` variables, and carries the
 local GN/GNI support files those modules import. Text closures include `.idl`
 and linker map files. Fake WebView payloads are reported under `fake_interfaces`.
+When copied `ohos_glue/BUILD.gn` rules expect generated glue sources under
+`gen/base/web/webview/ohos_glue`, the executor imports the target-evidenced
+`ohos_interface/BUILD.gn`, base glue support, generator scripts, and listed glue
+input files so the normal prepare/translator actions regenerate the sources; it
+does not fake generated `.cpp` or `.h` files under `out/gen`.
+Python generator/build scripts are treated as text closure inputs, not fake
+payload candidates; fake interfaces are reserved for real binary, prebuilt, or
+otherwise non-text dependencies.
 When target evidence shows `app_fwk_update` moved from the old flat `sa` target
 to `sa/app_fwk_update`, the executor rewrites WebView bundle labels to the new
 module and imports the matching app_fwk_update unit-test text closure so tests
