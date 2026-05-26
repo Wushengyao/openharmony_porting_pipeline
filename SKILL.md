@@ -230,8 +230,14 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   `RISCV64` mapping; do not import broader ArkCompiler 6.1 rename churn.
 - When ArkCompiler RISC-V bridge assembly reports tp-relative offsets outside
   the signed 12-bit immediate range, classify it as source/build compatibility
-  debt and iterate toward a target-scoped large-offset access helper; do not
-  hide it by removing ArkCompiler runtime targets or by fake binary substitution.
+  debt and apply a target-scoped ManagedThread large-offset load/store helper
+  in the affected RISC-V assembly sources, not in headers also included by C++;
+  do not hide it by removing
+  ArkCompiler runtime targets or by fake binary substitution.
+- For ArkCompiler RISC-V runtime C++ blockers, prefer target-evidenced minimal
+  guards such as `string_index_of.h` accepting `PANDA_TARGET_RISCV64` as
+  little-endian and `EtsToStringCache` narrowing the lock-free atomic assertion;
+  avoid importing broader 6.1 runtime rename churn during compile triage.
 - For RISC-V graphics builds, add target-evidenced `graphic_3d` rofs `rv64`
   object mappings to compile files when GN reports empty generated asset paths;
   this is a build-compatibility source fix, not a product feature removal.

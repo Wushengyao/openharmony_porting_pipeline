@@ -385,8 +385,13 @@ also add the target-evidenced `cross_values/BUILD.gn` `RISCV64` arch mapping
 without importing unrelated ArkCompiler 6.1 rename churn.
 If RISC-V bridge assembly later reports tp-relative ManagedThread offsets
 outside the signed 12-bit immediate range, the manifest classifies that as a
-source/build compatibility blocker for a target-scoped large-offset helper, not
-as external binary dependency debt.
+source/build compatibility blocker and the executor applies a target-scoped
+ManagedThread large-offset load/store helper in the affected RISC-V assembly
+sources, not headers that are also included by C++ and not external binary
+dependency debt. Subsequent ArkCompiler RISC-V C++ blockers use the same minimal
+target-evidenced style: add the `PANDA_TARGET_RISCV64` little-endian
+`string_index_of.h` guard and narrow `EtsToStringCache`'s lock-free atomic
+assertion guard without importing broad 6.1 runtime rename churn.
 Build attempts also probe the prebuilt host clang C++ standard-library include
 path. If clang selected an incomplete host GCC installation, the executor
 validates the candidate paths and scopes them to `build/toolchain/linux:clang_x64`

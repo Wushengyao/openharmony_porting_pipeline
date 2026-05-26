@@ -1259,6 +1259,29 @@ def target_has_arkcompiler_cross_values_riscv64_evidence(target_root: Path) -> b
     return 'current_cpu == "riscv64"' in text and 'arch = "RISCV64"' in text
 
 
+def target_has_arkcompiler_string_index_riscv64_evidence(target_root: Path) -> bool:
+    string_index = target_root / "arkcompiler/runtime_core/static_core/runtime/entrypoints/string_index_of.h"
+    if not string_index.is_file():
+        return False
+    text = string_index.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return "!defined(PANDA_TARGET_RISCV64)" in text and "Unknown target architecture" in text
+
+
+def target_has_arkcompiler_ets_to_string_cache_riscv64_evidence(target_root: Path) -> bool:
+    cache = (
+        target_root
+        / "arkcompiler/runtime_core/static_core/plugins/ets/runtime/intrinsics/helpers/ets_to_string_cache.cpp"
+    )
+    if not cache.is_file():
+        return False
+    text = cache.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "#if !defined(ARK_HYBRID) && defined(PANDA_32_BIT_MANAGED_POINTER) && defined(PANDA_TARGET_64)"
+        in text
+        and "std::atomic<Data>::is_always_lock_free" in text
+    )
+
+
 def target_has_compile_standard_whitelist_prefix_evidence(target_root: Path, prefix: str) -> bool:
     whitelist = target_root / "build/compile_standard_whitelist.json"
     if not whitelist.is_file():
@@ -2458,6 +2481,35 @@ def planned_actions(
                 (
                     "Add the target-evidenced RISCV64 arch-name mapping for ArkCompiler "
                     "cross_values generation so the generator receives input, output, and arch-name."
+                ),
+            )
+        )
+
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_arkcompiler_string_index_riscv64_evidence(target_root):
+        actions.append(
+            workspace_transform_action(
+                "arkcompiler/runtime_core/static_core/runtime/entrypoints/string_index_of.h",
+                "arkcompiler_riscv64_string_index_little_endian_guard",
+                "L1_build_compatibility",
+                (
+                    "Add the target-evidenced PANDA_TARGET_RISCV64 little-endian guard exception "
+                    "so StringIndexOf SWAR code does not reject riscv64 at compile time."
+                ),
+            )
+        )
+
+    if (
+        clean_str(seed.get("architecture")) == "riscv64"
+        and target_has_arkcompiler_ets_to_string_cache_riscv64_evidence(target_root)
+    ):
+        actions.append(
+            workspace_transform_action(
+                "arkcompiler/runtime_core/static_core/plugins/ets/runtime/intrinsics/helpers/ets_to_string_cache.cpp",
+                "arkcompiler_riscv64_ets_to_string_cache_atomic_guard",
+                "L1_build_compatibility",
+                (
+                    "Apply the target-evidenced RISC-V-safe guard around the EtsToStringCache "
+                    "lock-free atomic assertion instead of disabling the ETS runtime target."
                 ),
             )
         )
@@ -3921,9 +3973,60 @@ def apply_ark_runtime_riscv64_memory_helpers(data: bytes) -> tuple[bytes, list[s
     return data, ["ArkCompiler RISCV64 memory helper insertion point not found"]
 
 
+ARK_RISCV64_THREAD_ACCESS_HELPERS = (
+    "// RISC-V load/store immediates are signed 12-bit; ManagedThread fields may live beyond that range.\n"
+    ".macro ARK_LOAD_THREAD_X dst, offset\n"
+    "    li \\dst, \\offset\n"
+    "    add \\dst, \\dst, THREAD_REG\n"
+    "    ld \\dst, 0(\\dst)\n"
+    ".endm\n"
+    "\n"
+    ".macro ARK_LOAD_THREAD_U8 dst, offset\n"
+    "    li \\dst, \\offset\n"
+    "    add \\dst, \\dst, THREAD_REG\n"
+    "    lbu \\dst, 0(\\dst)\n"
+    ".endm\n"
+    "\n"
+    ".macro ARK_STORE_THREAD_X src, offset, scratch\n"
+    "    li \\scratch, \\offset\n"
+    "    add \\scratch, \\scratch, THREAD_REG\n"
+    "    sd \\src, 0(\\scratch)\n"
+    ".endm\n"
+)
+
+
+MISPLACED_ARK_RISCV64_THREAD_ACCESS_HELPERS_RE = re.compile(
+    r"\n#ifdef PANDA_TARGET_RISCV64\n"
+    r"// RISC-V load/store immediates are signed 12-bit; ManagedThread fields may live beyond that range\.\n"
+    r"\.macro ARK_LOAD_THREAD_X dst, offset\n"
+    r".*?"
+    r"\.macro ARK_STORE_THREAD_X src, offset, scratch\n"
+    r".*?"
+    r"\.endm\n"
+    r"#endif\n",
+    re.S,
+)
+
+
+def ensure_ark_riscv64_thread_access_helpers(text: str) -> tuple[str, list[str]]:
+    if ".macro ARK_LOAD_THREAD_X" in text and ".macro ARK_STORE_THREAD_X" in text:
+        return text, ["RISC-V large ManagedThread offset access helpers already present"]
+    anchor = '#include "arch/asm_support.h"\n'
+    if anchor in text:
+        return (
+            text.replace(anchor, anchor + "\n" + ARK_RISCV64_THREAD_ACCESS_HELPERS + "\n", 1),
+            ["added local RISC-V large ManagedThread offset access helpers"],
+        )
+    return text, ["RISC-V large ManagedThread offset helper insertion point not found"]
+
+
 def apply_ark_runtime_riscv64_asm_support(data: bytes) -> tuple[bytes, list[str]]:
     text = data.decode(TEXT_ENCODING, errors="ignore")
     notes: list[str] = []
+
+    text, removed_helper_count = MISPLACED_ARK_RISCV64_THREAD_ACCESS_HELPERS_RE.subn("\n", text)
+    if removed_helper_count:
+        notes.append("removed misplaced RISC-V assembly helper macros from asm_support.h C++ include surface")
 
     if "PANDA_TARGET_RISCV64" in text and "THREAD_REG tp" in text:
         notes.append("ArkCompiler RISCV64 asm THREAD_REG already present")
@@ -3984,6 +4087,136 @@ def apply_ark_runtime_riscv64_asm_support(data: bytes) -> tuple[bytes, list[str]
             notes.append("ArkCompiler MAKE_ASM_NAME insertion point not found")
 
     return text.encode(TEXT_ENCODING), notes or ["ArkCompiler RISCV64 asm support already present"]
+
+
+def replace_asm_lines(text: str, replacements: list[tuple[str, str]]) -> tuple[str, list[str]]:
+    notes: list[str] = []
+    for old, new in replacements:
+        if new in text:
+            notes.append(f"assembly replacement already present: {new.strip()}")
+            continue
+        count = text.count(old)
+        if not count:
+            notes.append(f"assembly replacement source not found: {old.strip()}")
+            continue
+        text = text.replace(old, new)
+        notes.append(f"replaced {count} large-offset assembly access(es): {old.strip()} -> {new.strip()}")
+    return text, notes
+
+
+def apply_ark_riscv64_call_runtime_large_thread_offsets(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    text, helper_notes = ensure_ark_riscv64_thread_access_helpers(text)
+    text, notes = replace_asm_lines(
+        text,
+        [
+            (
+                "    ld t0, MANAGED_THREAD_EXCEPTION_OFFSET(THREAD_REG)",
+                "    ARK_LOAD_THREAD_X t0, MANAGED_THREAD_EXCEPTION_OFFSET",
+            ),
+            (
+                "    sd ra, MANAGED_THREAD_NATIVE_PC_OFFSET(THREAD_REG)",
+                "    ARK_STORE_THREAD_X ra, MANAGED_THREAD_NATIVE_PC_OFFSET, t0",
+            ),
+            (
+                "    sd t0, MANAGED_THREAD_FRAME_OFFSET(THREAD_REG)",
+                "    ARK_STORE_THREAD_X t0, MANAGED_THREAD_FRAME_OFFSET, t1",
+            ),
+            (
+                "    sd s0, MANAGED_THREAD_FRAME_OFFSET(THREAD_REG)",
+                "    ARK_STORE_THREAD_X s0, MANAGED_THREAD_FRAME_OFFSET, t0",
+            ),
+        ],
+    )
+    return text.encode(TEXT_ENCODING), helper_notes + notes
+
+
+def apply_ark_riscv64_compiled_bridge_large_thread_offsets(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    text, notes = replace_asm_lines(
+        text,
+        [
+            (
+                "    lbu t0, MANAGED_THREAD_FRAME_KIND_OFFSET(THREAD_REG)",
+                "    ARK_LOAD_THREAD_U8 t0, MANAGED_THREAD_FRAME_KIND_OFFSET",
+            ),
+            (
+                "    ld t0, MANAGED_THREAD_RUNTIME_CALL_ENABLED_OFFSET(THREAD_REG)",
+                "    ARK_LOAD_THREAD_X t0, MANAGED_THREAD_RUNTIME_CALL_ENABLED_OFFSET",
+            ),
+            (
+                "    sd zero, MANAGED_THREAD_RUNTIME_CALL_ENABLED_OFFSET(THREAD_REG)",
+                "    ARK_STORE_THREAD_X zero, MANAGED_THREAD_RUNTIME_CALL_ENABLED_OFFSET, t0",
+            ),
+            (
+                "    sd s1, MANAGED_THREAD_RUNTIME_CALL_ENABLED_OFFSET(THREAD_REG)",
+                "    ARK_STORE_THREAD_X s1, MANAGED_THREAD_RUNTIME_CALL_ENABLED_OFFSET, t0",
+            ),
+            (
+                "    sd ra, MANAGED_THREAD_NATIVE_PC_OFFSET(THREAD_REG)",
+                "    ARK_STORE_THREAD_X ra, MANAGED_THREAD_NATIVE_PC_OFFSET, t0",
+            ),
+            (
+                "    sd s0, MANAGED_THREAD_FRAME_OFFSET(THREAD_REG)",
+                "    ARK_STORE_THREAD_X s0, MANAGED_THREAD_FRAME_OFFSET, t0",
+            ),
+        ],
+    )
+    return text.encode(TEXT_ENCODING), notes
+
+
+def apply_ark_riscv64_tlab_large_thread_offsets(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    text, helper_notes = ensure_ark_riscv64_thread_access_helpers(text)
+    text, notes = replace_asm_lines(
+        text,
+        [
+            (
+                "  ld \\reg_tlab_size, MANAGED_THREAD_TLAB_OFFSET(THREAD_REG)",
+                "  ARK_LOAD_THREAD_X \\reg_tlab_size, MANAGED_THREAD_TLAB_OFFSET",
+            ),
+            (
+                "  ld t0, MANAGED_THREAD_TLAB_OFFSET(THREAD_REG)",
+                "  ARK_LOAD_THREAD_X t0, MANAGED_THREAD_TLAB_OFFSET",
+            ),
+        ],
+    )
+    return text.encode(TEXT_ENCODING), helper_notes + notes
+
+
+def apply_ark_riscv64_string_index_guard(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if "!defined(PANDA_TARGET_RISCV64)" in text:
+        return data, ["ArkCompiler StringIndexOf RISCV64 guard already present"]
+    old = (
+        "#if !defined(PANDA_TARGET_ARM64) && !defined(PANDA_TARGET_ARM32) && !defined(PANDA_TARGET_AMD64) && \\\n"
+        "    !defined(PANDA_TARGET_X86)"
+    )
+    new = (
+        "#if !defined(PANDA_TARGET_ARM64) && !defined(PANDA_TARGET_ARM32) && !defined(PANDA_TARGET_AMD64) && \\\n"
+        "    !defined(PANDA_TARGET_X86) && !defined(PANDA_TARGET_RISCV64)"
+    )
+    if old in text:
+        return (
+            text.replace(old, new, 1).encode(TEXT_ENCODING),
+            ["added target-evidenced StringIndexOf PANDA_TARGET_RISCV64 little-endian guard"],
+        )
+    return data, ["ArkCompiler StringIndexOf RISCV64 guard insertion point not found"]
+
+
+def apply_ark_riscv64_ets_to_string_cache_atomic_guard(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    target_guard = "#if !defined(ARK_HYBRID) && defined(PANDA_32_BIT_MANAGED_POINTER) && defined(PANDA_TARGET_64)"
+    if target_guard in text:
+        return data, ["ArkCompiler EtsToStringCache atomic guard already target-compatible"]
+    old = "#if !defined(ARK_HYBRID)\n    static_assert(std::atomic<Data>::is_always_lock_free);\n#endif"
+    new = target_guard + "\n    static_assert(std::atomic<Data>::is_always_lock_free);\n#endif"
+    if old in text:
+        return (
+            text.replace(old, new, 1).encode(TEXT_ENCODING),
+            ["narrowed EtsToStringCache lock-free atomic assertion with target-evidenced RISC-V-safe guard"],
+        )
+    return data, ["ArkCompiler EtsToStringCache atomic guard insertion point not found"]
 
 
 def apply_ark_runtime_riscv64_fiber_context(data: bytes) -> tuple[bytes, list[str]]:
@@ -4568,6 +4801,19 @@ def materialize_action(
         ):
             data, transforms = apply_ark_cross_values_riscv64_arch(data)
         elif (
+            rel_path == "arkcompiler/runtime_core/static_core/runtime/entrypoints/string_index_of.h"
+            and action.get("source_role") == "arkcompiler_riscv64_string_index_little_endian_guard"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_ark_riscv64_string_index_guard(data)
+        elif (
+            rel_path
+            == "arkcompiler/runtime_core/static_core/plugins/ets/runtime/intrinsics/helpers/ets_to_string_cache.cpp"
+            and action.get("source_role") == "arkcompiler_riscv64_ets_to_string_cache_atomic_guard"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_ark_riscv64_ets_to_string_cache_atomic_guard(data)
+        elif (
             rel_path == "build/compile_standard_whitelist.json"
             and action.get("source_role")
             in {"soc_display_compile_standard_whitelist_entries", "target_compile_standard_whitelist_entries"}
@@ -4771,6 +5017,22 @@ def materialize_action(
             if removed:
                 transforms.append("filtered unavailable components/features from product inheritance: " + ", ".join(removed))
                 data = (json.dumps(config, ensure_ascii=False, indent=2) + "\n").encode(TEXT_ENCODING)
+    if (
+        target.get("architecture") == "riscv64"
+        and action.get("source_role") == "arkcompiler_runtime_riscv64_arch_source"
+    ):
+        if rel_path == "arkcompiler/runtime_core/static_core/runtime/arch/riscv64/call_runtime.S":
+            data, asm_transforms = apply_ark_riscv64_call_runtime_large_thread_offsets(data)
+            transforms.extend(asm_transforms)
+        elif (
+            rel_path
+            == "arkcompiler/runtime_core/static_core/runtime/bridge/arch/riscv64/compiled_code_to_runtime_bridge_riscv64.S"
+        ):
+            data, asm_transforms = apply_ark_riscv64_compiled_bridge_large_thread_offsets(data)
+            transforms.extend(asm_transforms)
+        elif rel_path == "arkcompiler/runtime_core/static_core/runtime/arch/riscv64/tlab.S":
+            data, asm_transforms = apply_ark_riscv64_tlab_large_thread_offsets(data)
+            transforms.extend(asm_transforms)
     data, subsystem_transforms = normalize_ohos_build_subsystem(data, action, target, normalize_subsystems)
     transforms.extend(subsystem_transforms)
     return data, str(source_path), "available", transforms
@@ -5562,7 +5824,7 @@ def parse_build_diagnostics(
                 "arkcompiler_riscv64_thread_offset_large_immediate",
                 "source_build_compatibility",
                 "ArkCompiler RISC-V bridge assembly emitted direct tp-relative loads/stores whose generated ManagedThread offsets exceed the signed 12-bit immediate range.",
-                "Introduce a minimal, target-scoped RISC-V large-offset thread access helper for the affected bridge assembly, or reconcile the generated ManagedThread layout before treating this as external dependency debt.",
+                "Apply the minimal RISC-V ManagedThread large-offset load/store helper to the affected ArkCompiler assembly sources, or reconcile the generated ManagedThread layout before treating this as external dependency debt.",
                 [
                     str(path)
                     for path, text in texts
@@ -5580,6 +5842,84 @@ def parse_build_diagnostics(
                     ],
                     16,
                 ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "asm_support.h" in plain_text
+        and ".macro ARK_LOAD_THREAD_X" in plain_text
+        and "cannot use dot operator on a type" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "arkcompiler_riscv64_thread_helper_in_cxx_header",
+                "source_build_compatibility",
+                "RISC-V assembly helper macros were placed in asm_support.h, which is also included by a C++ compilation unit.",
+                "Move the RISC-V ManagedThread large-offset helper macros into the affected .S sources and remove them from asm_support.h.",
+                [
+                    str(path)
+                    for path, text in texts
+                    if "asm_support.h" in strip_ansi(text)
+                    and ".macro ARK_LOAD_THREAD_X" in strip_ansi(text)
+                ]
+                or [str(log_path)],
+                matching_lines(all_text, ["asm_support.h", ".macro ARK_LOAD_THREAD_X", "cannot use dot operator"], 12),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "EtsToStringCacheElement" in plain_text
+        and "std::atomic" in plain_text
+        and "is_always_lock_free" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "arkcompiler_riscv64_ets_to_string_cache_atomic_guard",
+                "source_build_compatibility",
+                "EtsToStringCache asserts std::atomic<Data>::is_always_lock_free for RISC-V, where the target-evidenced guard narrows that assertion.",
+                "Apply the target-evidenced EtsToStringCache guard requiring PANDA_32_BIT_MANAGED_POINTER with PANDA_TARGET_64 instead of disabling ETS runtime sources.",
+                [
+                    str(path)
+                    for path, text in texts
+                    if "EtsToStringCacheElement" in strip_ansi(text)
+                    and "is_always_lock_free" in strip_ansi(text)
+                ]
+                or [
+                    str(log_path),
+                    str(
+                        target_root
+                        / "arkcompiler/runtime_core/static_core/plugins/ets/runtime/intrinsics/helpers/ets_to_string_cache.cpp"
+                    ),
+                ],
+                matching_lines(all_text, ["EtsToStringCacheElement", "is_always_lock_free", "static assertion"], 12),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "string_index_of.h" in plain_text
+        and "Unknown target architecture" in plain_text
+        and "IndexOf implementation assumes" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "arkcompiler_riscv64_string_index_guard",
+                "source_build_compatibility",
+                "StringIndexOf rejects PANDA_TARGET_RISCV64 even though the target source treats RISC-V as little-endian for this SWAR implementation.",
+                "Apply the target-evidenced minimal string_index_of.h guard adding !defined(PANDA_TARGET_RISCV64), without importing broader ArkCompiler 6.1 runtime renames.",
+                [
+                    str(path)
+                    for path, text in texts
+                    if "string_index_of.h" in strip_ansi(text)
+                    and "Unknown target architecture" in strip_ansi(text)
+                ]
+                or [
+                    str(log_path),
+                    str(target_root / "arkcompiler/runtime_core/static_core/runtime/entrypoints/string_index_of.h"),
+                ],
+                matching_lines(all_text, ["string_index_of.h", "Unknown target architecture", "IndexOf implementation"], 12),
             )
         )
 
