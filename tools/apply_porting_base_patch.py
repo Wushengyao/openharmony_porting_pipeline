@@ -1771,12 +1771,24 @@ def planned_actions(
         )
         actions.append(
             workspace_transform_action(
+                "third_party/musl/musl_template.gni",
+                "riscv64_musl_hook_cflags_mabi_compat",
+                "L1_build_compatibility",
+                (
+                    "Make musl hook LTO objects carry the same target-evidenced -mabi=lp64d "
+                    "ABI as the rest of riscv64 musl; otherwise libc.so LTO emits mixed ABI "
+                    "lto.tmp objects."
+                ),
+            )
+        )
+        actions.append(
+            workspace_transform_action(
                 "build/config/compiler/BUILD.gn",
                 "riscv64_compiler_ldflags_mabi_compat",
                 "L1_build_compatibility",
                 (
-                    "Align riscv64 linker ABI flags with the existing target-evidenced cflags "
-                    "when lld reports mixed floating-point ABI objects."
+                    "Align riscv64 compiler and linker ABI flags with the target-evidenced "
+                    "hard-float ABI when lld reports mixed floating-point ABI objects."
                 ),
             )
         )
@@ -2434,18 +2446,33 @@ def apply_cj_environment_riscv64_app_lib_name(data: bytes) -> tuple[bytes, list[
 def apply_riscv64_compiler_ldflags_mabi_compat(data: bytes) -> tuple[bytes, list[str]]:
     text = data.decode(TEXT_ENCODING, errors="ignore")
     notes: list[str] = []
-    if '"-mabi=lp64d"' in text and 'ldflags += [\n        "-march=rv64imafdc",\n        "-mabi=lp64d",' in text:
-        return data, ["riscv64 linker mabi flag already present next to -march=rv64imafdc"]
 
-    old = '      ldflags += [ "-march=rv64imafdc" ]\n'
-    new = (
+    cflags_old = '        cflags += [ "-march=rv64imafdc" ]\n'
+    cflags_new = (
+        "        cflags += [\n"
+        '          "-march=rv64imafdc",\n'
+        '          "-mabi=lp64d",\n'
+        "        ]\n"
+    )
+    if cflags_new in text:
+        notes.append("riscv64 compiler cflags already carry -mabi=lp64d beside -march=rv64imafdc")
+    elif cflags_old in text:
+        text = text.replace(cflags_old, cflags_new, 1)
+        notes.append("added riscv64 -mabi=lp64d compiler cflag beside -march=rv64imafdc")
+    else:
+        notes.append("riscv64 compiler cflag mabi insertion point not found")
+
+    ldflags_old = '      ldflags += [ "-march=rv64imafdc" ]\n'
+    ldflags_new = (
         "      ldflags += [\n"
         '        "-march=rv64imafdc",\n'
         '        "-mabi=lp64d",\n'
         "      ]\n"
     )
-    if old in text:
-        text = text.replace(old, new, 1)
+    if ldflags_new in text:
+        notes.append("riscv64 linker mabi flag already present next to -march=rv64imafdc")
+    elif ldflags_old in text:
+        text = text.replace(ldflags_old, ldflags_new, 1)
         notes.append("added riscv64 -mabi=lp64d linker flag beside -march=rv64imafdc")
     else:
         notes.append("riscv64 linker mabi insertion point not found")
@@ -2478,6 +2505,38 @@ def apply_riscv64_musl_cflags_mabi_compat(data: bytes) -> tuple[bytes, list[str]
     else:
         notes.append("musl cflags_basic insertion point not found")
     return text.encode(TEXT_ENCODING), notes
+
+
+def apply_riscv64_musl_hook_cflags_mabi_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if (
+        'soft_musl_hook_${target_name}' in text
+        and 'cflags += [ "-mabi=lp64d" ]' in text
+        and 'musl_arch == "riscv64"' in text
+    ):
+        return data, ["musl hook riscv64 cflags already carry -mabi=lp64d"]
+
+    anchor = (
+        '    cflags = [\n'
+        '      "-mllvm",\n'
+        '      "--instcombine-max-iterations=0",\n'
+        '      "-ffp-contract=fast",\n'
+        '      "-O3",\n'
+        '      "-Wno-int-conversion",\n'
+        "    ]\n"
+    )
+    insertion = (
+        anchor
+        + "\n"
+        + '    if (musl_arch == "riscv64") {\n'
+        + '      # Keep musl hook LTO bitcode on the same hard-float ABI as musl libc.\n'
+        + '      cflags += [ "-mabi=lp64d" ]\n'
+        + "    }\n"
+    )
+    if anchor in text:
+        text = text.replace(anchor, insertion, 1)
+        return text.encode(TEXT_ENCODING), ["added musl hook riscv64 -mabi=lp64d cflag"]
+    return data, ["musl hook riscv64 cflags insertion point not found"]
 
 
 def apply_riscv64_libcpp_compat(data: bytes) -> tuple[bytes, list[str]]:
@@ -2980,6 +3039,12 @@ def materialize_action(
             and target.get("architecture") == "riscv64"
         ):
             data, transforms = apply_riscv64_musl_cflags_mabi_compat(data)
+        elif (
+            rel_path == "third_party/musl/musl_template.gni"
+            and action.get("source_role") == "riscv64_musl_hook_cflags_mabi_compat"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_riscv64_musl_hook_cflags_mabi_compat(data)
         elif rel_path in {"build/rust/BUILD.gn", "build/rust/tests/BUILD.gn"} and target.get("architecture") == "riscv64":
             source_path = target_root / rel_path
             if source_path.is_file():
@@ -4047,12 +4112,13 @@ def parse_build_diagnostics(
             build_diagnostic(
                 "riscv64_musl_float_abi_link_mismatch",
                 "source_build_compatibility",
-                "musl libc.so link mixes riscv64 object files with different floating-point ABI settings.",
-                "Align musl riscv64 compile/link cflags and global ldflags with the target-evidenced -march=rv64imafdc/-mabi=lp64d ABI.",
+                "musl libc.so link mixes riscv64 object files with different floating-point ABI settings, commonly because LTO bitcode from hook or dependent static libraries lacks -mabi=lp64d while musl libc objects use the hard-float ABI.",
+                "Align musl riscv64 compile/link cflags, musl hook LTO cflags, and global compiler/linker flags with the target-evidenced -march=rv64imafdc/-mabi=lp64d ABI.",
                 [
                     str(log_path),
                     str(target_root / "build/config/compiler/BUILD.gn"),
                     str(workspace / "build/config/components/musl/BUILD.gn"),
+                    str(workspace / "third_party/musl/musl_template.gni"),
                 ],
                 matching_lines(
                     all_text,

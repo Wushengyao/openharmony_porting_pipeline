@@ -239,7 +239,8 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   dynamic-loader changes unless they become build blockers.
 - When the riscv64 musl `libc.so` link reports mixed floating-point ABI objects,
   align both musl `build/config/components/musl/BUILD.gn` compile/link cflags
-  and `build/config/compiler/BUILD.gn` riscv64 `ldflags` with the target-evidenced
+  `third_party/musl/musl_template.gni` hook LTO cflags, and
+  `build/config/compiler/BUILD.gn` riscv64 compiler/linker flags with the target-evidenced
   `-march=rv64imafdc`/`-mabi=lp64d` ABI instead of removing musl or disabling
   target libraries.
 - Preserve target-evidenced executable bits for build scripts invoked directly

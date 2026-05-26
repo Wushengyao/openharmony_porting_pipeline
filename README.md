@@ -258,8 +258,8 @@ handles the follow-on FFRT coroutine `STACK_MAGIC` RISC-V branch,
 `task_client_adapter.h`'s `CTC_QUERY_INTERVAL` architecture guard, and
 `cj_environment`'s `APP_USE_RISCV64`/`APP_LIB_NAME "riscv64"` platform mapping
 when those errors appear. If musl `libc.so` linking reports mixed riscv64
-floating-point ABI objects, the executor aligns musl compile/link cflags and
-global riscv64 `ldflags` with the target-evidenced
+floating-point ABI objects, the executor aligns musl compile/link cflags,
+musl hook LTO cflags, and global riscv64 compiler/linker flags with the target-evidenced
 `-march=rv64imafdc`/`-mabi=lp64d` ABI instead of removing musl or target
 libraries. Build attempts emit diagnostics
 in `base_patch_manifest.yaml` and `.md` for known blockers such as
