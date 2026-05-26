@@ -260,8 +260,11 @@ handles the follow-on FFRT coroutine `STACK_MAGIC` RISC-V branch,
 when those errors appear. If musl `libc.so` linking reports mixed riscv64
 floating-point ABI objects, the executor aligns musl compile/link cflags,
 musl hook LTO cflags, and global riscv64 compiler/linker flags with the target-evidenced
-`-march=rv64imafdc`/`-mabi=lp64d` ABI instead of removing musl or target
-libraries. Build attempts emit diagnostics
+`-march=rv64imafdc`/`-mabi=lp64d` ABI. When all explicit response-file,
+CRT-object, and archive inputs are already `lp64d` but LLD still emits mixed-ABI
+`lto.tmp` objects, it uses musl's existing `musl_use_flto` switch to disable
+riscv64 shared-musl LTO as a compile-only compatibility bridge instead of
+removing musl or target libraries. Build attempts emit diagnostics
 in `base_patch_manifest.yaml` and `.md` for known blockers such as
 host/prebuilt C++ header gaps, missing `BUILD.gn` closures, unavailable product
 components, RISC-V build-compatibility gaps, directly invoked script executable

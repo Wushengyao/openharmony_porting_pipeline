@@ -1771,6 +1771,18 @@ def planned_actions(
         )
         actions.append(
             workspace_transform_action(
+                "third_party/musl/BUILD.gn",
+                "riscv64_musl_shared_no_lto_compat",
+                "L1_build_compatibility",
+                (
+                    "Use the existing musl_use_flto knob to disable shared musl LTO on riscv64 "
+                    "when lld still emits mixed-ABI lto.tmp objects after all explicit inputs "
+                    "carry the target-evidenced lp64d ABI."
+                ),
+            )
+        )
+        actions.append(
+            workspace_transform_action(
                 "third_party/musl/musl_template.gni",
                 "riscv64_musl_hook_cflags_mabi_compat",
                 "L1_build_compatibility",
@@ -2539,6 +2551,45 @@ def apply_riscv64_musl_hook_cflags_mabi_compat(data: bytes) -> tuple[bytes, list
     return data, ["musl hook riscv64 cflags insertion point not found"]
 
 
+def apply_riscv64_musl_shared_no_lto_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    notes: list[str] = []
+
+    def patch_shared_template(name: str, current_text: str) -> tuple[str, bool]:
+        old = (
+            f'  static_and_shared_libs_template("{name}") {{\n'
+            "    musl_use_flto = true\n"
+            "  }\n"
+        )
+        new = (
+            f'  static_and_shared_libs_template("{name}") {{\n'
+            '    if (musl_arch == "riscv64") {\n'
+            "      # Avoid riscv64 LTO temp-object float-ABI mismatches during libc.so link.\n"
+            "      musl_use_flto = false\n"
+            "    } else {\n"
+            "      musl_use_flto = true\n"
+            "    }\n"
+            "  }\n"
+        )
+        if new in current_text:
+            return current_text, False
+        if old in current_text:
+            return current_text.replace(old, new, 1), True
+        return current_text, False
+
+    for template_name in ("shared", "shared_sp"):
+        before = text
+        text, changed = patch_shared_template(template_name, text)
+        if changed:
+            notes.append(f"disabled riscv64 musl LTO for {template_name} shared template")
+        elif f'static_and_shared_libs_template("{template_name}")' in before and 'musl_arch == "riscv64"' in before:
+            notes.append(f"musl {template_name} shared template already has riscv64 LTO guard")
+
+    if not notes:
+        notes.append("musl shared LTO insertion point not found")
+    return text.encode(TEXT_ENCODING), notes
+
+
 def apply_riscv64_libcpp_compat(data: bytes) -> tuple[bytes, list[str]]:
     text = data.decode(TEXT_ENCODING, errors="ignore")
     notes: list[str] = []
@@ -3039,6 +3090,12 @@ def materialize_action(
             and target.get("architecture") == "riscv64"
         ):
             data, transforms = apply_riscv64_musl_cflags_mabi_compat(data)
+        elif (
+            rel_path == "third_party/musl/BUILD.gn"
+            and action.get("source_role") == "riscv64_musl_shared_no_lto_compat"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_riscv64_musl_shared_no_lto_compat(data)
         elif (
             rel_path == "third_party/musl/musl_template.gni"
             and action.get("source_role") == "riscv64_musl_hook_cflags_mabi_compat"
@@ -4112,12 +4169,13 @@ def parse_build_diagnostics(
             build_diagnostic(
                 "riscv64_musl_float_abi_link_mismatch",
                 "source_build_compatibility",
-                "musl libc.so link mixes riscv64 object files with different floating-point ABI settings, commonly because LTO bitcode from hook or dependent static libraries lacks -mabi=lp64d while musl libc objects use the hard-float ABI.",
-                "Align musl riscv64 compile/link cflags, musl hook LTO cflags, and global compiler/linker flags with the target-evidenced -march=rv64imafdc/-mabi=lp64d ABI.",
+                "musl libc.so link mixes riscv64 object files with different floating-point ABI settings, commonly because LTO bitcode or lld-generated lto.tmp objects do not inherit the same lp64d ABI as musl libc objects.",
+                "Align musl riscv64 compile/link cflags, musl hook LTO cflags, and global compiler/linker flags with the target-evidenced -march=rv64imafdc/-mabi=lp64d ABI; if every explicit response-file/archive input is already lp64d, use the existing musl_use_flto knob to disable riscv64 shared musl LTO as a build-compatibility bridge.",
                 [
                     str(log_path),
                     str(target_root / "build/config/compiler/BUILD.gn"),
                     str(workspace / "build/config/components/musl/BUILD.gn"),
+                    str(workspace / "third_party/musl/BUILD.gn"),
                     str(workspace / "third_party/musl/musl_template.gni"),
                 ],
                 matching_lines(

@@ -239,10 +239,14 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   dynamic-loader changes unless they become build blockers.
 - When the riscv64 musl `libc.so` link reports mixed floating-point ABI objects,
   align both musl `build/config/components/musl/BUILD.gn` compile/link cflags
-  `third_party/musl/musl_template.gni` hook LTO cflags, and
-  `build/config/compiler/BUILD.gn` riscv64 compiler/linker flags with the target-evidenced
-  `-march=rv64imafdc`/`-mabi=lp64d` ABI instead of removing musl or disabling
-  target libraries.
+  and `third_party/musl/musl_template.gni` hook LTO cflags, plus
+  `build/config/compiler/BUILD.gn` riscv64 compiler/linker flags, with the
+  target-evidenced `-march=rv64imafdc`/`-mabi=lp64d` ABI. If the response file,
+  CRT objects, and linked archives are already `lp64d` but LLD still emits
+  mixed-ABI `lto.tmp` objects, use the existing `musl_use_flto` knob in
+  `third_party/musl/BUILD.gn` to disable riscv64 shared-musl LTO as a
+  compile-only compatibility bridge instead of removing musl or target
+  libraries.
 - Preserve target-evidenced executable bits for build scripts invoked directly
   through `/usr/bin/env`, such as `param_fixer.py` and board
   `build_kernel.sh`; content-identical files may still need a mode-only update.
