@@ -331,6 +331,10 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   riscv64 ThinLTO path in `build/config/compiler/compiler.gni` for the
   OpenHarmony 6.0 clang/lld stack. This is an optimization off-ramp, not a
   product-feature removal.
+- If `arkcompiler/ets_runtime/libark_jsruntime.so` still links with
+  `-flto=thin` after the global off-ramp because `arkcompiler/ets_runtime/BUILD.gn`
+  injects ThinLTO directly, guard that explicit block for riscv64 instead of
+  disabling Ark JS runtime or removing product features.
 - For riscv64 Rust failures where `rustc_wrapper.py` ends up invoking host
   `cc` with `--target=riscv64-linux-ohos` or `-mabi=lp64d`, import the
   target-evidenced `build/rust/rustc_toolchain.gni` and

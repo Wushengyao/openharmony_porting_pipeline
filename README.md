@@ -291,7 +291,9 @@ removing musl or target libraries. If the same mixed-ABI error then appears
 across ordinary riscv64 executables/shared libraries through `lto.tmp` or
 `thinlto-cache`, the executor disables the default riscv64 ThinLTO path in
 `build/config/compiler/compiler.gni` as an optimization-only off-ramp for the
-OpenHarmony 6.0 clang/lld stack. For Rust targets that fall back to host `cc`
+OpenHarmony 6.0 clang/lld stack. If Ark JS runtime still injects `-flto=thin`
+directly from `arkcompiler/ets_runtime/BUILD.gn`, the executor guards only that
+explicit block for riscv64 instead of disabling Ark features. For Rust targets that fall back to host `cc`
 while carrying riscv64 linker flags, it imports the target-evidenced
 `rustc-riscv` toolchain mapping and uses an executable compile-only fake Rust
 driver when the real prebuilt compiler is unavailable, recording that fake as

@@ -86,6 +86,7 @@ PROFILER_NATIVE_DAEMON_RISCV64_SOURCE_RELS = [
 ARKUI_NAPI_RISCV64_CJ_SUPPORT_REL = "foundation/arkui/napi/native_engine/impl/ark/cj_support.cpp"
 GRAPHIC_2D_VSYNC_LOG_REL = "foundation/graphic/graphic_2d/rosen/modules/composer/vsync/include/vsync_log.h"
 LUME_STATIC_PLUGIN_DECL_REL = "foundation/graphic/graphic_3d/lume/LumeEngine/src/static_plugin_decl.h"
+ARK_ETS_RUNTIME_BUILD_REL = "arkcompiler/ets_runtime/BUILD.gn"
 CXX_STDLIB_HEADER_NAMES = {
     "algorithm",
     "array",
@@ -1573,6 +1574,19 @@ def target_has_lume_static_plugin_riscv64_section_evidence(target_root: Path) ->
     )
 
 
+def target_has_ark_ets_runtime_explicit_thin_lto_evidence(target_root: Path) -> bool:
+    build_gn = target_root / ARK_ETS_RUNTIME_BUILD_REL
+    if not build_gn.is_file():
+        return False
+    text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        'if (!is_mac && target_os != "ios" && !use_libfuzzer && !enable_lto_O0)' in text
+        and 'cflags_cc += [ "-flto=thin" ]' in text
+        and 'ldflags += [ "-flto=thin" ]' in text
+        and "PANDA_ENABLE_LTO" in text
+    )
+
+
 def file_has_riscv64_rofs_evidence(path: Path) -> bool:
     if not path.is_file():
         return False
@@ -2968,6 +2982,18 @@ def planned_actions(
                 ),
             )
         )
+        if target_has_ark_ets_runtime_explicit_thin_lto_evidence(target_root):
+            actions.append(
+                workspace_transform_action(
+                    ARK_ETS_RUNTIME_BUILD_REL,
+                    "ark_jsruntime_riscv64_explicit_thin_lto_compat",
+                    "L1_build_compatibility",
+                    (
+                        "Guard Ark JS runtime's explicit -flto=thin block for riscv64, "
+                        "because it bypasses the global riscv64 ThinLTO off-ramp."
+                    ),
+                )
+            )
 
     param_fixer_rel = "base/startup/init/services/etc/param/param_fixer.py"
     target_param_fixer = target_root / param_fixer_rel
@@ -3839,6 +3865,21 @@ def apply_riscv64_disable_thin_lto_compat(data: bytes) -> tuple[bytes, list[str]
         text = text.replace(anchor, anchor + "\n" + guard, 1)
         return text.encode(TEXT_ENCODING), ["disabled default ThinLTO for riscv64"]
     return data, ["riscv64 ThinLTO insertion point not found"]
+
+
+def apply_ark_jsruntime_riscv64_explicit_thin_lto_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if 'current_cpu != "riscv64"' in text and 'cflags_cc += [ "-flto=thin" ]' in text:
+        return data, ["Ark JS runtime explicit ThinLTO block is already guarded for riscv64"]
+    old = '  if (!is_mac && target_os != "ios" && !use_libfuzzer && !enable_lto_O0) {\n'
+    new = (
+        '  if (!is_mac && target_os != "ios" && !use_libfuzzer && !enable_lto_O0 &&\n'
+        '      current_cpu != "riscv64") {\n'
+    )
+    if old in text:
+        text = text.replace(old, new, 1)
+        return text.encode(TEXT_ENCODING), ["guarded Ark JS runtime explicit ThinLTO block for riscv64"]
+    return data, ["Ark JS runtime explicit ThinLTO insertion point not found"]
 
 
 def apply_riscv64_buildconfig_arch_compat(data: bytes) -> tuple[bytes, list[str]]:
@@ -5298,6 +5339,12 @@ def materialize_action(
             and target.get("architecture") == "riscv64"
         ):
             data, transforms = apply_riscv64_disable_thin_lto_compat(data)
+        elif (
+            rel_path == ARK_ETS_RUNTIME_BUILD_REL
+            and action.get("source_role") == "ark_jsruntime_riscv64_explicit_thin_lto_compat"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_ark_jsruntime_riscv64_explicit_thin_lto_compat(data)
         elif (
             rel_path == "build/config/components/musl/BUILD.gn"
             and action.get("source_role") == "riscv64_musl_cflags_mabi_compat"
@@ -7403,6 +7450,39 @@ def parse_build_diagnostics(
                     all_text,
                     ["cannot link object files with different floating-point ABI", "-flto=thin", "thinlto-cache", "lto.tmp"],
                     14,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "arkcompiler/ets_runtime/libark_jsruntime.so" in plain_text
+        and "cannot link object files with different floating-point ABI" in plain_text
+        and "-flto=thin" in plain_text
+        and "lto.tmp" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "ark_jsruntime_riscv64_explicit_thin_lto_compat",
+                "source_build_compatibility",
+                "Ark JS runtime still injects -flto=thin directly, bypassing the global riscv64 ThinLTO off-ramp and producing mixed floating-point ABI lto.tmp objects.",
+                (
+                    "Guard the arkcompiler/ets_runtime BUILD.gn explicit ThinLTO block with "
+                    "current_cpu != \"riscv64\" for compile triage on this OpenHarmony 6.0 toolchain."
+                ),
+                [
+                    str(log_path),
+                    str(target_root / ARK_ETS_RUNTIME_BUILD_REL),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "arkcompiler/ets_runtime/libark_jsruntime.so",
+                        "-flto=thin",
+                        "cannot link object files with different floating-point ABI",
+                        "lto.tmp",
+                    ],
+                    18,
                 ),
             )
         )
