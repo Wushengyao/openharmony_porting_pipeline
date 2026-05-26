@@ -248,7 +248,13 @@ target-evidenced `build/scripts/run_objcopy.py` riscv64 mappings when resource
 object generation raises `KeyError: 'riscv64'`. The same mapping is applied to
 local subsystem helpers such as
 `foundation/arkui/ace_engine/build/tools/run_objcopy.py` when they hit the same
-architecture key gap. If musl `libc.so` linking reports mixed riscv64
+architecture key gap. If `third_party/libunwind` references missing
+`src/riscv/Los-linux.c`, the executor applies the target-evidenced removal from
+RISC-V source lists after confirming the shared libunwind archive lacks that
+file. If FFRT public headers trip the `unsupported architecture` guard for
+`ffrt_fiber_storage_size`, the executor adds the target-evidenced `__riscv`
+storage-size branch without importing broader 6.1 API enum changes. If musl
+`libc.so` linking reports mixed riscv64
 floating-point ABI objects, the executor aligns musl compile/link cflags and
 global riscv64 `ldflags` with the target-evidenced
 `-march=rv64imafdc`/`-mabi=lp64d` ABI instead of removing musl or target

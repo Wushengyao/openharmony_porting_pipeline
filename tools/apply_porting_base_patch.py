@@ -1075,6 +1075,30 @@ def target_has_riscv64_objcopy_evidence(target_root: Path, rel_path: str = "buil
     )
 
 
+def target_has_libunwind_riscv64_los_linux_drop_evidence(target_root: Path) -> bool:
+    build_gn = target_root / "third_party/libunwind/BUILD.gn"
+    if not build_gn.is_file():
+        return False
+    text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "$libunwind_code_dir/src/riscv/Ginit_remote.c" in text
+        and "$libunwind_code_dir/src/riscv/Lis_signal_frame.c" in text
+        and "$libunwind_code_dir/src/riscv/Los-linux.c" not in text
+    )
+
+
+def target_has_ffrt_riscv64_fiber_storage_evidence(target_root: Path) -> bool:
+    header = target_root / "foundation/resourceschedule/ffrt/interfaces/kits/c/type_def.h"
+    if not header.is_file():
+        return False
+    text = header.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "ffrt_fiber_storage_size = 8," in text
+        and "#elif defined(__riscv)" in text
+        and "ffrt_fiber_storage_size = 64," in text
+    )
+
+
 def target_has_riscv64_compiler_mabi_evidence(target_root: Path) -> bool:
     target_compiler = target_root / "build/config/compiler/BUILD.gn"
     if not target_compiler.is_file():
@@ -1606,6 +1630,33 @@ def planned_actions(
                 ),
             )
         )
+
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_libunwind_riscv64_los_linux_drop_evidence(target_root):
+        actions.append(
+            workspace_transform_action(
+                "third_party/libunwind/BUILD.gn",
+                "libunwind_riscv64_drop_missing_los_linux",
+                "L1_build_compatibility",
+                (
+                    "Remove target-evidenced stale RISC-V libunwind Los-linux.c source references; "
+                    "the shared libunwind-1.8.1 tarball has no src/riscv/Los-linux.c."
+                ),
+            )
+        )
+
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_ffrt_riscv64_fiber_storage_evidence(target_root):
+        actions.append(
+            workspace_transform_action(
+                "foundation/resourceschedule/ffrt/interfaces/kits/c/type_def.h",
+                "ffrt_riscv64_fiber_storage_size",
+                "L1_build_compatibility",
+                (
+                    "Add the target-evidenced __riscv FFRT fiber storage-size branch so FFRT public "
+                    "headers compile for RISC-V without importing unrelated 6.1 API enum additions."
+                ),
+            )
+        )
+
     arkui_objcopy_rel = "foundation/arkui/ace_engine/build/tools/run_objcopy.py"
     if clean_str(seed.get("architecture")) == "riscv64" and target_has_riscv64_objcopy_evidence(target_root, arkui_objcopy_rel):
         actions.append(
@@ -2220,6 +2271,31 @@ def apply_riscv64_objcopy_compat(data: bytes) -> tuple[bytes, list[str]]:
     return text.encode(TEXT_ENCODING), notes
 
 
+def apply_libunwind_riscv64_los_linux_drop_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    line = '  "$libunwind_code_dir/src/riscv/Los-linux.c",\n'
+    count = text.count(line)
+    if not count:
+        return data, ["libunwind riscv64 Los-linux.c source references already absent"]
+    text = text.replace(line, "")
+    return (
+        text.encode(TEXT_ENCODING),
+        [f"removed {count} stale libunwind riscv64 Los-linux.c source reference(s)"],
+    )
+
+
+def apply_ffrt_riscv64_fiber_storage_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if "#elif defined(__riscv)" in text and "ffrt_fiber_storage_size = 64," in text:
+        return data, ["FFRT riscv fiber storage-size branch already present"]
+    old = "#elif defined(__x86_64__)\n    ffrt_fiber_storage_size = 8,\n"
+    new = old + "#elif defined(__riscv)\n    ffrt_fiber_storage_size = 64,\n"
+    if old in text:
+        text = text.replace(old, new, 1)
+        return text.encode(TEXT_ENCODING), ["added FFRT riscv fiber storage-size branch"]
+    return data, ["FFRT riscv fiber storage-size insertion point not found"]
+
+
 def apply_riscv64_compiler_ldflags_mabi_compat(data: bytes) -> tuple[bytes, list[str]]:
     text = data.decode(TEXT_ENCODING, errors="ignore")
     notes: list[str] = []
@@ -2715,6 +2791,18 @@ def materialize_action(
             and target.get("architecture") == "riscv64"
         ):
             data, transforms = apply_riscv64_objcopy_compat(data)
+        elif (
+            rel_path == "third_party/libunwind/BUILD.gn"
+            and action.get("source_role") == "libunwind_riscv64_drop_missing_los_linux"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_libunwind_riscv64_los_linux_drop_compat(data)
+        elif (
+            rel_path == "foundation/resourceschedule/ffrt/interfaces/kits/c/type_def.h"
+            and action.get("source_role") == "ffrt_riscv64_fiber_storage_size"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_ffrt_riscv64_fiber_storage_compat(data)
         elif (
             rel_path == "foundation/arkui/ace_engine/build/tools/run_objcopy.py"
             and action.get("source_role") == "arkui_run_objcopy_riscv64_compat"
@@ -3643,6 +3731,55 @@ def parse_build_diagnostics(
                 matching_lines(
                     all_text,
                     ["Assignment had no effect", "lumeassetcompiler/BUILD.gn", "inputs = ["],
+                    12,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "third_party/libunwind" in plain_text
+        and "src/riscv/Los-linux.c" in plain_text
+        and "no such file or directory" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "third_party_libunwind_riscv64_missing_los_linux_source",
+                "source_build_compatibility",
+                "libunwind's RISC-V source list references src/riscv/Los-linux.c, but the libunwind-1.8.1 source archive does not contain that file.",
+                "Apply the target-evidenced third_party/libunwind/BUILD.gn compatibility patch that removes src/riscv/Los-linux.c from the RISC-V source lists, then rerun the build.",
+                [
+                    str(log_path),
+                    str(target_root / "third_party/libunwind/BUILD.gn"),
+                    str(target_root / "third_party/libunwind/libunwind-1.8.1.tar.gz"),
+                ],
+                matching_lines(
+                    all_text,
+                    ["third_party/libunwind", "src/riscv/Los-linux.c", "no such file or directory"],
+                    12,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "foundation/resourceschedule/ffrt/interfaces/kits/c/type_def.h" in plain_text
+        and '"unsupported architecture"' in plain_text
+        and "ffrt_fiber_storage_size" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "ffrt_type_def_riscv64_fiber_storage_missing",
+                "source_build_compatibility",
+                "FFRT public type_def.h lacks a __riscv branch for ffrt_fiber_storage_size, so RISC-V users hit the unsupported architecture guard.",
+                "Apply the target-evidenced minimal FFRT type_def.h patch that sets ffrt_fiber_storage_size = 64 for __riscv, then rerun the build.",
+                [
+                    str(log_path),
+                    str(target_root / "foundation/resourceschedule/ffrt/interfaces/kits/c/type_def.h"),
+                ],
+                matching_lines(
+                    all_text,
+                    ["type_def.h", "unsupported architecture", "ffrt_fiber_storage_size"],
                     12,
                 ),
             )

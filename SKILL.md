@@ -216,6 +216,16 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
 - Apply the same target-evidenced `riscv64` output/BFD mappings to local
   subsystem helpers such as `foundation/arkui/ace_engine/build/tools/run_objcopy.py`
   when their resource-object actions report `KeyError: 'riscv64'`.
+- When RISC-V `third_party/libunwind` compilation reports missing
+  `src/riscv/Los-linux.c`, compare the target reference `BUILD.gn` and the
+  `libunwind-1.8.1.tar.gz` archive. If the archive lacks that file and the
+  target reference removed it from RISC-V source lists, apply that text-only
+  build compatibility patch instead of generating a fake C source.
+- When FFRT public headers report `unsupported architecture` from
+  `foundation/resourceschedule/ffrt/interfaces/kits/c/type_def.h` and
+  `ffrt_fiber_storage_size` is undeclared, add only the target-evidenced
+  `__riscv` fiber storage-size branch (`64`) unless a later build error proves
+  broader FFRT API migration is required.
 - When the riscv64 musl `libc.so` link reports mixed floating-point ABI objects,
   align both musl `build/config/components/musl/BUILD.gn` compile/link cflags
   and `build/config/compiler/BUILD.gn` riscv64 `ldflags` with the target-evidenced
