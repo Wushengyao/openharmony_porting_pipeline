@@ -201,6 +201,15 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
 - For RISC-V graphics builds, add target-evidenced `graphic_3d` rofs `rv64`
   object mappings to compile files when GN reports empty generated asset paths;
   this is a build-compatibility source fix, not a product feature removal.
+- When `graphic_3d` Lume rofs actions emit `rofs_rv64.o` but
+  `CompilerAsset.sh`/`LumeAssetCompiler` reports `Invalid argument!`, import
+  only the target-evidenced text compatibility needed for riscv64 asset
+  generation: `lume_config.gni` cpu-type mapping, `-riscv64` platform parsing,
+  and `EM_RISCV64` ELF output support. Ensure the Lume host asset-compiler
+  action declares its CMake/C++ source files as inputs; if an existing
+  generated `out/<product>/gen/.../LumeAssetCompiler` binary lacks `-riscv64`,
+  remove that generated directory before rebuilding so Ninja cannot reuse stale
+  host tooling.
 - For RISC-V resource object generation, add target-evidenced
   `build/scripts/run_objcopy.py` `riscv64` output/BFD mappings when Ninja
   reports `KeyError: 'riscv64'` from `run_objcopy.py`.

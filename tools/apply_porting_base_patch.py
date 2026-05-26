@@ -1017,6 +1017,53 @@ def target_has_riscv64_rofs_evidence(target_root: Path, rel_path: str) -> bool:
     return file_has_riscv64_rofs_evidence(target_build)
 
 
+def target_has_lume_riscv64_asset_compiler_evidence(target_root: Path) -> bool:
+    config_path = target_root / "foundation/graphic/graphic_3d/lume/lume_config.gni"
+    app_path = target_root / "foundation/graphic/graphic_3d/lume/LumeBinaryCompile/lumeassetcompiler/src/app.cpp"
+    elf_path = target_root / "foundation/graphic/graphic_3d/lume/LumeBinaryCompile/lumeassetcompiler/src/elf_common.h"
+    if not (config_path.is_file() and app_path.is_file() and elf_path.is_file()):
+        return False
+    config_text = config_path.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    app_text = app_path.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    elf_text = elf_path.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        'target_cpu == "riscv64"' in config_text
+        and 'cpu_type = "riscv64"' in config_text
+        and "{ \"-riscv64\"" in app_text
+        and "BUILD_RV64" in app_text
+        and "EM_RISCV64" in elf_text
+    )
+
+
+def workspace_lume_asset_compiler_sources_support_riscv64(workspace: Path) -> bool:
+    app_path = workspace / "foundation/graphic/graphic_3d/lume/LumeBinaryCompile/lumeassetcompiler/src/app.cpp"
+    elf_path = workspace / "foundation/graphic/graphic_3d/lume/LumeBinaryCompile/lumeassetcompiler/src/elf_common.h"
+    if not (app_path.is_file() and elf_path.is_file()):
+        return False
+    app_text = app_path.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    elf_text = elf_path.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return "{ \"-riscv64\"" in app_text and "BUILD_RV64" in app_text and "EM_RISCV64" in elf_text
+
+
+def generated_lume_asset_compiler_path(workspace: Path, product: str) -> Path:
+    return (
+        workspace
+        / "out"
+        / product
+        / "gen/foundation/graphic/graphic_3d/lume/LumeBinaryCompile/lumeassetcompiler/LumeAssetCompiler"
+    )
+
+
+def generated_lume_asset_compiler_supports_riscv64(workspace: Path, product: str) -> bool:
+    binary_path = generated_lume_asset_compiler_path(workspace, product)
+    if not binary_path.is_file():
+        return False
+    try:
+        return b"-riscv64" in binary_path.read_bytes()
+    except OSError:
+        return False
+
+
 def target_has_riscv64_objcopy_evidence(target_root: Path, rel_path: str = "build/scripts/run_objcopy.py") -> bool:
     target_objcopy = target_root / rel_path
     if not target_objcopy.is_file():
@@ -1515,6 +1562,37 @@ def planned_actions(
                         ),
                     )
                 )
+        if target_has_lume_riscv64_asset_compiler_evidence(target_root):
+            for rel_path, role, reason in [
+                (
+                    "foundation/graphic/graphic_3d/lume/lume_config.gni",
+                    "lume_rofs_riscv64_cpu_type_compat",
+                    "Add target-evidenced riscv64 cpu_type mapping and forward declared LumeAssetCompiler inputs.",
+                ),
+                (
+                    "foundation/graphic/graphic_3d/lume/LumeBinaryCompile/lumeassetcompiler/BUILD.gn",
+                    "lume_asset_compiler_declared_inputs",
+                    "Declare LumeAssetCompiler CMake and C++ source files as action inputs to avoid stale generated host tools.",
+                ),
+                (
+                    "foundation/graphic/graphic_3d/lume/LumeBinaryCompile/lumeassetcompiler/src/elf_common.h",
+                    "lume_asset_compiler_riscv64_elf_machine",
+                    "Add target-evidenced RISC-V ELF machine id for Lume generated rofs objects.",
+                ),
+                (
+                    "foundation/graphic/graphic_3d/lume/LumeBinaryCompile/lumeassetcompiler/src/app.cpp",
+                    "lume_asset_compiler_riscv64_platform",
+                    "Add target-evidenced -riscv64 platform parsing and rv64 ELF output generation.",
+                ),
+            ]:
+                actions.append(
+                    workspace_transform_action(
+                        rel_path,
+                        role,
+                        "L1_build_compatibility",
+                        reason,
+                    )
+                )
 
     if clean_str(seed.get("architecture")) == "riscv64" and target_has_riscv64_objcopy_evidence(target_root):
         actions.append(
@@ -1928,6 +2006,189 @@ def apply_riscv64_graphic_3d_rofs_compat(data: bytes) -> tuple[bytes, list[str]]
             [f"added riscv64 graphic_3d rofs object mapping in {count} location(s)"],
         )
     return data, ["graphic_3d riscv64 rofs insertion point not found"]
+
+
+def apply_lume_rofs_riscv64_cpu_type_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    notes: list[str] = []
+
+    if 'target_cpu == "riscv64"' in text and 'cpu_type = "riscv64"' in text:
+        notes.append("Lume rofs riscv64 cpu_type mapping already present")
+    else:
+        pattern = re.compile(
+            r'(    if \(target_cpu == "(?:x64|x86_64)"(?: \|\| target_cpu == "x64")?\) \{\n'
+            r'      cpu_type = "[^"]+"\n'
+            r'      output_obj = "\$\{invoker\.base_name\}_x64\.o"\n'
+            r'    \}\n)'
+        )
+
+        def add_riscv64_branch(match: re.Match[str]) -> str:
+            return (
+                match.group(1)
+                + '    if (target_cpu == "riscv64") {\n'
+                + '      cpu_type = "riscv64"\n'
+                + '      output_obj = "${invoker.base_name}_rv64.o"\n'
+                + "    }\n"
+            )
+
+        text, count = pattern.subn(add_riscv64_branch, text, count=1)
+        if count:
+            notes.append("added Lume rofs riscv64 cpu_type/output mapping")
+        else:
+            notes.append("Lume rofs riscv64 cpu_type insertion point not found")
+
+    if "if (defined(invoker.inputs))" in text and "inputs = invoker.inputs" in text:
+        notes.append("Lume binary compile action already forwards explicit inputs")
+    else:
+        old = '    args = [ rebase_path(invoker.dest_gen_path, root_build_dir) ]\n'
+        new = (
+            old
+            + "    if (defined(invoker.inputs)) {\n"
+            + "      inputs = invoker.inputs\n"
+            + "    }\n"
+        )
+        if old in text:
+            text = text.replace(old, new, 1)
+            notes.append("added Lume binary compile action input forwarding")
+        else:
+            notes.append("Lume binary compile action input insertion point not found")
+    return text.encode(TEXT_ENCODING), notes
+
+
+def apply_lume_asset_compiler_declared_inputs(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if "src/app.cpp" in text and "src/elf_common.h" in text and "inputs = [" in text:
+        return data, ["Lume asset compiler action inputs already declared"]
+    old = '  dest_gen_path = "$target_gen_dir"\n'
+    new = (
+        old
+        + "  inputs = [\n"
+        + '    "${LUME_BINARY_PATH}/lumeassetcompiler/CMakeLists.txt",\n'
+        + '    "${LUME_BINARY_PATH}/lumeassetcompiler/build.sh",\n'
+        + '    "${LUME_BINARY_PATH}/lumeassetcompiler/src/app.cpp",\n'
+        + '    "${LUME_BINARY_PATH}/lumeassetcompiler/src/app.h",\n'
+        + '    "${LUME_BINARY_PATH}/lumeassetcompiler/src/app_main.cpp",\n'
+        + '    "${LUME_BINARY_PATH}/lumeassetcompiler/src/coff.h",\n'
+        + '    "${LUME_BINARY_PATH}/lumeassetcompiler/src/dir.cpp",\n'
+        + '    "${LUME_BINARY_PATH}/lumeassetcompiler/src/dir.h",\n'
+        + '    "${LUME_BINARY_PATH}/lumeassetcompiler/src/elf32.h",\n'
+        + '    "${LUME_BINARY_PATH}/lumeassetcompiler/src/elf64.h",\n'
+        + '    "${LUME_BINARY_PATH}/lumeassetcompiler/src/elf_common.h",\n'
+        + '    "${LUME_BINARY_PATH}/lumeassetcompiler/src/maco.h",\n'
+        + '    "${LUME_BINARY_PATH}/lumeassetcompiler/src/platform.cpp",\n'
+        + '    "${LUME_BINARY_PATH}/lumeassetcompiler/src/platform.h",\n'
+        + '    "${LUME_BINARY_PATH}/lumeassetcompiler/src/toarray.h",\n'
+        + "  ]\n"
+    )
+    if old in text:
+        text = text.replace(old, new, 1)
+        return text.encode(TEXT_ENCODING), ["declared Lume asset compiler CMake/source inputs"]
+    return data, ["Lume asset compiler action input insertion point not found"]
+
+
+def apply_lume_asset_compiler_riscv64_elf_machine(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if "EM_RISCV64" in text:
+        return data, ["Lume asset compiler RISC-V ELF machine id already present"]
+    anchor = "#define EM_AARCH64 183 /* ARM 64 bit */\n"
+    if anchor in text:
+        text = text.replace(anchor, anchor + "#define EM_RISCV64 243 /* RISCV 64 bit */\n", 1)
+        return text.encode(TEXT_ENCODING), ["added Lume asset compiler EM_RISCV64 id"]
+    return data, ["Lume asset compiler EM_RISCV64 insertion point not found"]
+
+
+def apply_lume_asset_compiler_riscv64_platform(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    notes: list[str] = []
+
+    if "BUILD_RV64" not in text:
+        old = "    BUILD_V8 = (1 << 3),\n"
+        new = old + "    BUILD_RV64 = (1 << 7),\n"
+        if old in text:
+            text = text.replace(old, new, 1)
+            notes.append("added Lume asset compiler BUILD_RV64 architecture bit")
+        else:
+            notes.append("Lume asset compiler BUILD_RV64 insertion point not found")
+    else:
+        notes.append("Lume asset compiler BUILD_RV64 already present")
+
+    if "{ \"-riscv64\"" not in text:
+        old = '    { "-arm64-v8a", PLATFORM_AD | BUILD_V8 | PlatformSet() },\n'
+        new = old + '    { "-riscv64", PLATFORM_AD | BUILD_RV64 | PlatformSet() },\n'
+        if old in text:
+            text = text.replace(old, new, 1)
+            notes.append("added Lume asset compiler -riscv64 platform parser entry")
+        else:
+            notes.append("Lume asset compiler -riscv64 platform insertion point not found")
+    else:
+        notes.append("Lume asset compiler -riscv64 platform parser entry already present")
+
+    old_default = "uint32_t arcAndPlat = (BUILD_X86 | BUILD_X64 | BUILD_V7 | BUILD_V8) |"
+    new_default = "uint32_t arcAndPlat = (BUILD_X86 | BUILD_X64 | BUILD_V7 | BUILD_V8 | BUILD_RV64) |"
+    if old_default in text:
+        text = text.replace(old_default, new_default, 1)
+        notes.append("included BUILD_RV64 in Lume asset compiler default arch set")
+    elif new_default in text:
+        notes.append("Lume asset compiler default arch set already includes BUILD_RV64")
+    else:
+        notes.append("Lume asset compiler default arch set insertion point not found")
+
+    if 'std::string rv64Name = "rofs_rv64.o";' not in text:
+        old = '    std::string o64Name = "rofs_64.o";\n'
+        new = old + '    std::string rv64Name = "rofs_rv64.o";\n'
+        if old in text:
+            text = text.replace(old, new, 1)
+            notes.append("added Lume asset compiler rv64 output name variable")
+        else:
+            notes.append("Lume asset compiler rv64 output variable insertion point not found")
+    else:
+        notes.append("Lume asset compiler rv64 output name variable already present")
+
+    old_assignment = "secName = obj32Name = obj64Name = o32Name = o64Name = x32Name = x64Name = macName = argv[baseArg + FILE_NAME];"
+    new_assignment = "secName = obj32Name = obj64Name = o32Name = o64Name = rv64Name = x32Name = x64Name = macName = argv[baseArg + FILE_NAME];"
+    if old_assignment in text:
+        text = text.replace(old_assignment, new_assignment, 1)
+        notes.append("included rv64Name in Lume asset compiler custom output name assignment")
+    elif new_assignment in text:
+        notes.append("Lume asset compiler custom output name assignment already includes rv64Name")
+    else:
+        notes.append("Lume asset compiler custom output name assignment insertion point not found")
+
+    if 'rv64Name += "_rv64.o";' not in text:
+        old = '        o64Name += "_64.o";\n'
+        new = old + '        rv64Name += "_rv64.o";\n'
+        if old in text:
+            text = text.replace(old, new, 1)
+            notes.append("added Lume asset compiler rv64 custom output suffix")
+        else:
+            notes.append("Lume asset compiler rv64 custom output suffix insertion point not found")
+    else:
+        notes.append("Lume asset compiler rv64 custom output suffix already present")
+
+    rv64_write = (
+        "        if (arcAndPlat & BUILD_RV64) {\n"
+        "            if (!WriteElf<Elf64Bit>(EM_RISCV64, rv64Name, secName, sizeOfData, data.get())) {\n"
+        "                return -1;\n"
+        "            }\n"
+        "        }\n"
+    )
+    if rv64_write not in text:
+        old = (
+            "        if (arcAndPlat & BUILD_V8) {\n"
+            "            if (!WriteElf<Elf64Bit>(EM_AARCH64, o64Name, secName, sizeOfData, data.get())) {\n"
+            "                return -1;\n"
+            "            }\n"
+            "        }\n"
+        )
+        if old in text:
+            text = text.replace(old, old + rv64_write, 1)
+            notes.append("added Lume asset compiler rv64 ELF object writer")
+        else:
+            notes.append("Lume asset compiler rv64 ELF writer insertion point not found")
+    else:
+        notes.append("Lume asset compiler rv64 ELF object writer already present")
+
+    return text.encode(TEXT_ENCODING), notes
 
 
 def apply_riscv64_objcopy_compat(data: bytes) -> tuple[bytes, list[str]]:
@@ -2426,6 +2687,30 @@ def materialize_action(
         ):
             data, transforms = apply_riscv64_graphic_3d_rofs_compat(data)
         elif (
+            rel_path == "foundation/graphic/graphic_3d/lume/lume_config.gni"
+            and action.get("source_role") == "lume_rofs_riscv64_cpu_type_compat"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_lume_rofs_riscv64_cpu_type_compat(data)
+        elif (
+            rel_path == "foundation/graphic/graphic_3d/lume/LumeBinaryCompile/lumeassetcompiler/BUILD.gn"
+            and action.get("source_role") == "lume_asset_compiler_declared_inputs"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_lume_asset_compiler_declared_inputs(data)
+        elif (
+            rel_path == "foundation/graphic/graphic_3d/lume/LumeBinaryCompile/lumeassetcompiler/src/elf_common.h"
+            and action.get("source_role") == "lume_asset_compiler_riscv64_elf_machine"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_lume_asset_compiler_riscv64_elf_machine(data)
+        elif (
+            rel_path == "foundation/graphic/graphic_3d/lume/LumeBinaryCompile/lumeassetcompiler/src/app.cpp"
+            and action.get("source_role") == "lume_asset_compiler_riscv64_platform"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_lume_asset_compiler_riscv64_platform(data)
+        elif (
             rel_path == "build/scripts/run_objcopy.py"
             and target.get("architecture") == "riscv64"
         ):
@@ -2507,6 +2792,7 @@ def render_markdown(manifest: dict[str, Any]) -> str:
         f"- Skipped same-content actions: {summary['skipped_same_content_actions']}",
         f"- Blocking issues: {summary['blocking_issue_count']}",
         f"- Fake interfaces: {summary.get('fake_interface_count', 0)}",
+        f"- Prebuild cleanups: {summary.get('prebuild_cleanup_count', 0)}",
         "",
         "## Actions",
         "",
@@ -2540,6 +2826,12 @@ def render_markdown(manifest: dict[str, Any]) -> str:
                 "",
             ]
         )
+        cleanups = build.get("prebuild_cleanups") or []
+        if cleanups:
+            lines.extend(["### Prebuild Cleanups", ""])
+            for cleanup in cleanups:
+                lines.append(f"- `{cleanup.get('status', 'unknown')}` `{cleanup.get('path', 'unknown')}`: {cleanup.get('reason', 'no reason recorded')}")
+            lines.append("")
         diagnostics = build.get("diagnostics") or []
         if diagnostics:
             lines.extend(["### Build Diagnostics", ""])
@@ -3283,6 +3575,81 @@ def parse_build_diagnostics(
 
     if (
         clean_str(target.get("architecture")) == "riscv64"
+        and "CompilerAsset.sh" in plain_text
+        and "Invalid argument!" in plain_text
+        and "rofs_rv64.o" in plain_text
+    ):
+        diagnostic_id = "graphic_3d_lume_rofs_riscv64_asset_compiler_missing"
+        message = (
+            "Lume rofs generation emits rofs_rv64.o but its shared template/compiler do not fully map "
+            "riscv64 to the -riscv64 asset compiler path."
+        )
+        recommendation = (
+            "Apply the target-evidenced Lume lume_config.gni riscv64 cpu_type mapping plus minimal "
+            "LumeAssetCompiler -riscv64/EM_RISCV64 support, declare the host compiler source inputs, "
+            "and rerun the product build."
+        )
+        if (
+            workspace_lume_asset_compiler_sources_support_riscv64(workspace)
+            and generated_lume_asset_compiler_path(workspace, product).is_file()
+            and not generated_lume_asset_compiler_supports_riscv64(workspace, product)
+        ):
+            diagnostic_id = "graphic_3d_lume_rofs_riscv64_asset_compiler_stale"
+            message = (
+                "Lume sources contain riscv64 asset compiler support, but the generated host "
+                "LumeAssetCompiler binary is stale and still lacks -riscv64 parsing."
+            )
+            recommendation = (
+                "Remove the stale out/<product>/gen LumeAssetCompiler directory or declare source inputs "
+                "for the lume_binary_complile action so Ninja rebuilds the host tool, then rerun the build."
+            )
+        diagnostics.append(
+            build_diagnostic(
+                diagnostic_id,
+                "source_build_compatibility",
+                message,
+                recommendation,
+                [
+                    str(log_path),
+                    str(target_root / "foundation/graphic/graphic_3d/lume/lume_config.gni"),
+                    str(target_root / "foundation/graphic/graphic_3d/lume/LumeBinaryCompile/lumeassetcompiler/src/app.cpp"),
+                    str(target_root / "foundation/graphic/graphic_3d/lume/LumeBinaryCompile/lumeassetcompiler/src/elf_common.h"),
+                ],
+                matching_lines(
+                    all_text,
+                    ["CompilerAsset.sh", "Invalid argument!", "rofs_rv64.o", "LumeAssetCompiler"],
+                    12,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "Assignment had no effect" in plain_text
+        and "foundation/graphic/graphic_3d/lume/LumeBinaryCompile/lumeassetcompiler/BUILD.gn" in plain_text
+        and "inputs = [" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "graphic_3d_lume_binary_compile_inputs_not_forwarded",
+                "source_build_compatibility",
+                "LumeAssetCompiler BUILD.gn declares action inputs, but the shared lume_binary_complile template does not forward invoker.inputs.",
+                "Patch foundation/graphic/graphic_3d/lume/lume_config.gni so lume_binary_complile assigns inputs = invoker.inputs when defined, then rerun GN/build.",
+                [
+                    str(log_path),
+                    str(target_root / "foundation/graphic/graphic_3d/lume/lume_config.gni"),
+                    str(target_root / "foundation/graphic/graphic_3d/lume/LumeBinaryCompile/lumeassetcompiler/BUILD.gn"),
+                ],
+                matching_lines(
+                    all_text,
+                    ["Assignment had no effect", "lumeassetcompiler/BUILD.gn", "inputs = ["],
+                    12,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
         and "run_objcopy.py" in plain_text
         and "KeyError: 'riscv64'" in plain_text
     ):
@@ -3373,6 +3740,7 @@ def parse_build_diagnostics(
         diag["id"] in {
             "riscv64_ndk_shlib_directory_mapping",
             "riscv64_arkcompiler_cache_line_size_missing",
+            "graphic_3d_lume_binary_compile_inputs_not_forwarded",
         }
         for diag in diagnostics
     ):
@@ -3538,6 +3906,47 @@ def run_build(
         "started_at_epoch": started_at_epoch,
         "host_env_fix": host_env_fix or {"applied": False, "reason": "not evaluated"},
     }
+
+
+def prepare_generated_artifacts_for_build(workspace: Path, product: str, target: dict[str, Any]) -> list[dict[str, Any]]:
+    cleanups: list[dict[str, Any]] = []
+    if clean_str(target.get("architecture")) != "riscv64":
+        return cleanups
+    if not workspace_lume_asset_compiler_sources_support_riscv64(workspace):
+        return cleanups
+
+    binary_path = generated_lume_asset_compiler_path(workspace, product)
+    if not binary_path.is_file() or generated_lume_asset_compiler_supports_riscv64(workspace, product):
+        return cleanups
+
+    generated_dir = binary_path.parent
+    workspace_resolved = workspace.resolve()
+    generated_resolved = generated_dir.resolve()
+    allowed_prefix = (
+        workspace_resolved
+        / "out"
+        / product
+        / "gen/foundation/graphic/graphic_3d/lume/LumeBinaryCompile/lumeassetcompiler"
+    ).resolve()
+    if generated_resolved != allowed_prefix or workspace_resolved not in generated_resolved.parents:
+        cleanups.append(
+            {
+                "path": str(generated_dir),
+                "status": "skipped_path_safety_check_failed",
+                "reason": "refused to remove generated LumeAssetCompiler path outside the expected out/<product>/gen subtree",
+            }
+        )
+        return cleanups
+
+    shutil.rmtree(generated_dir)
+    cleanups.append(
+        {
+            "path": str(generated_dir),
+            "status": "removed",
+            "reason": "stale generated LumeAssetCompiler lacked -riscv64 while patched sources require riscv64 support",
+        }
+    )
+    return cleanups
 
 
 def parse_args() -> argparse.Namespace:
@@ -3754,9 +4163,12 @@ def main() -> int:
                 blocking_issues.append({"path": item["path"], "reason": item["apply_status"]})
 
     build_result: dict[str, Any] | None = None
+    prebuild_cleanups: list[dict[str, Any]] = []
     if args.attempt_build and not blocking_issues:
+        prebuild_cleanups = prepare_generated_artifacts_for_build(workspace, target["product"], target)
         host_env_fix = detect_host_cxx_env_fix(workspace)
         build_result = run_build(workspace, out_dir, target["product"], args.build_timeout_sec, host_env_fix)
+        build_result["prebuild_cleanups"] = prebuild_cleanups
         build_result["diagnostics"] = parse_build_diagnostics(build_result, workspace, target_root, target["product"], target)
 
     fake_interfaces = [
@@ -3776,6 +4188,7 @@ def main() -> int:
         "blocking_issue_count": len(blocking_issues),
         "build_diagnostic_count": len(build_result.get("diagnostics", [])) if build_result else 0,
         "fake_interface_count": len(fake_interfaces),
+        "prebuild_cleanup_count": len(prebuild_cleanups),
     }
     manifest = {
         "schema_version": 1,
@@ -3801,6 +4214,7 @@ def main() -> int:
         "available_component_count": len(component_features) if component_features is not None else 0,
         "external_prebuilt_deferrals": list(component_deferrals.values()),
         "fake_interfaces": fake_interfaces,
+        "prebuild_cleanups": prebuild_cleanups,
         "actions": results,
         "blocking_issues": blocking_issues,
         "notes": notes,

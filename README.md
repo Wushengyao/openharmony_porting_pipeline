@@ -238,6 +238,12 @@ evidenced `third_party/curl/BUILD.gn` riscv64 cflags guard and
 `build/common/libcpp/BUILD.gn` libc++ prebuilt source mapping when needed. It
 also adds target-evidenced `graphic_3d` rofs `rv64` object mappings when GN
 reports empty generated asset paths for RISC-V graphics builds, and
+target-evidenced Lume rofs asset-compiler riscv64 support when
+`CompilerAsset.sh` reports `Invalid argument!` while generating `rofs_rv64.o`;
+the executor now also declares the Lume host asset-compiler source inputs and
+cleans a stale generated `LumeAssetCompiler` binary when patched sources support
+`-riscv64` but the old tool does not.
+It also adds
 target-evidenced `build/scripts/run_objcopy.py` riscv64 mappings when resource
 object generation raises `KeyError: 'riscv64'`. The same mapping is applied to
 local subsystem helpers such as
