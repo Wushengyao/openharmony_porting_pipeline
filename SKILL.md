@@ -204,6 +204,13 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
 - For RISC-V resource object generation, add target-evidenced
   `build/scripts/run_objcopy.py` `riscv64` output/BFD mappings when Ninja
   reports `KeyError: 'riscv64'` from `run_objcopy.py`.
+- Apply the same target-evidenced `riscv64` output/BFD mappings to local
+  subsystem helpers such as `foundation/arkui/ace_engine/build/tools/run_objcopy.py`
+  when their resource-object actions report `KeyError: 'riscv64'`.
+- When the riscv64 musl `libc.so` link reports mixed floating-point ABI objects,
+  align `build/config/compiler/BUILD.gn` riscv64 `ldflags` with the existing
+  `-march=rv64imafdc`/`-mabi=lp64d` compile flags instead of removing musl or
+  disabling target libraries.
 - Preserve target-evidenced executable bits for build scripts invoked directly
   through `/usr/bin/env`, such as `param_fixer.py` and board
   `build_kernel.sh`; content-identical files may still need a mode-only update.

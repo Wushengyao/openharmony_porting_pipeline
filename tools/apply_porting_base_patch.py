@@ -1017,14 +1017,26 @@ def target_has_riscv64_rofs_evidence(target_root: Path, rel_path: str) -> bool:
     return file_has_riscv64_rofs_evidence(target_build)
 
 
-def target_has_riscv64_objcopy_evidence(target_root: Path) -> bool:
-    target_objcopy = target_root / "build/scripts/run_objcopy.py"
+def target_has_riscv64_objcopy_evidence(target_root: Path, rel_path: str = "build/scripts/run_objcopy.py") -> bool:
+    target_objcopy = target_root / rel_path
     if not target_objcopy.is_file():
         return False
     text = target_objcopy.read_text(encoding=TEXT_ENCODING, errors="ignore")
     return (
         '"riscv64": "elf64-littleriscv"' in text
         and '"riscv64": "riscv64"' in text
+    )
+
+
+def target_has_riscv64_compiler_mabi_evidence(target_root: Path) -> bool:
+    target_compiler = target_root / "build/config/compiler/BUILD.gn"
+    if not target_compiler.is_file():
+        return False
+    text = target_compiler.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        'current_cpu == "riscv64"' in text
+        and '"-march=rv64imafdc"' in text
+        and '"-mabi=lp64d"' in text
     )
 
 
@@ -1516,6 +1528,32 @@ def planned_actions(
                 ),
             )
         )
+    arkui_objcopy_rel = "foundation/arkui/ace_engine/build/tools/run_objcopy.py"
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_riscv64_objcopy_evidence(target_root, arkui_objcopy_rel):
+        actions.append(
+            workspace_transform_action(
+                arkui_objcopy_rel,
+                "arkui_run_objcopy_riscv64_compat",
+                "L1_build_compatibility",
+                (
+                    "Add target-evidenced riscv64 llvm-objcopy output and BFD arch mappings to "
+                    "ArkUI's local binary-to-object helper."
+                ),
+            )
+        )
+
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_riscv64_compiler_mabi_evidence(target_root):
+        actions.append(
+            workspace_transform_action(
+                "build/config/compiler/BUILD.gn",
+                "riscv64_compiler_ldflags_mabi_compat",
+                "L1_build_compatibility",
+                (
+                    "Align riscv64 linker ABI flags with the existing target-evidenced cflags "
+                    "when lld reports mixed floating-point ABI objects."
+                ),
+            )
+        )
 
     param_fixer_rel = "base/startup/init/services/etc/param/param_fixer.py"
     target_param_fixer = target_root / param_fixer_rel
@@ -1907,6 +1945,27 @@ def apply_riscv64_objcopy_compat(data: bytes) -> tuple[bytes, list[str]]:
     else:
         notes.append("riscv64 llvm-objcopy BFD architecture mapping already present")
 
+    return text.encode(TEXT_ENCODING), notes
+
+
+def apply_riscv64_compiler_ldflags_mabi_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    notes: list[str] = []
+    if '"-mabi=lp64d"' in text and 'ldflags += [\n        "-march=rv64imafdc",\n        "-mabi=lp64d",' in text:
+        return data, ["riscv64 linker mabi flag already present next to -march=rv64imafdc"]
+
+    old = '      ldflags += [ "-march=rv64imafdc" ]\n'
+    new = (
+        "      ldflags += [\n"
+        '        "-march=rv64imafdc",\n'
+        '        "-mabi=lp64d",\n'
+        "      ]\n"
+    )
+    if old in text:
+        text = text.replace(old, new, 1)
+        notes.append("added riscv64 -mabi=lp64d linker flag beside -march=rv64imafdc")
+    else:
+        notes.append("riscv64 linker mabi insertion point not found")
     return text.encode(TEXT_ENCODING), notes
 
 
@@ -2332,6 +2391,18 @@ def materialize_action(
             and target.get("architecture") == "riscv64"
         ):
             data, transforms = apply_riscv64_objcopy_compat(data)
+        elif (
+            rel_path == "foundation/arkui/ace_engine/build/tools/run_objcopy.py"
+            and action.get("source_role") == "arkui_run_objcopy_riscv64_compat"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_riscv64_objcopy_compat(data)
+        elif (
+            rel_path == "build/config/compiler/BUILD.gn"
+            and action.get("source_role") == "riscv64_compiler_ldflags_mabi_compat"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_riscv64_compiler_ldflags_mabi_compat(data)
         elif rel_path in {"build/rust/BUILD.gn", "build/rust/tests/BUILD.gn"} and target.get("architecture") == "riscv64":
             source_path = target_root / rel_path
             if source_path.is_file():
@@ -3167,17 +3238,47 @@ def parse_build_diagnostics(
 
     if (
         clean_str(target.get("architecture")) == "riscv64"
-        and "build/scripts/run_objcopy.py" in plain_text
+        and "run_objcopy.py" in plain_text
         and "KeyError: 'riscv64'" in plain_text
+    ):
+        objcopy_rel = "build/scripts/run_objcopy.py"
+        diag_id = "riscv64_run_objcopy_arch_mapping_missing"
+        if "foundation/arkui/ace_engine/build/tools/run_objcopy.py" in plain_text:
+            objcopy_rel = "foundation/arkui/ace_engine/build/tools/run_objcopy.py"
+            diag_id = "riscv64_arkui_run_objcopy_arch_mapping_missing"
+        diagnostics.append(
+            build_diagnostic(
+                diag_id,
+                "source_build_compatibility",
+                f"{objcopy_rel} lacks riscv64 llvm-objcopy mappings for binary-to-object resource generation.",
+                f"Apply the target-evidenced riscv64 OUTPUT_TARGET and BUILD_ID_LINK_OUTPUT mappings in {objcopy_rel} and rerun the compile flow.",
+                [str(log_path), str(target_root / objcopy_rel)],
+                matching_lines(all_text, ["run_objcopy.py", "KeyError: 'riscv64'", "--arch riscv64"], 10),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "cannot link object files with different floating-point ABI" in plain_text
+        and "riscv64-linux-ohos/libc.so" in plain_text
     ):
         diagnostics.append(
             build_diagnostic(
-                "riscv64_run_objcopy_arch_mapping_missing",
+                "riscv64_musl_float_abi_link_mismatch",
                 "source_build_compatibility",
-                "build/scripts/run_objcopy.py lacks riscv64 llvm-objcopy mappings for binary-to-object resource generation.",
-                "Apply the target-evidenced riscv64 OUTPUT_TARGET and BUILD_ID_LINK_OUTPUT mappings in build/scripts/run_objcopy.py and rerun the compile flow.",
-                [str(log_path), str(target_root / "build/scripts/run_objcopy.py")],
-                matching_lines(all_text, ["run_objcopy.py", "KeyError: 'riscv64'", "--arch riscv64"], 10),
+                "musl libc.so link mixes riscv64 object files with different floating-point ABI settings.",
+                "Align riscv64 ldflags with the existing -march=rv64imafdc/-mabi=lp64d compile flags so the final libc.so link uses the same ABI.",
+                [str(log_path), str(target_root / "build/config/compiler/BUILD.gn")],
+                matching_lines(
+                    all_text,
+                    [
+                        "cannot link object files with different floating-point ABI",
+                        "riscv64-linux-ohos/libc.so",
+                        "-march=rv64imafdc",
+                        "-mabi=lp64d",
+                    ],
+                    12,
+                ),
             )
         )
 

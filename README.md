@@ -239,7 +239,13 @@ evidenced `third_party/curl/BUILD.gn` riscv64 cflags guard and
 also adds target-evidenced `graphic_3d` rofs `rv64` object mappings when GN
 reports empty generated asset paths for RISC-V graphics builds, and
 target-evidenced `build/scripts/run_objcopy.py` riscv64 mappings when resource
-object generation raises `KeyError: 'riscv64'`. Build attempts emit diagnostics
+object generation raises `KeyError: 'riscv64'`. The same mapping is applied to
+local subsystem helpers such as
+`foundation/arkui/ace_engine/build/tools/run_objcopy.py` when they hit the same
+architecture key gap. If musl `libc.so` linking reports mixed riscv64
+floating-point ABI objects, the executor aligns riscv64 `ldflags` with the
+existing `-march=rv64imafdc`/`-mabi=lp64d` compile flags instead of removing
+musl or target libraries. Build attempts emit diagnostics
 in `base_patch_manifest.yaml` and `.md` for known blockers such as
 host/prebuilt C++ header gaps, missing `BUILD.gn` closures, unavailable product
 components, RISC-V build-compatibility gaps, directly invoked script executable
