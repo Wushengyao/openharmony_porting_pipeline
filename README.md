@@ -285,7 +285,10 @@ OpenHarmony 6.0 clang/lld stack. For Rust targets that fall back to host `cc`
 while carrying riscv64 linker flags, it imports the target-evidenced
 `rustc-riscv` toolchain mapping and uses an executable compile-only fake Rust
 driver when the real prebuilt compiler is unavailable, recording that fake as
-dependency debt. Build attempts emit diagnostics
+dependency debt. That fake driver emits RISC-V archives/shared objects and
+exports `#[no_mangle] extern fn` symbols discovered in the Rust source so C/C++
+links can continue; stale non-RISC-V Rust archives under `out/<product>/obj`
+are removed before rebuild when the fake driver is active. Build attempts emit diagnostics
 in `base_patch_manifest.yaml` and `.md` for known blockers such as
 host/prebuilt C++ header gaps, missing `BUILD.gn` closures, unavailable product
 components, RISC-V build-compatibility gaps, directly invoked script executable
@@ -313,6 +316,10 @@ For RISC-V Rust std/test dylib gaps, the executor imports the target-evidenced
 text GN rule and may copy an existing workspace Rust dylib as a clearly marked
 wrong-architecture placeholder under `prebuilts/rustc-riscv/...`; this is only a
 compile-flow bridge and is reported as fake dependency debt.
+If a Rust staticlib such as `librust_hash_signed_data.a` later fails with
+`is incompatible with elf64lriscv`, the executor diagnoses it as stale or
+host-built Rust output, removes the wrong-architecture archive before the next
+build, and relies on the fake driver or real `rustc-riscv` to regenerate it.
 For ArkCompiler RISC-V GN assertion gaps, the executor may apply the
 target-evidenced minimal `ark_config.gni` rule that disables unsupported
 LLVM backend/irtoc/codegen paths for `target_cpu == "riscv64"`; it does not

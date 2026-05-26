@@ -275,8 +275,13 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   target-evidenced `build/rust/rustc_toolchain.gni` and
   `build/toolchain/ohos/BUILD.gn` Rust tuple mapping. If the real
   `prebuilts/rustc-riscv` compiler is missing, use an executable compile-only
-  fake Rust driver that emits placeholder RISC-V ELF outputs and record it as
-  dependency debt.
+  fake Rust driver that emits placeholder RISC-V ELF outputs, exports
+  discovered `#[no_mangle] extern fn` symbols, and record it as dependency
+  debt.
+- If a riscv64 link fails because a `librust_*.a` archive contains rcgu objects
+  that are incompatible with `elf64lriscv`, classify it as stale or host-built
+  Rust output. Remove the wrong-architecture archive before rebuilding so the
+  real `rustc-riscv` or compile-only fake driver regenerates a RISC-V archive.
 - If `hb` reports `FileNotFoundError` for `out/<product>/error.log` from
   `LogUtil.analyze_build_error` after Ninja returns nonzero, classify it as
   build-log infrastructure masking rather than a source porting blocker. Rerun
