@@ -229,6 +229,10 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
 - When FFRT coroutine compilation reports undeclared `STACK_MAGIC`, add the
   target-evidenced `__riscv && __riscv_xlen == 64` branch in
   `foundation/resourceschedule/ffrt/include/eu/co_routine.h`.
+- When FFRT sched code reports `Unsupported architecture` from
+  `foundation/resourceschedule/ffrt/src/sched/task_client_adapter.h` and
+  `CTC_QUERY_INTERVAL` is undeclared, add only the target-evidenced RISC-V
+  architecture guard for the existing runtime CTC query path.
 - When `cj_environment.cpp` reports `unsupported platform` on RISC-V, add the
   target-evidenced `APP_USE_RISCV64` GN define and the matching
   `APP_LIB_NAME "riscv64"` source branch; do not import unrelated host/macOS

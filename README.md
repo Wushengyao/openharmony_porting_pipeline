@@ -254,7 +254,8 @@ RISC-V source lists after confirming the shared libunwind archive lacks that
 file. If FFRT public headers trip the `unsupported architecture` guard for
 `ffrt_fiber_storage_size`, the executor adds the target-evidenced `__riscv`
 storage-size branch without importing broader 6.1 API enum changes. It also
-handles the follow-on FFRT coroutine `STACK_MAGIC` RISC-V branch and
+handles the follow-on FFRT coroutine `STACK_MAGIC` RISC-V branch,
+`task_client_adapter.h`'s `CTC_QUERY_INTERVAL` architecture guard, and
 `cj_environment`'s `APP_USE_RISCV64`/`APP_LIB_NAME "riscv64"` platform mapping
 when those errors appear. If musl `libc.so` linking reports mixed riscv64
 floating-point ABI objects, the executor aligns musl compile/link cflags and

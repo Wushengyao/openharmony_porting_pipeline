@@ -1110,6 +1110,18 @@ def target_has_ffrt_riscv64_stack_magic_evidence(target_root: Path) -> bool:
     )
 
 
+def target_has_ffrt_riscv64_task_client_adapter_evidence(target_root: Path) -> bool:
+    header = target_root / "foundation/resourceschedule/ffrt/src/sched/task_client_adapter.h"
+    if not header.is_file():
+        return False
+    text = header.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "#if defined(__aarch64__) || defined(__arm__) || (defined(__riscv) && __riscv_xlen == 64)" in text
+        and "CTC_QueryIntervalFunc" in text
+        and "CTC_QUERY_INTERVAL" in text
+    )
+
+
 def target_has_cj_environment_riscv64_evidence(target_root: Path) -> bool:
     build_gn = target_root / "foundation/ability/ability_runtime/cj_environment/frameworks/cj_environment/BUILD.gn"
     source = target_root / "foundation/ability/ability_runtime/cj_environment/frameworks/cj_environment/src/cj_environment.cpp"
@@ -1692,6 +1704,19 @@ def planned_actions(
                 (
                     "Add the target-evidenced RISC-V STACK_MAGIC branch so FFRT coroutine code "
                     "compiles for riscv64."
+                ),
+            )
+        )
+
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_ffrt_riscv64_task_client_adapter_evidence(target_root):
+        actions.append(
+            workspace_transform_action(
+                "foundation/resourceschedule/ffrt/src/sched/task_client_adapter.h",
+                "ffrt_riscv64_task_client_adapter_ctc_query_interval",
+                "L1_build_compatibility",
+                (
+                    "Add the target-evidenced RISC-V task-client CTC_QUERY_INTERVAL branch so "
+                    "FFRT sched code does not hit the unsupported architecture guard."
                 ),
             )
         )
@@ -2369,6 +2394,19 @@ def apply_ffrt_riscv64_stack_magic_compat(data: bytes) -> tuple[bytes, list[str]
     return data, ["FFRT riscv STACK_MAGIC insertion point not found"]
 
 
+def apply_ffrt_riscv64_task_client_adapter_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    riscv_guard = "#if defined(__aarch64__) || defined(__arm__) || (defined(__riscv) && __riscv_xlen == 64)"
+    if riscv_guard in text:
+        return data, ["FFRT task-client RISC-V CTC_QUERY_INTERVAL branch already present"]
+    old = "#if defined(__aarch64__) || defined(__arm__)\n#define CTC_QUERY_INTERVAL"
+    new = f"{riscv_guard}\n#define CTC_QUERY_INTERVAL"
+    if old in text:
+        text = text.replace(old, new, 1)
+        return text.encode(TEXT_ENCODING), ["added FFRT task-client RISC-V CTC_QUERY_INTERVAL guard"]
+    return data, ["FFRT task-client RISC-V CTC_QUERY_INTERVAL insertion point not found"]
+
+
 def apply_cj_environment_riscv64_app_define(data: bytes) -> tuple[bytes, list[str]]:
     text = data.decode(TEXT_ENCODING, errors="ignore")
     if '"APP_USE_RISCV64"' in text:
@@ -2906,6 +2944,12 @@ def materialize_action(
             and target.get("architecture") == "riscv64"
         ):
             data, transforms = apply_ffrt_riscv64_stack_magic_compat(data)
+        elif (
+            rel_path == "foundation/resourceschedule/ffrt/src/sched/task_client_adapter.h"
+            and action.get("source_role") == "ffrt_riscv64_task_client_adapter_ctc_query_interval"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_ffrt_riscv64_task_client_adapter_compat(data)
         elif (
             rel_path == "foundation/ability/ability_runtime/cj_environment/frameworks/cj_environment/BUILD.gn"
             and action.get("source_role") == "cj_environment_riscv64_app_define"
@@ -3919,6 +3963,30 @@ def parse_build_diagnostics(
                 matching_lines(
                     all_text,
                     ["co_routine.cpp", "STACK_MAGIC", "use of undeclared identifier"],
+                    12,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "foundation/resourceschedule/ffrt/src/sched/task_client_adapter.h" in plain_text
+        and "Unsupported architecture" in plain_text
+        and "CTC_QUERY_INTERVAL" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "ffrt_task_client_adapter_riscv64_ctc_query_interval_missing",
+                "source_build_compatibility",
+                "FFRT sched task_client_adapter.h lacks the RISC-V CTC_QUERY_INTERVAL architecture guard, so multi_workgroup.cpp hits the unsupported architecture path.",
+                "Apply the target-evidenced task_client_adapter.h patch that treats __riscv && __riscv_xlen == 64 like the ARM runtime CTC query path, then rerun the build.",
+                [
+                    str(log_path),
+                    str(target_root / "foundation/resourceschedule/ffrt/src/sched/task_client_adapter.h"),
+                ],
+                matching_lines(
+                    all_text,
+                    ["task_client_adapter.h", "Unsupported architecture", "CTC_QUERY_INTERVAL"],
                     12,
                 ),
             )
