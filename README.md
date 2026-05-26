@@ -243,9 +243,10 @@ object generation raises `KeyError: 'riscv64'`. The same mapping is applied to
 local subsystem helpers such as
 `foundation/arkui/ace_engine/build/tools/run_objcopy.py` when they hit the same
 architecture key gap. If musl `libc.so` linking reports mixed riscv64
-floating-point ABI objects, the executor aligns riscv64 `ldflags` with the
-existing `-march=rv64imafdc`/`-mabi=lp64d` compile flags instead of removing
-musl or target libraries. Build attempts emit diagnostics
+floating-point ABI objects, the executor aligns musl compile/link cflags and
+global riscv64 `ldflags` with the target-evidenced
+`-march=rv64imafdc`/`-mabi=lp64d` ABI instead of removing musl or target
+libraries. Build attempts emit diagnostics
 in `base_patch_manifest.yaml` and `.md` for known blockers such as
 host/prebuilt C++ header gaps, missing `BUILD.gn` closures, unavailable product
 components, RISC-V build-compatibility gaps, directly invoked script executable

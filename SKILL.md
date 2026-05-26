@@ -208,9 +208,10 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   subsystem helpers such as `foundation/arkui/ace_engine/build/tools/run_objcopy.py`
   when their resource-object actions report `KeyError: 'riscv64'`.
 - When the riscv64 musl `libc.so` link reports mixed floating-point ABI objects,
-  align `build/config/compiler/BUILD.gn` riscv64 `ldflags` with the existing
-  `-march=rv64imafdc`/`-mabi=lp64d` compile flags instead of removing musl or
-  disabling target libraries.
+  align both musl `build/config/components/musl/BUILD.gn` compile/link cflags
+  and `build/config/compiler/BUILD.gn` riscv64 `ldflags` with the target-evidenced
+  `-march=rv64imafdc`/`-mabi=lp64d` ABI instead of removing musl or disabling
+  target libraries.
 - Preserve target-evidenced executable bits for build scripts invoked directly
   through `/usr/bin/env`, such as `param_fixer.py` and board
   `build_kernel.sh`; content-identical files may still need a mode-only update.

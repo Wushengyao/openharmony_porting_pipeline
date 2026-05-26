@@ -1545,6 +1545,17 @@ def planned_actions(
     if clean_str(seed.get("architecture")) == "riscv64" and target_has_riscv64_compiler_mabi_evidence(target_root):
         actions.append(
             workspace_transform_action(
+                "build/config/components/musl/BUILD.gn",
+                "riscv64_musl_cflags_mabi_compat",
+                "L1_build_compatibility",
+                (
+                    "Make musl riscv64 compile/link cflags carry the same target-evidenced "
+                    "-mabi=lp64d ABI as the global compiler riscv64 rule."
+                ),
+            )
+        )
+        actions.append(
+            workspace_transform_action(
                 "build/config/compiler/BUILD.gn",
                 "riscv64_compiler_ldflags_mabi_compat",
                 "L1_build_compatibility",
@@ -1966,6 +1977,34 @@ def apply_riscv64_compiler_ldflags_mabi_compat(data: bytes) -> tuple[bytes, list
         notes.append("added riscv64 -mabi=lp64d linker flag beside -march=rv64imafdc")
     else:
         notes.append("riscv64 linker mabi insertion point not found")
+    return text.encode(TEXT_ENCODING), notes
+
+
+def apply_riscv64_musl_cflags_mabi_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    notes: list[str] = []
+    if 'musl_arch == "riscv64"' in text and 'cflags_basic += [ "-mabi=lp64d" ]' in text:
+        return data, ["musl riscv64 cflags_basic already carries -mabi=lp64d"]
+
+    anchor = (
+        '  cflags_basic = [\n'
+        '    "--target=${musl_target_triple}",\n'
+        '    "-Wall",\n'
+        '    "-Wl,-z,relro,-z,now,-z,noexecstack",\n'
+        "  ]\n"
+    )
+    insertion = (
+        anchor
+        + "\n"
+        + '  if (musl_arch == "riscv64") {\n'
+        + '    cflags_basic += [ "-mabi=lp64d" ]\n'
+        + "  }\n"
+    )
+    if anchor in text:
+        text = text.replace(anchor, insertion, 1)
+        notes.append("added musl riscv64 -mabi=lp64d to cflags_basic")
+    else:
+        notes.append("musl cflags_basic insertion point not found")
     return text.encode(TEXT_ENCODING), notes
 
 
@@ -2403,6 +2442,12 @@ def materialize_action(
             and target.get("architecture") == "riscv64"
         ):
             data, transforms = apply_riscv64_compiler_ldflags_mabi_compat(data)
+        elif (
+            rel_path == "build/config/components/musl/BUILD.gn"
+            and action.get("source_role") == "riscv64_musl_cflags_mabi_compat"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_riscv64_musl_cflags_mabi_compat(data)
         elif rel_path in {"build/rust/BUILD.gn", "build/rust/tests/BUILD.gn"} and target.get("architecture") == "riscv64":
             source_path = target_root / rel_path
             if source_path.is_file():
@@ -3267,8 +3312,12 @@ def parse_build_diagnostics(
                 "riscv64_musl_float_abi_link_mismatch",
                 "source_build_compatibility",
                 "musl libc.so link mixes riscv64 object files with different floating-point ABI settings.",
-                "Align riscv64 ldflags with the existing -march=rv64imafdc/-mabi=lp64d compile flags so the final libc.so link uses the same ABI.",
-                [str(log_path), str(target_root / "build/config/compiler/BUILD.gn")],
+                "Align musl riscv64 compile/link cflags and global ldflags with the target-evidenced -march=rv64imafdc/-mabi=lp64d ABI.",
+                [
+                    str(log_path),
+                    str(target_root / "build/config/compiler/BUILD.gn"),
+                    str(workspace / "build/config/components/musl/BUILD.gn"),
+                ],
                 matching_lines(
                     all_text,
                     [
