@@ -174,6 +174,10 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
 - For local modules directly listed by `device/board/<vendor>/<board>/BUILD.gn`,
   import text/config closures, but represent kernel modules, bootloader images,
   firmware, and other non-text payloads as tracked compile-only fake interfaces.
+- When Ninja reports missing board `audio_alsa` sources, import the
+  target-evidenced `device/board/<vendor>/<board>/audio_alsa` text/source
+  closure instead of removing the audio adapter feature; keep any non-text
+  payloads as fake-interface dependency debt.
 - For SoC modules under `device/soc/<soc_vendor>/<soc>` directly referenced by
   the board root `BUILD.gn`, import text/source closures and represent firmware,
   proprietary GPU/WiFi blobs, and shared-library payloads as tracked

@@ -241,7 +241,8 @@ reports empty generated asset paths for RISC-V graphics builds. Build
 attempts emit diagnostics in `base_patch_manifest.yaml` and `.md` for known
 blockers such as host/prebuilt C++ header gaps, missing `BUILD.gn` closures,
 unavailable product components, RISC-V build-compatibility gaps, and
-prebuilt-backed feature blockers such as a WebView riscv64 ArkWebCore HAP.
+Ninja missing-source follow-ups, and prebuilt-backed feature blockers such as a
+WebView riscv64 ArkWebCore HAP.
 For the WebView riscv64 ArkWebCore gap, the executor keeps `web:webview` enabled,
 imports the evidenced text-only build rule, writes a marked compile-only fake
 `ArkWebCore.hap`, imports direct local WebView text/source closures from target
@@ -274,6 +275,10 @@ closures referenced by `ohos.build`, but replaces firmware payloads such as
 For local modules directly listed by `device/board/<vendor>/<board>/BUILD.gn`,
 the executor imports text/config closures and records kernel modules, bootloader
 images, firmware, and other non-text payloads as compile-only fake interfaces.
+When Ninja reaches board `audio_alsa` adapter objects and reports missing C
+sources, the executor imports the target-evidenced
+`device/board/<vendor>/<board>/audio_alsa` text/source closure rather than
+removing the audio feature; any non-text payloads remain fake-interface debt.
 For SoC modules under `device/soc/<soc_vendor>/<soc>` directly referenced by the
 board root `BUILD.gn`, the executor imports text/source closures and records
 firmware, proprietary GPU/WiFi blobs, and shared-library payloads as

@@ -1048,6 +1048,21 @@ def planned_actions(
             "Import reviewed text/config closure for local modules directly listed by the target board root BUILD.gn.",
         )
     )
+    board_audio_alsa_rel = f"{board_root_rel}/audio_alsa"
+    if (target_root / board_audio_alsa_rel).is_dir():
+        actions.extend(
+            collect_target_module_closure_actions(
+                target_root,
+                [board_audio_alsa_rel],
+                "board_audio_alsa_text_source_closure",
+                "board_audio_alsa_fake_payload",
+                "L2_board_module_text_closure",
+                (
+                    "Import target-evidenced board audio_alsa text/source closure required by "
+                    "the audio HDI adapter compile graph."
+                ),
+            )
+        )
     soc_root_rel = f"device/soc/{soc_vendor}/{soc}"
     soc_module_dirs = collect_gn_dependency_dirs(
         target_root / board_root_rel / "BUILD.gn",
@@ -1476,6 +1491,7 @@ def planned_actions(
         "SmartPerf split component-registry migration removes legacy hiprofiler-hosted SmartPerf labels only when target evidence shows SmartPerf is owned by smartperf_host.",
         "Vendor product module text/config closures are imported only from direct target ohos.build module labels; non-text payloads become compile-only fake interfaces.",
         "Board module text/config closures are imported only from local labels in the target board root BUILD.gn; kernel modules, bootloader images, and firmware become compile-only fake interfaces.",
+        "Board audio_alsa text/source closures are imported when target evidence provides board-specific audio adapter sources required by Ninja.",
         "SoC module text/source closures are imported only from target board BUILD.gn labels under the selected SoC root; firmware and proprietary GPU/WiFi/shared-library payloads become compile-only fake interfaces.",
         "WebView local module text/source closures are imported from target ohos_nweb GN labels after resolving webview_path-style variables; binary/prebuilt payloads remain fake-interface debt.",
         "WebView app_fwk_update component-registry labels are migrated to the target sa/app_fwk_update module when target evidence shows the service moved from the old flat sa target.",
@@ -2053,6 +2069,21 @@ def matching_lines(text: str, needles: list[str], limit: int = 8) -> list[str]:
     return matches
 
 
+def normalize_ninja_source_path(path: str, workspace: Path) -> str:
+    rel = path.strip().strip("'\"").replace("\\", "/")
+    workspace_prefix = str(workspace).replace("\\", "/").rstrip("/") + "/"
+    if rel.startswith(workspace_prefix):
+        rel = rel[len(workspace_prefix) :]
+    while rel.startswith("../"):
+        rel = rel[3:]
+    if rel.startswith("./"):
+        rel = rel[2:]
+    try:
+        return normalize_rel(rel)
+    except ValueError:
+        return rel
+
+
 GN_IDENTIFIER_KEYWORDS = {
     "if",
     "else",
@@ -2384,6 +2415,50 @@ def parse_build_diagnostics(
                 [rel],
             )
         )
+
+    ninja_missing_sources = sorted(
+        set(
+            (
+                normalize_ninja_source_path(source_path, workspace),
+                needed_by.strip(),
+                source_path.strip(),
+            )
+            for source_path, needed_by in re.findall(
+                r"ninja: error: '([^']+)', needed by '([^']+)', missing and no known rule to make it",
+                plain_text,
+            )
+        )
+    )
+    for missing_rel, needed_by, raw_source_path in ninja_missing_sources[:12]:
+        evidence_lines = matching_lines(all_text, ["ninja: error", raw_source_path, needed_by], 8)
+        evidence_lines.extend(
+            [
+                f"normalized_missing_source={missing_rel}",
+                f"needed_by={needed_by}",
+            ]
+        )
+        if "/audio_alsa/" in f"/{missing_rel}/":
+            diagnostics.append(
+                build_diagnostic(
+                    "board_audio_alsa_source_missing",
+                    "source_import_follow_up",
+                    f"Ninja needs board audio_alsa source {missing_rel}, but it is not present in the current workspace.",
+                    "Import the target-evidenced board audio_alsa text/source closure and rerun the compile flow; keep non-text audio payloads as tracked fake interfaces if encountered.",
+                    [str(log_path), str(target_root / missing_rel)],
+                    evidence_lines,
+                )
+            )
+        else:
+            diagnostics.append(
+                build_diagnostic(
+                    "ninja_missing_source_file",
+                    "source_import_follow_up",
+                    f"Ninja needs source file {missing_rel}, but no rule can generate it.",
+                    "Import the reviewed target-source text closure that owns the missing file, or record it as unresolved source evidence if the reference tree lacks it.",
+                    [str(log_path), str(target_root / missing_rel)],
+                    evidence_lines,
+                )
+            )
 
     bad_subsystem_bundle_paths = sorted(set(re.findall(r"subsystem name config incorrect in '([^']+bundle\.json)'", plain_text)))
     for bundle_path in bad_subsystem_bundle_paths[:8]:
