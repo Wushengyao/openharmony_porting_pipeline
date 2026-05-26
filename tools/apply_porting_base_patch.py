@@ -1867,6 +1867,27 @@ def archive_contains_non_riscv_elf_objects(workspace: Path, archive: Path) -> bo
     return any("RISC-V" not in machine for machine in machines)
 
 
+def elf_header_machine(workspace: Path, path: Path) -> str:
+    readelf = llvm_readelf_path(workspace)
+    if not readelf.is_file() or not path.is_file():
+        return ""
+    try:
+        proc = subprocess.run(
+            [str(readelf), "-h", str(path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            errors="ignore",
+            timeout=30,
+            check=False,
+        )
+    except Exception:
+        return ""
+    text = proc.stdout + proc.stderr
+    match = re.search(r"Machine:\s+(.+)", text)
+    return match.group(1).strip() if match else ""
+
+
 def cleanup_stale_fake_rust_archives(workspace: Path, product: str) -> list[dict[str, Any]]:
     cleanups: list[dict[str, Any]] = []
     if not workspace_fake_rust_driver_enabled(workspace):
@@ -1892,6 +1913,63 @@ def cleanup_stale_fake_rust_archives(workspace: Path, product: str) -> list[dict
                 "path": str(archive),
                 "status": "removed",
                 "reason": "stale Rust archive contained non-RISC-V ELF objects while compile-only rustc-riscv fake driver is active",
+            }
+        )
+    return cleanups
+
+
+def cleanup_stale_fake_rust_build_scripts(workspace: Path, product: str) -> list[dict[str, Any]]:
+    cleanups: list[dict[str, Any]] = []
+    if not workspace_fake_rust_driver_enabled(workspace):
+        return cleanups
+    out_root = (workspace / "out" / product).resolve()
+    workspace_resolved = workspace.resolve()
+    if not out_root.is_dir() or workspace_resolved not in out_root.parents:
+        return cleanups
+    for script in sorted(out_root.rglob("*build_script")):
+        if not script.is_file():
+            continue
+        script_resolved = script.resolve()
+        if workspace_resolved not in script_resolved.parents:
+            continue
+        machine = elf_header_machine(workspace, script)
+        if "RISC-V" not in machine:
+            continue
+        script.unlink()
+        cleanups.append(
+            {
+                "path": str(script),
+                "status": "removed",
+                "reason": "stale Rust cargo build script was a RISC-V ELF but must execute on the host while the fake rustc-riscv driver is active",
+            }
+        )
+    return cleanups
+
+
+def cleanup_stale_mmi_fake_rust_key_library(workspace: Path, product: str) -> list[dict[str, Any]]:
+    cleanups: list[dict[str, Any]] = []
+    if not workspace_fake_rust_driver_enabled(workspace):
+        return cleanups
+    candidates = [
+        workspace / "out" / product / "lib.unstripped/multimodalinput/input/libmmi_rust_key_config.z.so",
+        workspace / "out" / product / "multimodalinput/input/libmmi_rust_key_config.z.so",
+    ]
+    workspace_resolved = workspace.resolve()
+    for library in candidates:
+        if not library.is_file():
+            continue
+        library_resolved = library.resolve()
+        if workspace_resolved not in library_resolved.parents:
+            continue
+        symbols = {item.get("name") for item in collect_defined_dynsym_symbols(workspace, library)}
+        if "ReadConfigInfo" in symbols:
+            continue
+        library.unlink()
+        cleanups.append(
+            {
+                "path": str(library),
+                "status": "removed",
+                "reason": "stale fake Rust MMI key shared library did not export ReadConfigInfo after no_mangle symbol extraction was enabled",
             }
         )
     return cleanups
@@ -2006,6 +2084,7 @@ def fake_rust_driver_script() -> str:
 # the next real blocker. Replace rustc-riscv before runtime/package validation.
 import pathlib
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -2018,6 +2097,22 @@ def find_arg_value(args, name):
         if arg.startswith(name + "="):
             return arg.split("=", 1)[1]
     return None
+
+
+def expand_response_args(args):
+    expanded = []
+    for arg in args:
+        if not arg.startswith("@"):
+            expanded.append(arg)
+            continue
+        rsp = pathlib.Path(arg[1:])
+        if not rsp.is_absolute():
+            rsp = pathlib.Path.cwd() / rsp
+        try:
+            expanded.extend(shlex.split(rsp.read_text(encoding="utf-8", errors="ignore")))
+        except OSError:
+            expanded.append(arg)
+    return expanded
 
 
 def find_emit_depfile(args):
@@ -2049,6 +2144,21 @@ def crate_type(args):
     return ""
 
 
+def crate_name(args):
+    value = find_arg_value(args, "--crate-name")
+    return value or ""
+
+
+def target_triple(args):
+    value = find_arg_value(args, "--target")
+    if value:
+        return value
+    for arg in args:
+        if arg.startswith("--target="):
+            return arg.split("=", 1)[1]
+    return "riscv64-unknown-linux-ohos"
+
+
 def rust_source_paths(args):
     paths = []
     cwd = pathlib.Path.cwd()
@@ -2071,6 +2181,17 @@ def rust_source_paths(args):
         seen.add(path)
         unique.append(path)
     return unique
+
+
+def is_build_script(args, output):
+    kind = crate_type(args)
+    if kind and kind != "bin":
+        return False
+    name = crate_name(args)
+    out_name = pathlib.Path(output).name
+    if name.endswith("_build_script") or out_name.endswith("_build_script"):
+        return True
+    return any(path.name == "build.rs" for path in rust_source_paths(args))
 
 
 def collect_no_mangle_symbols(args):
@@ -2122,31 +2243,44 @@ def compile_placeholder(output, args):
     clang = root / "prebuilts/clang/ohos/linux-x86_64/llvm/bin/clang"
     ar = root / "prebuilts/clang/ohos/linux-x86_64/llvm/bin/llvm-ar"
     kind = crate_type(args)
+    target = target_triple(args)
+    if is_build_script(args, output):
+        target = "x86_64-unknown-linux-gnu"
     with tempfile.TemporaryDirectory() as tmpdir:
         src = pathlib.Path(tmpdir) / "fake_rust.c"
         obj = pathlib.Path(tmpdir) / "fake_rust.o"
         src.write_text(fake_rust_c_source(args), encoding="utf-8")
-        base = [
-            str(clang),
-            "--target=riscv64-linux-ohos",
-            "-march=rv64imafdc",
-            "-mabi=lp64d",
-            "-fPIC",
-            "-fno-builtin",
-        ]
+        if target == "x86_64-unknown-linux-gnu":
+            base = [str(clang), "--target=x86_64-unknown-linux-gnu", "-fPIC", "-fno-builtin"]
+        else:
+            base = [
+                str(clang),
+                "--target=riscv64-linux-ohos",
+                "-march=rv64imafdc",
+                "-mabi=lp64d",
+                "-fPIC",
+                "-fno-builtin",
+            ]
         if out.suffix in {".a", ".rlib"} or kind in {"rlib", "staticlib"}:
             subprocess.check_call([*base, "-c", str(src), "-o", str(obj)])
             subprocess.check_call([str(ar), "crs", str(out), str(obj)])
         elif out.suffix == ".so" or kind in {"cdylib", "dylib", "proc-macro"}:
-            subprocess.check_call([*base, "-shared", "-nostdlib", str(src), "-Wl,-soname," + out.name, "-o", str(out)])
+            command = [*base, "-shared", str(src), "-Wl,-soname," + out.name, "-o", str(out)]
+            if target != "x86_64-unknown-linux-gnu":
+                command.insert(len(base) + 1, "-nostdlib")
+            subprocess.check_call(command)
         else:
             entry = pathlib.Path(tmpdir) / "fake_rust_entry.c"
-            entry.write_text("void __ohos_fake_rust_entry(void) { for (;;) {} }\\n", encoding="utf-8")
-            subprocess.check_call([*base, "-nostdlib", str(entry), "-Wl,-e,__ohos_fake_rust_entry", "-o", str(out)])
+            if target == "x86_64-unknown-linux-gnu":
+                entry.write_text("int main(void) { return 0; }\\n", encoding="utf-8")
+                subprocess.check_call([*base, str(entry), "-o", str(out)])
+            else:
+                entry.write_text("void __ohos_fake_rust_entry(void) { for (;;) {} }\\n", encoding="utf-8")
+                subprocess.check_call([*base, "-nostdlib", str(entry), "-Wl,-e,__ohos_fake_rust_entry", "-o", str(out)])
 
 
 def main():
-    args = sys.argv[1:]
+    args = expand_response_args(sys.argv[1:])
     if args and args[0].endswith("rustc"):
         args = args[1:]
     output = find_arg_value(args, "-o")
@@ -2555,13 +2689,13 @@ def planned_actions(
 
     if clean_str(seed.get("architecture")) == "riscv64" and target_has_riscv64_rust_toolchain_evidence(target_root):
         actions.append(
-            copy_action(
+            target_source_transform_action(
                 "build/rust/rustc_toolchain.gni",
                 "rust_riscv64_toolchain_gni",
                 "L1_build_compatibility",
                 (
-                    "Import the target-evidenced rustc-riscv toolchain selection so Rust targets "
-                    "use the riscv64 OpenHarmony target triple instead of host x86 linking."
+                    "Import the target-evidenced rustc-riscv toolchain selection and keep host "
+                    "Rust tools on the normal x86 Rust prebuilt while riscv64 targets use rustc-riscv."
                 ),
             )
         )
@@ -4207,6 +4341,54 @@ def apply_ohos_toolchain_riscv64_rust_abi_target(data: bytes) -> tuple[bytes, li
     return data, ["riscv64 Rust ABI target insertion point not found"]
 
 
+def apply_rust_riscv64_toolchain_host_split(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    notes: list[str] = []
+    if 'enable_rust_riscv && current_cpu == "riscv64"' in text:
+        return data, ["Rust toolchain already scopes rustc-riscv to riscv64 target toolchains"]
+
+    old_sysroot = (
+        "    if (enable_rust_riscv) {\n"
+        '      rust_sysroot = "//prebuilts/rustc-riscv/linux-x86_64/current"\n'
+        "    } else {\n"
+        '      rust_sysroot = "//prebuilts/rustc/linux-x86_64/current"\n'
+        "    }\n"
+    )
+    new_sysroot = (
+        '    if (enable_rust_riscv && current_cpu == "riscv64") {\n'
+        '      rust_sysroot = "//prebuilts/rustc-riscv/linux-x86_64/current"\n'
+        "    } else {\n"
+        '      rust_sysroot = "//prebuilts/rustc/linux-x86_64/current"\n'
+        "    }\n"
+    )
+    if old_sysroot in text:
+        text = text.replace(old_sysroot, new_sysroot, 1)
+        notes.append("scoped rust_sysroot rustc-riscv selection to riscv64 target toolchains")
+    else:
+        notes.append("rust_sysroot rustc-riscv selection insertion point not found")
+
+    old_base = (
+        "if (enable_rust_riscv) {\n"
+        '  rust_base = rebase_path("//prebuilts/rustc-riscv", root_build_dir)\n'
+        "} else {\n"
+        '  rust_base = rebase_path("//prebuilts/rustc", root_build_dir)\n'
+        "}\n"
+    )
+    new_base = (
+        'if (enable_rust_riscv && current_cpu == "riscv64") {\n'
+        '  rust_base = rebase_path("//prebuilts/rustc-riscv", root_build_dir)\n'
+        "} else {\n"
+        '  rust_base = rebase_path("//prebuilts/rustc", root_build_dir)\n'
+        "}\n"
+    )
+    if old_base in text:
+        text = text.replace(old_base, new_base, 1)
+        notes.append("scoped rust_base rustc-riscv selection to riscv64 target toolchains")
+    else:
+        notes.append("rust_base rustc-riscv selection insertion point not found")
+    return text.encode(TEXT_ENCODING), notes
+
+
 def apply_riscv64_musl_cflags_mabi_compat(data: bytes) -> tuple[bytes, list[str]]:
     text = data.decode(TEXT_ENCODING, errors="ignore")
     notes: list[str] = []
@@ -5465,6 +5647,12 @@ def materialize_action(
         transforms: list[str] = []
         if action.get("source_role") == "board_kernel_fake_output_bridge":
             data, transforms = apply_board_kernel_fake_output_bridge(data)
+        elif (
+            rel_path == "build/rust/rustc_toolchain.gni"
+            and action.get("source_role") == "rust_riscv64_toolchain_gni"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_rust_riscv64_toolchain_host_split(data)
         return data, str(source_path), "available", transforms
     if action.get("content_source") == "workspace_transform":
         source_path = workspace / rel_path
@@ -5727,6 +5915,12 @@ def materialize_action(
             and target.get("architecture") == "riscv64"
         ):
             data, transforms = apply_riscv64_buildconfig_arch_compat(data)
+        elif (
+            rel_path == "build/rust/rustc_toolchain.gni"
+            and action.get("source_role") == "rust_riscv64_toolchain_gni"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_rust_riscv64_toolchain_host_split(data)
         elif (
             rel_path == "build/toolchain/ohos/BUILD.gn"
             and action.get("source_role") == "ohos_toolchain_riscv64_rust_abi_target"
@@ -6170,6 +6364,15 @@ def check_build_log_old_errors_absent(build_result: dict[str, Any] | None) -> di
         "old_ark_ets_riscv64_proxy_reflect_api_gap": [
             "ets_proxy_entrypoints.cpp",
             "fatal error: 'plugins/ets/runtime/types/ets_reflect_method.h' file not found",
+        ],
+        "old_riscv64_rust_build_script_wrong_arch": [
+            "run_build_script.py",
+            "cxx_lib_unknown_build_script",
+            "/lib/ld-musl-riscv64.so.1: No such file or directory",
+        ],
+        "old_riscv64_mmi_rust_key_missing_symbol": [
+            "multimodalinput/input/libmmi-util.z.so",
+            "undefined symbol: ReadConfigInfo",
         ],
     }
     if not build_result:
@@ -8285,6 +8488,71 @@ def parse_build_diagnostics(
 
     if (
         clean_str(target.get("architecture")) == "riscv64"
+        and "run_build_script.py" in plain_text
+        and "cxx_lib_unknown_build_script" in plain_text
+        and "/lib/ld-musl-riscv64.so.1: No such file or directory" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "riscv64_rust_fake_driver_host_build_script_wrong_arch",
+                "external_prebuilt_dependency",
+                "A Rust cargo build script that must run on the host was generated as a riscv64 OHOS ELF by the compile-only rustc-riscv fake driver.",
+                (
+                    "Keep riscv64 Rust target support selected, but scope rustc-riscv to "
+                    "current_cpu == \"riscv64\" and teach the fake Rust driver to emit host "
+                    "x86_64 placeholders for host build-script targets."
+                ),
+                [
+                    str(log_path),
+                    str(target_root / "build/rust/rustc_toolchain.gni"),
+                    str(workspace / "prebuilts/rustc-riscv/linux-x86_64/current/bin/rustc"),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "run_build_script.py",
+                        "cxx_lib_unknown_build_script",
+                        "/lib/ld-musl-riscv64.so.1",
+                    ],
+                    18,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "multimodalinput/input/libmmi-util.z.so" in plain_text
+        and "undefined symbol: ReadConfigInfo" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "riscv64_mmi_rust_key_fake_driver_missing_no_mangle_symbol",
+                "source_build_compatibility",
+                "libmmi-util depends on the Rust FFI symbol ReadConfigInfo, but the compile-only fake Rust output did not export #[no_mangle] symbols from rust_key/src/lib.rs.",
+                (
+                    "Expand rustc response files inside the fake Rust driver, collect no_mangle "
+                    "extern C symbols such as ReadConfigInfo, and export them from generated "
+                    "placeholder shared libraries."
+                ),
+                [
+                    str(log_path),
+                    str(workspace / "foundation/multimodalinput/input/util/rust_key/src/lib.rs"),
+                    str(workspace / "prebuilts/rustc-riscv/linux-x86_64/current/bin/rustc"),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "multimodalinput/input/libmmi-util.z.so",
+                        "undefined symbol: ReadConfigInfo",
+                        "libmmi_rust_key_config",
+                    ],
+                    18,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
         and "is incompatible with elf64lriscv" in plain_text
         and "librust_" in plain_text
         and ".a(" in plain_text
@@ -8761,6 +9029,8 @@ def prepare_generated_artifacts_for_build(workspace: Path, product: str, target:
                     )
 
     cleanups.extend(cleanup_stale_fake_rust_archives(workspace, product))
+    cleanups.extend(cleanup_stale_fake_rust_build_scripts(workspace, product))
+    cleanups.extend(cleanup_stale_mmi_fake_rust_key_library(workspace, product))
     return cleanups
 
 
