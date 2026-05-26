@@ -190,6 +190,10 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   the board root `BUILD.gn`, import text/source closures and represent firmware,
   proprietary GPU/WiFi blobs, and shared-library payloads as tracked
   compile-only fake interfaces.
+- When imported SoC vendor display/HDF targets fail compile-standard
+  part/subsystem checks, merge only the matching target-evidenced
+  `build/compile_standard_whitelist.json` entries for that SoC display prefix;
+  do not change product component selection to hide the targets.
 - For vendor product modules directly listed by `vendor/<vendor>/<product>/ohos.build`,
   import text/config closures such as image config, preinstall config, HDF `.hcs`,
   XML, JSON, `.para`, GN/GNI, and C/header files; represent non-text payloads as

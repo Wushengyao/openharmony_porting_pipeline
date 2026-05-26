@@ -919,6 +919,24 @@ def target_has_riscv64_ark_target_define_evidence(target_root: Path) -> bool:
     return False
 
 
+def target_has_compile_standard_whitelist_prefix_evidence(target_root: Path, prefix: str) -> bool:
+    whitelist = target_root / "build/compile_standard_whitelist.json"
+    if not whitelist.is_file():
+        return False
+    try:
+        data = json.loads(whitelist.read_text(encoding=TEXT_ENCODING, errors="ignore"))
+    except Exception:
+        return False
+    if not isinstance(data, dict):
+        return False
+    for values in data.values():
+        if not isinstance(values, list):
+            continue
+        if any(isinstance(value, str) and value.startswith(prefix) for value in values):
+            return True
+    return False
+
+
 def target_has_webview_app_fwk_update_bundle_migration_evidence(target_root: Path) -> bool:
     bundle = target_root / "base/web/webview/bundle.json"
     if not bundle.is_file():
@@ -1452,6 +1470,21 @@ def planned_actions(
                 (
                     "Extend the target-evidenced ArkCompiler cache-line-size condition to riscv64 "
                     "without importing the broader 6.1 libarkbase rename set."
+                ),
+            )
+        )
+
+    soc_display_whitelist_prefix = f"//device/soc/{soc_vendor}/{soc}/hardware/display"
+    if target_has_compile_standard_whitelist_prefix_evidence(target_root, soc_display_whitelist_prefix):
+        actions.append(
+            workspace_transform_action(
+                "build/compile_standard_whitelist.json",
+                "soc_display_compile_standard_whitelist_entries",
+                "L1_build_compatibility",
+                (
+                    "Merge target-evidenced compile-standard whitelist entries for SoC display "
+                    "vendor/HDF targets so part/subsystem check exceptions match the imported "
+                    "board display build graph."
                 ),
             )
         )
@@ -2005,6 +2038,57 @@ def apply_riscv64_ark_cache_line_compat(data: bytes) -> tuple[bytes, list[str]]:
     return data, ["ArkCompiler riscv64 cache-line-size insertion point not found"]
 
 
+def apply_target_compile_standard_whitelist_prefix_entries(
+    data: bytes,
+    target_root: Path,
+    prefixes: list[str],
+) -> tuple[bytes, list[str]]:
+    try:
+        current = json.loads(data.decode(TEXT_ENCODING))
+    except Exception:
+        return data, ["compile-standard whitelist transform skipped: current JSON is invalid"]
+    target_path = target_root / "build/compile_standard_whitelist.json"
+    if not target_path.is_file():
+        return data, ["compile-standard whitelist transform skipped: target whitelist not found"]
+    try:
+        target = json.loads(target_path.read_text(encoding=TEXT_ENCODING, errors="ignore"))
+    except Exception:
+        return data, ["compile-standard whitelist transform skipped: target JSON is invalid"]
+    if not isinstance(current, dict) or not isinstance(target, dict):
+        return data, ["compile-standard whitelist transform skipped: JSON root is not an object"]
+
+    notes: list[str] = []
+    for key, target_values in target.items():
+        if not isinstance(target_values, list):
+            continue
+        selected = [
+            value
+            for value in target_values
+            if isinstance(value, str) and any(value.startswith(prefix) for prefix in prefixes)
+        ]
+        if not selected:
+            continue
+        current_values = current.setdefault(key, [])
+        if not isinstance(current_values, list):
+            notes.append(f"skipped whitelist key {key}: current value is not a list")
+            continue
+        existing = {value for value in current_values if isinstance(value, str)}
+        added = 0
+        for value in selected:
+            if value not in existing:
+                current_values.append(value)
+                existing.add(value)
+                added += 1
+        if added:
+            notes.append(f"added {added} target-evidenced SoC display whitelist entries to {key}")
+        else:
+            notes.append(f"SoC display whitelist entries already present in {key}")
+
+    if not notes:
+        notes.append("no target-evidenced SoC display whitelist entries matched requested prefixes")
+    return (json.dumps(current, ensure_ascii=False, indent=4) + "\n").encode(TEXT_ENCODING), notes
+
+
 def apply_webview_bundle_app_fwk_update_migration(data: bytes) -> tuple[bytes, list[str]]:
     text = data.decode(TEXT_ENCODING, errors="ignore")
     replacements = {
@@ -2222,6 +2306,12 @@ def materialize_action(
             and target.get("architecture") == "riscv64"
         ):
             data, transforms = apply_riscv64_ark_cache_line_compat(data)
+        elif (
+            rel_path == "build/compile_standard_whitelist.json"
+            and action.get("source_role") == "soc_display_compile_standard_whitelist_entries"
+        ):
+            prefix = f"//device/soc/{clean_str(target.get('soc_vendor'))}/{clean_str(target.get('soc'))}/hardware/display"
+            data, transforms = apply_target_compile_standard_whitelist_prefix_entries(data, target_root, [prefix])
         elif (
             rel_path == "base/web/webview/bundle.json"
             and action.get("source_role") == "webview_bundle_app_fwk_update_sa_migration"
@@ -2901,6 +2991,57 @@ def parse_build_diagnostics(
                 [str(log_path), str(target_root / normalized_script)],
                 matching_lines(all_text, [script_path, "权限不够", "Permission denied"], 10)
                 + [f"normalized_script={normalized_script}"],
+            )
+        )
+
+    part_subsystem_mismatches = sorted(
+        set(
+            re.findall(
+                r"subsystem name or part name is incorrect, target is ([^,]+), subsystem name is ([^,]+), part name is ([^\s,\n]+)",
+                plain_text,
+            )
+        )
+    )
+    soc_display_prefix = f"//device/soc/{clean_str(target.get('soc_vendor'))}/{clean_str(target.get('soc'))}/hardware/display"
+    soc_display_mismatches = [
+        (target_path, subsystem_name, part_name)
+        for target_path, subsystem_name, part_name in part_subsystem_mismatches
+        if target_path.startswith(soc_display_prefix)
+    ]
+    if soc_display_mismatches:
+        diagnostics.append(
+            build_diagnostic(
+                "soc_display_compile_standard_whitelist_missing",
+                "source_build_compatibility",
+                f"SoC display targets under {soc_display_prefix} need target-evidenced compile-standard whitelist entries for part/subsystem checks.",
+                "Merge only the matching target-source build/compile_standard_whitelist.json entries for this SoC display prefix, then rerun the compile flow.",
+                [str(log_path), str(target_root / "build/compile_standard_whitelist.json")],
+                matching_lines(
+                    all_text,
+                    [
+                        "subsystem name or part name is incorrect",
+                        soc_display_prefix,
+                        "compile_standard_whitelist.json",
+                    ],
+                    14,
+                )
+                + [
+                    f"target={target_path}, subsystem={subsystem_name}, part={part_name}"
+                    for target_path, subsystem_name, part_name in soc_display_mismatches[:8]
+                ],
+            )
+        )
+    for target_path, subsystem_name, part_name in part_subsystem_mismatches[:8]:
+        if target_path.startswith(soc_display_prefix):
+            continue
+        diagnostics.append(
+            build_diagnostic(
+                "compile_standard_part_subsystem_mismatch",
+                "source_build_compatibility",
+                f"Compile-standard check rejects {target_path} for subsystem {subsystem_name} and part {part_name}.",
+                "Compare the target path against target-source compile_standard_whitelist evidence or correct the component ownership metadata without dropping product features.",
+                [str(log_path), str(target_root / "build/compile_standard_whitelist.json")],
+                matching_lines(all_text, ["subsystem name or part name is incorrect", target_path], 10),
             )
         )
 

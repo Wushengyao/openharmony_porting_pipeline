@@ -296,6 +296,10 @@ For SoC modules under `device/soc/<soc_vendor>/<soc>` directly referenced by the
 board root `BUILD.gn`, the executor imports text/source closures and records
 firmware, proprietary GPU/WiFi blobs, and shared-library payloads as
 compile-only fake interfaces.
+When imported SoC vendor display/HDF targets trip compile-standard
+part/subsystem checks, the executor merges only the matching target-evidenced
+`build/compile_standard_whitelist.json` entries for that SoC display prefix,
+keeping product component selection visible.
 For vendor product modules directly listed by `vendor/<vendor>/<product>/ohos.build`,
 the executor imports text/config closures (image config, preinstall config,
 HDF `.hcs`, XML, JSON, `.para`, GN/GNI, C/header files) and records non-text
