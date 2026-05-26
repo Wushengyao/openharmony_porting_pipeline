@@ -66,6 +66,23 @@ TEE_RISCV64_BARRIER_SOURCE_RELS = [
     "base/tee/tee_client/services/teecd/src/fs_work_agent.c",
     "base/tee/tee_client/services/teecd/src/misc_work_agent.c",
 ]
+PROFILER_NATIVE_DAEMON_RISCV64_SOURCE_RELS = [
+    (
+        "developtools/profiler/device/plugins/native_daemon/include/register.h",
+        "profiler_native_daemon_riscv64_register_header",
+        "Import target-evidenced RISC-V register enum, buildArchType, arch-name, and register-count support.",
+    ),
+    (
+        "developtools/profiler/device/plugins/native_daemon/src/register.cpp",
+        "profiler_native_daemon_riscv64_register_cpp",
+        "Import target-evidenced RISC-V libunwind-to-perf register mapping paired with register.h.",
+    ),
+    (
+        "developtools/profiler/device/plugins/native_daemon/src/call_stack.cpp",
+        "profiler_native_daemon_riscv64_call_stack",
+        "Import target-evidenced DfxRegsRiscv64 unwind register selection for native daemon call stacks.",
+    ),
+]
 CXX_STDLIB_HEADER_NAMES = {
     "algorithm",
     "array",
@@ -1490,6 +1507,26 @@ def target_has_profiler_smartperf_split_evidence(target_root: Path) -> bool:
     )
 
 
+def target_has_profiler_native_daemon_riscv64_evidence(target_root: Path) -> bool:
+    header = target_root / "developtools/profiler/device/plugins/native_daemon/include/register.h"
+    register_cpp = target_root / "developtools/profiler/device/plugins/native_daemon/src/register.cpp"
+    call_stack_cpp = target_root / "developtools/profiler/device/plugins/native_daemon/src/call_stack.cpp"
+    if not header.is_file() or not register_cpp.is_file() or not call_stack_cpp.is_file():
+        return False
+    header_text = header.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    register_text = register_cpp.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    call_stack_text = call_stack_cpp.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "target_cpu_riscv64" in header_text
+        and "ArchType::ARCH_RISCV64" in header_text
+        and "PERF_REG_RISCV64_PC" in header_text
+        and "UNW_RISCV_PC" in register_text
+        and "PERF_REG_RISCV64_PC" in register_text
+        and "target_cpu_riscv64" in call_stack_text
+        and "DfxRegsRiscv64" in call_stack_text
+    )
+
+
 def file_has_riscv64_rofs_evidence(path: Path) -> bool:
     if not path.is_file():
         return False
@@ -2880,6 +2917,20 @@ def planned_actions(
                 ),
             )
         )
+
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_profiler_native_daemon_riscv64_evidence(target_root):
+        for rel_path, role, reason in PROFILER_NATIVE_DAEMON_RISCV64_SOURCE_RELS:
+            actions.append(
+                copy_action(
+                    rel_path,
+                    role,
+                    "L1_build_compatibility",
+                    (
+                        reason
+                        + " This keeps native_hook/native_daemon building for riscv64 without disabling profiler features."
+                    ),
+                )
+            )
 
     if clean_str(seed.get("architecture")) == "riscv64" and target_has_riscv64_webview_stub_evidence(target_root):
         prebuilt_rel = "base/web/webview/ohos_nweb/prebuilts/riscv64/ArkWebCore.hap"
@@ -5359,6 +5410,11 @@ def check_build_log_old_errors_absent(build_result: dict[str, Any] | None) -> di
             "cannot link object files with different floating-point ABI",
             "-flto=thin",
         ],
+        "old_profiler_native_daemon_riscv64_arch_missing": [
+            "developtools/profiler/device/plugins/native_daemon/include/register.h",
+            "NOT SUPPORT ARCH",
+            "buildArchType",
+        ],
     }
     if not build_result:
         return {
@@ -6512,6 +6568,44 @@ def parse_build_diagnostics(
                 ),
                 [str(log_path)],
                 matching_lines(all_text, ["SyntaxError: invalid syntax", "reference=", ".py"], 12),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "developtools/profiler/device/plugins/native_daemon/include/register.h" in plain_text
+        and "NOT SUPPORT ARCH" in plain_text
+        and ("buildArchType" in plain_text or "target_cpu_riscv64" in plain_text)
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "profiler_native_daemon_riscv64_arch_missing",
+                "source_build_compatibility",
+                (
+                    "Profiler native_daemon/native_hook is compiling for riscv64, but "
+                    "register.h lacks the target-evidenced RISC-V buildArchType/register branches."
+                ),
+                (
+                    "Import the target-evidenced native_daemon register.h/register.cpp/call_stack.cpp "
+                    "RISC-V support set; keep profiler product features selected rather than hiding "
+                    "native_hook from the build graph."
+                ),
+                [
+                    str(log_path),
+                    str(target_root / "developtools/profiler/device/plugins/native_daemon/include/register.h"),
+                    str(target_root / "developtools/profiler/device/plugins/native_daemon/src/register.cpp"),
+                    str(target_root / "developtools/profiler/device/plugins/native_daemon/src/call_stack.cpp"),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "developtools/profiler/device/plugins/native_daemon/include/register.h",
+                        "NOT SUPPORT ARCH",
+                        "buildArchType",
+                        "hook_client.cpp",
+                    ],
+                    16,
+                ),
             )
         )
 

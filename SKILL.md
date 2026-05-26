@@ -185,6 +185,11 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
 - For SmartPerf split blockers, when target evidence shows SmartPerf is owned by
   `developtools/smartperf_host`, remove legacy `developtools/profiler/host/smartperf`
   labels from the hiprofiler bundle registry to avoid duplicate fuzz outputs.
+- For profiler native-daemon/native-hook RISC-V blockers, when
+  `register.h` reports `NOT SUPPORT ARCH`, import the target-evidenced
+  `register.h`, `register.cpp`, and `call_stack.cpp` support set so RISC-V
+  register enums, `buildArchType`, libunwind mapping, and `DfxRegsRiscv64`
+  selection are present without disabling profiler features.
 - For board vendor modules, import text-only C/GN/header closures when directly
   referenced by board manifests, while representing firmware payloads such as
   Bluetooth `.hcd` files with tracked compile-only fake artifacts.

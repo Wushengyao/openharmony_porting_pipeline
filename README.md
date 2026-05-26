@@ -340,6 +340,11 @@ For SmartPerf split conflicts, the executor may remove legacy
 `developtools/profiler/host/smartperf` labels from `developtools/profiler`
 `bundle.json` when target evidence shows SmartPerf is owned by
 `developtools/smartperf_host`, avoiding duplicate `SpDaemonFuzzTest` outputs.
+When profiler `native_daemon` or `native_hook` trips the RISC-V
+`NOT SUPPORT ARCH` guard, the executor imports the target-evidenced
+`register.h`, `register.cpp`, and `call_stack.cpp` native-daemon support set
+for RISC-V registers, libunwind mapping, and `DfxRegsRiscv64` selection instead
+of hiding profiler features.
 For board-level vendor Bluetooth modules, the executor imports text C/GN/header
 closures referenced by `ohos.build`, but replaces firmware payloads such as
 `BCM4362A2.hcd` with marked compile-only fake artifacts.
