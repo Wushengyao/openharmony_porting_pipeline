@@ -293,7 +293,10 @@ across ordinary riscv64 executables/shared libraries through `lto.tmp` or
 `build/config/compiler/compiler.gni` as an optimization-only off-ramp for the
 OpenHarmony 6.0 clang/lld stack. If Ark JS runtime still injects `-flto=thin`
 directly from `arkcompiler/ets_runtime/BUILD.gn`, the executor guards only that
-explicit block for riscv64 instead of disabling Ark features. For Rust targets that fall back to host `cc`
+explicit block for riscv64 instead of disabling Ark features. If `LazyDeoptEntry`
+is then undefined, it imports the target RISC-V trampoline source and BUILD.gn
+branch. If Skia CanvasKit hits scalar/vector indexing in `SkRasterPipeline_opts.h`,
+it applies the target non-x86 scalar `std::sqrt` fallback. For Rust targets that fall back to host `cc`
 while carrying riscv64 linker flags, it imports the target-evidenced
 `rustc-riscv` toolchain mapping and uses an executable compile-only fake Rust
 driver when the real prebuilt compiler is unavailable, recording that fake as

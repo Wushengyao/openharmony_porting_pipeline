@@ -335,6 +335,12 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   `-flto=thin` after the global off-ramp because `arkcompiler/ets_runtime/BUILD.gn`
   injects ThinLTO directly, guard that explicit block for riscv64 instead of
   disabling Ark JS runtime or removing product features.
+- When `libark_jsruntime.so` then reports `undefined symbol: LazyDeoptEntry`,
+  import the target-evidenced RISC-V `ecmascript/trampoline/riscv64/raw_asm_stub.S`
+  and add only the matching `current_cpu == "riscv64"` `ecma_source` branch.
+- When Skia `SkRasterPipeline_opts.h` fails on riscv64 because `asin_()` indexes
+  a scalar fallback as a vector, apply the target-evidenced non-x86 scalar
+  `std::sqrt(1.0f - x)` fallback instead of disabling CanvasKit/Skia.
 - For riscv64 Rust failures where `rustc_wrapper.py` ends up invoking host
   `cc` with `--target=riscv64-linux-ohos` or `-mabi=lp64d`, import the
   target-evidenced `build/rust/rustc_toolchain.gni` and

@@ -87,6 +87,8 @@ ARKUI_NAPI_RISCV64_CJ_SUPPORT_REL = "foundation/arkui/napi/native_engine/impl/ar
 GRAPHIC_2D_VSYNC_LOG_REL = "foundation/graphic/graphic_2d/rosen/modules/composer/vsync/include/vsync_log.h"
 LUME_STATIC_PLUGIN_DECL_REL = "foundation/graphic/graphic_3d/lume/LumeEngine/src/static_plugin_decl.h"
 ARK_ETS_RUNTIME_BUILD_REL = "arkcompiler/ets_runtime/BUILD.gn"
+ARK_ETS_RUNTIME_RISCV64_TRAMPOLINE_REL = "arkcompiler/ets_runtime/ecmascript/trampoline/riscv64/raw_asm_stub.S"
+SKIA_RASTER_PIPELINE_OPTS_REL = "third_party/skia/m133/src/opts/SkRasterPipeline_opts.h"
 CXX_STDLIB_HEADER_NAMES = {
     "algorithm",
     "array",
@@ -1587,6 +1589,33 @@ def target_has_ark_ets_runtime_explicit_thin_lto_evidence(target_root: Path) -> 
     )
 
 
+def target_has_ark_jsruntime_riscv64_trampoline_evidence(target_root: Path) -> bool:
+    build_gn = target_root / ARK_ETS_RUNTIME_BUILD_REL
+    trampoline = target_root / ARK_ETS_RUNTIME_RISCV64_TRAMPOLINE_REL
+    if not build_gn.is_file() or not trampoline.is_file():
+        return False
+    build_text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    trampoline_text = trampoline.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        'current_cpu == "riscv64"' in build_text
+        and "ecmascript/trampoline/riscv64/raw_asm_stub.S" in build_text
+        and "LazyDeoptEntryName" in trampoline_text
+        and ".global LazyDeoptEntryName" in trampoline_text
+    )
+
+
+def target_has_skia_raster_pipeline_riscv64_sqrt_evidence(target_root: Path) -> bool:
+    opts = target_root / SKIA_RASTER_PIPELINE_OPTS_REL
+    if not opts.is_file():
+        return False
+    text = opts.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "SI F asin_(F x)" in text
+        and "#if defined(__x86_64__)" in text
+        and "sqrt_result = std::sqrt(1.0f - x);" in text
+    )
+
+
 def file_has_riscv64_rofs_evidence(path: Path) -> bool:
     if not path.is_file():
         return False
@@ -2896,6 +2925,40 @@ def planned_actions(
             )
         )
 
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_skia_raster_pipeline_riscv64_sqrt_evidence(target_root):
+        actions.append(
+            workspace_transform_action(
+                SKIA_RASTER_PIPELINE_OPTS_REL,
+                "skia_raster_pipeline_riscv64_scalar_sqrt_fallback",
+                "L1_build_compatibility",
+                (
+                    "Apply the target-evidenced non-x86 scalar sqrt path in SkRasterPipeline "
+                    "so riscv64 does not index scalar fallback values as vectors."
+                ),
+            )
+        )
+
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_ark_jsruntime_riscv64_trampoline_evidence(target_root):
+        actions.append(
+            copy_action(
+                ARK_ETS_RUNTIME_RISCV64_TRAMPOLINE_REL,
+                "ark_jsruntime_riscv64_lazy_deopt_trampoline_source",
+                "L1_build_compatibility",
+                "Import the target-evidenced RISC-V LazyDeoptEntry trampoline source.",
+            )
+        )
+        actions.append(
+            workspace_transform_action(
+                ARK_ETS_RUNTIME_BUILD_REL,
+                "ark_jsruntime_riscv64_trampoline_source",
+                "L1_build_compatibility",
+                (
+                    "Add the target-evidenced riscv64 raw_asm_stub.S source to Ark JS runtime "
+                    "so LazyDeoptEntry is defined during libark_jsruntime linking."
+                ),
+            )
+        )
+
     if clean_str(seed.get("architecture")) == "riscv64" and target_has_tee_riscv64_barrier_evidence(target_root):
         for rel_path in TEE_RISCV64_BARRIER_SOURCE_RELS:
             actions.append(
@@ -3880,6 +3943,54 @@ def apply_ark_jsruntime_riscv64_explicit_thin_lto_compat(data: bytes) -> tuple[b
         text = text.replace(old, new, 1)
         return text.encode(TEXT_ENCODING), ["guarded Ark JS runtime explicit ThinLTO block for riscv64"]
     return data, ["Ark JS runtime explicit ThinLTO insertion point not found"]
+
+
+def apply_ark_jsruntime_riscv64_trampoline_source(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if "ecmascript/trampoline/riscv64/raw_asm_stub.S" in text:
+        return data, ["Ark JS runtime RISC-V trampoline source already present"]
+    old = (
+        '  } else if (current_cpu == "arm") {\n'
+        '    ecma_source += [ "ecmascript/trampoline/arm32/raw_asm_stub.S" ]\n'
+        "  }\n"
+    )
+    new = (
+        '  } else if (current_cpu == "arm") {\n'
+        '    ecma_source += [ "ecmascript/trampoline/arm32/raw_asm_stub.S" ]\n'
+        '  } else if (current_cpu == "riscv64") {\n'
+        '    ecma_source += [ "ecmascript/trampoline/riscv64/raw_asm_stub.S" ]\n'
+        "  }\n"
+    )
+    if old in text:
+        text = text.replace(old, new, 1)
+        return text.encode(TEXT_ENCODING), ["added Ark JS runtime RISC-V trampoline source"]
+    return data, ["Ark JS runtime RISC-V trampoline insertion point not found"]
+
+
+def apply_skia_raster_pipeline_riscv64_scalar_sqrt_fallback(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if "#if defined(__x86_64__)" in text and "sqrt_result = std::sqrt(1.0f - x);" in text:
+        return data, ["SkRasterPipeline asin sqrt fallback is already guarded for non-x86"]
+    old = (
+        "    F sqrt_result = { 0.0f };\n"
+        "    for (int32_t i = 0; i < 4; ++i) { // 4 is a 4-element vector\n"
+        "        sqrt_result[i] = std::sqrt(1.0f - x[i]);\n"
+        "    }\n"
+    )
+    new = (
+        "    F sqrt_result = { 0.0f };\n"
+        "#if defined(__x86_64__)\n"
+        "    for (int i = 0; i < 4; ++i) {\n"
+        "        sqrt_result[i] = std::sqrt(1.0f - x[i]);\n"
+        "      }\n"
+        "#else\n"
+        "    sqrt_result = std::sqrt(1.0f - x);\n"
+        "#endif\n"
+    )
+    if old in text:
+        text = text.replace(old, new, 1)
+        return text.encode(TEXT_ENCODING), ["added SkRasterPipeline non-x86 scalar sqrt fallback"]
+    return data, ["SkRasterPipeline scalar sqrt fallback insertion point not found"]
 
 
 def apply_riscv64_buildconfig_arch_compat(data: bytes) -> tuple[bytes, list[str]]:
@@ -5346,6 +5457,18 @@ def materialize_action(
         ):
             data, transforms = apply_ark_jsruntime_riscv64_explicit_thin_lto_compat(data)
         elif (
+            rel_path == ARK_ETS_RUNTIME_BUILD_REL
+            and action.get("source_role") == "ark_jsruntime_riscv64_trampoline_source"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_ark_jsruntime_riscv64_trampoline_source(data)
+        elif (
+            rel_path == SKIA_RASTER_PIPELINE_OPTS_REL
+            and action.get("source_role") == "skia_raster_pipeline_riscv64_scalar_sqrt_fallback"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_skia_raster_pipeline_riscv64_scalar_sqrt_fallback(data)
+        elif (
             rel_path == "build/config/components/musl/BUILD.gn"
             and action.get("source_role") == "riscv64_musl_cflags_mabi_compat"
             and target.get("architecture") == "riscv64"
@@ -5673,6 +5796,15 @@ def check_build_log_old_errors_absent(build_result: dict[str, Any] | None) -> di
             "static_plugin_decl.h",
             "DEFINE_STATIC_PLUGIN",
             "expected ')'",
+        ],
+        "old_skia_raster_pipeline_riscv64_sqrt_vector_index": [
+            "third_party/skia/m133/src/opts/SkRasterPipeline_opts.h",
+            "subscripted value is not an array",
+            "SkOpts.o",
+        ],
+        "old_ark_jsruntime_riscv64_lazy_deopt_entry_missing": [
+            "arkcompiler/ets_runtime/libark_jsruntime.so",
+            "undefined symbol: LazyDeoptEntry",
         ],
     }
     if not build_result:
@@ -7481,6 +7613,68 @@ def parse_build_diagnostics(
                         "-flto=thin",
                         "cannot link object files with different floating-point ABI",
                         "lto.tmp",
+                    ],
+                    18,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "arkcompiler/ets_runtime/libark_jsruntime.so" in plain_text
+        and "undefined symbol: LazyDeoptEntry" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "ark_jsruntime_riscv64_lazy_deopt_trampoline_source",
+                "source_build_compatibility",
+                "Ark JS runtime links runtime_stubs.o against LazyDeoptEntry, but the RISC-V raw_asm_stub.S trampoline source is absent from the 6.0 source list.",
+                (
+                    "Import the target-evidenced ecmascript/trampoline/riscv64/raw_asm_stub.S "
+                    "and add the riscv64 ecma_source branch in arkcompiler/ets_runtime/BUILD.gn."
+                ),
+                [
+                    str(log_path),
+                    str(target_root / ARK_ETS_RUNTIME_BUILD_REL),
+                    str(target_root / ARK_ETS_RUNTIME_RISCV64_TRAMPOLINE_REL),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "arkcompiler/ets_runtime/libark_jsruntime.so",
+                        "undefined symbol: LazyDeoptEntry",
+                        "runtime_stubs.o",
+                    ],
+                    18,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "third_party/skia/m133/src/opts/SkRasterPipeline_opts.h" in plain_text
+        and "subscripted value is not an array, pointer, or vector" in plain_text
+        and "SkOpts.o" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "skia_raster_pipeline_riscv64_scalar_sqrt_fallback",
+                "source_build_compatibility",
+                "SkRasterPipeline asin_() indexes fallback scalar values as if they were vectors on riscv64, causing SkOpts.o to fail compilation.",
+                (
+                    "Apply the target-evidenced SkRasterPipeline_opts.h split: keep indexed sqrt "
+                    "for x86_64 and use scalar std::sqrt(1.0f - x) for non-x86 targets."
+                ),
+                [
+                    str(log_path),
+                    str(target_root / SKIA_RASTER_PIPELINE_OPTS_REL),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "SkRasterPipeline_opts.h",
+                        "subscripted value is not an array",
+                        "SkOpts.o",
                     ],
                     18,
                 ),
