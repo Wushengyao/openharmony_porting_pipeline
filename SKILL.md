@@ -264,6 +264,11 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   `prebuilts/rustc-riscv` compiler is missing, use an executable compile-only
   fake Rust driver that emits placeholder RISC-V ELF outputs and record it as
   dependency debt.
+- If `hb` reports `FileNotFoundError` for `out/<product>/error.log` from
+  `LogUtil.analyze_build_error` after Ninja returns nonzero, classify it as
+  build-log infrastructure masking rather than a source porting blocker. Rerun
+  after checking for concurrent/interrupted builds, and only patch hb log
+  collection if the masking repeats.
 - Preserve target-evidenced executable bits for build scripts invoked directly
   through `/usr/bin/env`, such as `param_fixer.py` and board
   `build_kernel.sh`; content-identical files may still need a mode-only update.

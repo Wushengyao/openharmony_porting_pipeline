@@ -4647,6 +4647,32 @@ def parse_build_diagnostics(
             )
         )
 
+    if (
+        "FileNotFoundError" in plain_text
+        and "out/" in plain_text
+        and "error.log" in plain_text
+        and "LogUtil.analyze_build_error" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "hb_missing_error_log_masks_ninja_failure",
+                "build_log_infrastructure",
+                "hb failed while analyzing a nonzero Ninja return because out/<product>/error.log was absent, masking the real compiler or Ninja exit reason.",
+                "Do not change product features for this message. Rerun the compile flow after checking for concurrent builds or interrupted Ninja processes; if it repeats, patch or wrap hb log collection so missing error.log falls back to the main build log instead of raising FileNotFoundError.",
+                [str(path) for path, text in texts if "FileNotFoundError" in strip_ansi(text)] or [str(log_path)],
+                matching_lines(
+                    all_text,
+                    [
+                        "FileNotFoundError",
+                        "LogUtil.analyze_build_error",
+                        "error.log",
+                        "NINJA",
+                    ],
+                    16,
+                ),
+            )
+        )
+
     component_failures = sorted(set(re.findall(r"find component ([^ ]+) failed", plain_text)))
     for component in component_failures[:8]:
         diagnostics.append(

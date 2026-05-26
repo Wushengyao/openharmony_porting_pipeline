@@ -280,8 +280,9 @@ dependency debt. Build attempts emit diagnostics
 in `base_patch_manifest.yaml` and `.md` for known blockers such as
 host/prebuilt C++ header gaps, missing `BUILD.gn` closures, unavailable product
 components, RISC-V build-compatibility gaps, directly invoked script executable
-bit mismatches, Ninja missing-source follow-ups, and prebuilt-backed feature
-blockers such as a WebView riscv64 ArkWebCore HAP.
+bit mismatches, Ninja missing-source follow-ups, hb `error.log` masking
+failures, and prebuilt-backed feature blockers such as a WebView riscv64
+ArkWebCore HAP.
 The apply step preserves target-evidenced executable bits for scripts invoked
 through `/usr/bin/env`; content-identical files such as `param_fixer.py` or a
 board `build_kernel.sh` may still receive a mode-only update.
