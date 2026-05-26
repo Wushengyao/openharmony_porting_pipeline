@@ -60,6 +60,11 @@ TEXT_CLOSURE_FILENAMES = {
     "Kconfig",
     "Makefile",
 }
+TEE_RISCV64_BARRIER_SOURCE_RELS = [
+    "base/tee/tee_client/services/teecd/src/secfile_load_agent.c",
+    "base/tee/tee_client/services/teecd/src/fs_work_agent.c",
+    "base/tee/tee_client/services/teecd/src/misc_work_agent.c",
+]
 
 
 def now() -> str:
@@ -1171,6 +1176,23 @@ def target_has_riscv64_compiler_mabi_evidence(target_root: Path) -> bool:
     )
 
 
+def target_has_tee_riscv64_barrier_evidence(target_root: Path) -> bool:
+    for rel_path in TEE_RISCV64_BARRIER_SOURCE_RELS:
+        target_source = target_root / rel_path
+        if not target_source.is_file():
+            return False
+        text = target_source.read_text(encoding=TEXT_ENCODING, errors="ignore")
+        if not (
+            "#elif defined(__riscv)" in text
+            and '__asm__ volatile("fence.i");' in text
+            and '__asm__ volatile("fence iorw, iorw");' in text
+            and '__asm__ volatile("isb");' in text
+            and '__asm__ volatile("dsb sy");' in text
+        ):
+            return False
+    return True
+
+
 def fake_rust_driver_script() -> str:
     return """#!/usr/bin/env python3
 # Compile-only fake rustc/clippy-driver for missing riscv64 Rust prebuilts.
@@ -1931,6 +1953,20 @@ def planned_actions(
                 )
             )
 
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_tee_riscv64_barrier_evidence(target_root):
+        for rel_path in TEE_RISCV64_BARRIER_SOURCE_RELS:
+            actions.append(
+                workspace_transform_action(
+                    rel_path,
+                    "tee_riscv64_barrier_asm_compat",
+                    "L1_build_compatibility",
+                    (
+                        "Replace ARM-only TEE barrier assembly with the target-evidenced "
+                        "aarch64/riscv fence branches so teecd agents compile for riscv64."
+                    ),
+                )
+            )
+
     arkui_objcopy_rel = "foundation/arkui/ace_engine/build/tools/run_objcopy.py"
     if clean_str(seed.get("architecture")) == "riscv64" and target_has_riscv64_objcopy_evidence(target_root, arkui_objcopy_rel):
         actions.append(
@@ -2194,6 +2230,7 @@ def planned_actions(
         "RISC-V graphic_3d embedded-asset rofs object mappings are applied only when target-source evidence contains matching rv64 object rules.",
         "RISC-V run_objcopy architecture mappings are applied only when target-source evidence contains riscv64 BFD/output mappings.",
         "Target-evidenced executable bits are preserved for directly invoked build scripts such as param_fixer.py and board build_kernel.sh.",
+        "TEE riscv64 barrier assembly guards are applied only when target-source evidence contains matching aarch64/riscv fence branches in teecd agents.",
         "SmartPerf split component-registry migration removes legacy hiprofiler-hosted SmartPerf labels only when target evidence shows SmartPerf is owned by smartperf_host.",
         "Vendor product module text/config closures are imported only from direct target ohos.build module labels; non-text payloads become compile-only fake interfaces.",
         "Board module text/config closures are imported only from local labels in the target board root BUILD.gn; kernel modules, bootloader images, and firmware become compile-only fake interfaces.",
@@ -2864,6 +2901,45 @@ def apply_riscv64_musl_shared_no_lto_compat(data: bytes) -> tuple[bytes, list[st
     return text.encode(TEXT_ENCODING), notes
 
 
+def apply_tee_riscv64_barrier_asm_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if (
+        "#elif defined(__riscv)" in text
+        and '__asm__ volatile("fence.i");' in text
+        and '__asm__ volatile("fence iorw, iorw");' in text
+    ):
+        return data, ["TEE RISC-V barrier asm branches already present"]
+
+    pattern = re.compile(
+        r'(?m)^(?P<indent>[ \t]*)__asm__ volatile\("isb"\);\n'
+        r'(?P=indent)__asm__ volatile\("dsb sy"\);'
+    )
+
+    def guarded_barrier(match: re.Match[str]) -> str:
+        indent = match.group("indent")
+        return "\n".join(
+            [
+                f"{indent}#if defined(__aarch64__)",
+                f'{indent}__asm__ volatile("isb");',
+                f'{indent}__asm__ volatile("dsb sy");',
+                f"{indent}#elif defined(__riscv)",
+                f'{indent}__asm__ volatile("fence.i");',
+                f'{indent}__asm__ volatile("fence iorw, iorw");',
+                f"{indent}#else",
+                f'{indent}#error "Unsupported architecture"',
+                f"{indent}#endif",
+            ]
+        )
+
+    text, count = pattern.subn(guarded_barrier, text)
+    if count:
+        return (
+            text.encode(TEXT_ENCODING),
+            [f"wrapped {count} TEE ARM barrier asm block(s) with target-evidenced riscv64 fences"],
+        )
+    return data, ["TEE ARM barrier asm insertion point not found"]
+
+
 def apply_riscv64_libcpp_compat(data: bytes) -> tuple[bytes, list[str]]:
     text = data.decode(TEXT_ENCODING, errors="ignore")
     notes: list[str] = []
@@ -3394,6 +3470,12 @@ def materialize_action(
             and target.get("architecture") == "riscv64"
         ):
             data, transforms = apply_riscv64_musl_hook_cflags_mabi_compat(data)
+        elif (
+            rel_path in TEE_RISCV64_BARRIER_SOURCE_RELS
+            and action.get("source_role") == "tee_riscv64_barrier_asm_compat"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_tee_riscv64_barrier_asm_compat(data)
         elif rel_path in {"build/rust/BUILD.gn", "build/rust/tests/BUILD.gn"} and target.get("architecture") == "riscv64":
             source_path = target_root / rel_path
             if source_path.is_file():
@@ -4532,6 +4614,35 @@ def parse_build_diagnostics(
                         "-mabi=lp64d",
                     ],
                     12,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "unrecognized instruction mnemonic" in plain_text
+        and (
+            'base/tee/tee_client/services/teecd/src/' in plain_text
+            or '__asm__ volatile("isb");' in plain_text
+            or "dsb sy" in plain_text
+        )
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "tee_riscv64_arm_barrier_asm",
+                "source_build_compatibility",
+                "TEE teecd agent sources still contain ARM-only isb/dsb barrier assembly that clang rejects for riscv64.",
+                "Apply the target-evidenced teecd barrier guard patch in secfile_load_agent.c, fs_work_agent.c, and misc_work_agent.c, using riscv64 fence.i/fence iorw branches instead of removing the TEE feature.",
+                [str(log_path)] + [str(target_root / rel_path) for rel_path in TEE_RISCV64_BARRIER_SOURCE_RELS],
+                matching_lines(
+                    all_text,
+                    [
+                        "unrecognized instruction mnemonic",
+                        '__asm__ volatile("isb");',
+                        "dsb sy",
+                        "base/tee/tee_client/services/teecd/src",
+                    ],
+                    14,
                 ),
             )
         )

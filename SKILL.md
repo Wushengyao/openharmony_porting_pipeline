@@ -237,6 +237,11 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   target-evidenced `APP_USE_RISCV64` GN define and the matching
   `APP_LIB_NAME "riscv64"` source branch; do not import unrelated host/macOS
   dynamic-loader changes unless they become build blockers.
+- When TEE `teecd` agent C sources fail on RISC-V with unrecognized ARM barrier
+  mnemonics such as `isb` or `dsb sy`, add only the target-evidenced
+  aarch64/riscv guard around the existing barrier blocks in
+  `secfile_load_agent.c`, `fs_work_agent.c`, and `misc_work_agent.c`, using
+  `fence.i` and `fence iorw, iorw` for the RISC-V branch.
 - When the riscv64 musl `libc.so` link reports mixed floating-point ABI objects,
   align both musl `build/config/components/musl/BUILD.gn` compile/link cflags
   and `third_party/musl/musl_template.gni` hook LTO cflags, plus

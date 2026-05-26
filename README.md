@@ -257,7 +257,11 @@ storage-size branch without importing broader 6.1 API enum changes. It also
 handles the follow-on FFRT coroutine `STACK_MAGIC` RISC-V branch,
 `task_client_adapter.h`'s `CTC_QUERY_INTERVAL` architecture guard, and
 `cj_environment`'s `APP_USE_RISCV64`/`APP_LIB_NAME "riscv64"` platform mapping
-when those errors appear. If musl `libc.so` linking reports mixed riscv64
+when those errors appear. When TEE `teecd` agents still contain ARM-only
+`isb`/`dsb sy` barriers, the executor applies the target-evidenced
+aarch64/riscv guard in `secfile_load_agent.c`, `fs_work_agent.c`, and
+`misc_work_agent.c`, using `fence.i` and `fence iorw, iorw` for RISC-V instead
+of hiding the TEE feature. If musl `libc.so` linking reports mixed riscv64
 floating-point ABI objects, the executor aligns musl compile/link cflags,
 musl hook LTO cflags, and global riscv64 compiler/linker flags with the target-evidenced
 `-march=rv64imafdc`/`-mabi=lp64d` ABI. When all explicit response-file,
