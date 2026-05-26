@@ -273,7 +273,10 @@ target-evidenced `NAPI_TARGET_RISCV64`/`_RISCV64_` defines and imports
 instead of disabling CJ or ArkUI features. If graphic_2d VSync fails
 `-Werror=format` because `uint64_t`/`int64_t` are LP64 `long` on riscv64, the
 executor applies the target-evidenced `vsync_log.h` condition that maps
-RISC-V 64-bit to the existing `%ld`/`%lu` logging macros. When TEE `teecd` agents still contain ARM-only
+RISC-V 64-bit to the existing `%ld`/`%lu` logging macros. If graphic_3d Lume
+static-plugin generation fails because `static_plugin_decl.h` has no RISC-V
+`SECTION(...)` branch, the executor applies only the target-evidenced `__riscv`
+section macro instead of importing broader graphic_3d changes. When TEE `teecd` agents still contain ARM-only
 `isb`/`dsb sy` barriers, the executor applies the target-evidenced
 aarch64/riscv guard in `secfile_load_agent.c`, `fs_work_agent.c`, and
 `misc_work_agent.c`, using `fence.i` and `fence iorw, iorw` for RISC-V instead

@@ -85,6 +85,7 @@ PROFILER_NATIVE_DAEMON_RISCV64_SOURCE_RELS = [
 ]
 ARKUI_NAPI_RISCV64_CJ_SUPPORT_REL = "foundation/arkui/napi/native_engine/impl/ark/cj_support.cpp"
 GRAPHIC_2D_VSYNC_LOG_REL = "foundation/graphic/graphic_2d/rosen/modules/composer/vsync/include/vsync_log.h"
+LUME_STATIC_PLUGIN_DECL_REL = "foundation/graphic/graphic_3d/lume/LumeEngine/src/static_plugin_decl.h"
 CXX_STDLIB_HEADER_NAMES = {
     "algorithm",
     "array",
@@ -1559,6 +1560,19 @@ def target_has_graphic_2d_vsync_riscv64_log_evidence(target_root: Path) -> bool:
     )
 
 
+def target_has_lume_static_plugin_riscv64_section_evidence(target_root: Path) -> bool:
+    static_plugin_decl = target_root / LUME_STATIC_PLUGIN_DECL_REL
+    if not static_plugin_decl.is_file():
+        return False
+    text = static_plugin_decl.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "#elif __riscv" in text
+        and '#define SECTION(NAME) #NAME",\\"wa\\"\\n .align 3\\n"' in text
+        and "SECTION(spl.1)" in text
+        and "DEFINE_STATIC_PLUGIN" in text
+    )
+
+
 def file_has_riscv64_rofs_evidence(path: Path) -> bool:
     if not path.is_file():
         return False
@@ -2855,6 +2869,19 @@ def planned_actions(
             )
         )
 
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_lume_static_plugin_riscv64_section_evidence(target_root):
+        actions.append(
+            workspace_transform_action(
+                LUME_STATIC_PLUGIN_DECL_REL,
+                "graphic_3d_lume_riscv64_static_plugin_section",
+                "L1_build_compatibility",
+                (
+                    "Add the target-evidenced RISC-V static-plugin section macro branch "
+                    "so Lume generated plugin lists assemble with the riscv64 toolchain."
+                ),
+            )
+        )
+
     if clean_str(seed.get("architecture")) == "riscv64" and target_has_tee_riscv64_barrier_evidence(target_root):
         for rel_path in TEE_RISCV64_BARRIER_SOURCE_RELS:
             actions.append(
@@ -3738,6 +3765,21 @@ def apply_graphic_2d_vsync_riscv64_log_format_macros(data: bytes) -> tuple[bytes
         text = text.replace(old, new, 1)
         return text.encode(TEXT_ENCODING), ["added graphic_2d vsync RISC-V LP64 log-format branch"]
     return data, ["graphic_2d vsync RISC-V log-format insertion point not found"]
+
+
+def apply_lume_static_plugin_riscv64_section_alignment(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if "#elif __riscv" in text:
+        return data, ["graphic_3d Lume static-plugin RISC-V section branch already present"]
+    old = '#if __aarch64__\n#define SECTION(NAME) #NAME",\\"wa\\"\\n .align 3\\n"\n#elif __x86_64__\n'
+    new = (
+        '#if __aarch64__\n#define SECTION(NAME) #NAME",\\"wa\\"\\n .align 3\\n"\n'
+        '#elif __riscv\n#define SECTION(NAME) #NAME",\\"wa\\"\\n .align 3\\n"\n#elif __x86_64__\n'
+    )
+    if old in text:
+        text = text.replace(old, new, 1)
+        return text.encode(TEXT_ENCODING), ["added graphic_3d Lume static-plugin RISC-V section branch"]
+    return data, ["graphic_3d Lume static-plugin RISC-V section insertion point not found"]
 
 
 def apply_riscv64_compiler_ldflags_mabi_compat(data: bytes) -> tuple[bytes, list[str]]:
@@ -5221,6 +5263,12 @@ def materialize_action(
         ):
             data, transforms = apply_graphic_2d_vsync_riscv64_log_format_macros(data)
         elif (
+            rel_path == LUME_STATIC_PLUGIN_DECL_REL
+            and action.get("source_role") == "graphic_3d_lume_riscv64_static_plugin_section"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_lume_static_plugin_riscv64_section_alignment(data)
+        elif (
             rel_path == "foundation/arkui/ace_engine/build/tools/run_objcopy.py"
             and action.get("source_role") == "arkui_run_objcopy_riscv64_compat"
             and target.get("architecture") == "riscv64"
@@ -5572,6 +5620,12 @@ def check_build_log_old_errors_absent(build_result: dict[str, Any] | None) -> di
             "foundation/graphic/graphic_2d/rosen/modules/composer/vsync",
             "format specifies type",
             "VPUB",
+        ],
+        "old_graphic_3d_lume_riscv64_static_plugin_section_missing": [
+            "foundation/graphic/graphic_3d/lume",
+            "static_plugin_decl.h",
+            "DEFINE_STATIC_PLUGIN",
+            "expected ')'",
         ],
     }
     if not build_result:
@@ -6296,6 +6350,42 @@ def parse_build_diagnostics(
                         "uint64_t",
                         "int64_t",
                         "VPUB",
+                    ],
+                    18,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "foundation/graphic/graphic_3d/lume" in plain_text
+        and "static_plugin_decl.h" in plain_text
+        and "DEFINE_STATIC_PLUGIN" in plain_text
+        and "expected ')'" in plain_text
+        and ("SECTION(spl.1)" in plain_text or ".pushsection" in plain_text)
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "graphic_3d_lume_riscv64_static_plugin_section",
+                "source_build_compatibility",
+                "graphic_3d Lume static-plugin section macros lack a RISC-V branch, so SECTION(...) is not defined for riscv64 inline assembly.",
+                (
+                    "Apply the target-evidenced static_plugin_decl.h __riscv SECTION branch "
+                    "using the same writable section and .align 3 rule as the reference target."
+                ),
+                [
+                    str(log_path),
+                    str(target_root / LUME_STATIC_PLUGIN_DECL_REL),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "foundation/graphic/graphic_3d/lume",
+                        "static_plugin_decl.h",
+                        "DEFINE_STATIC_PLUGIN",
+                        "SECTION(spl.1)",
+                        ".pushsection",
+                        "expected ')'",
                     ],
                     18,
                 ),
