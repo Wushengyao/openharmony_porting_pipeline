@@ -196,15 +196,34 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   proprietary GPU/WiFi blobs, and shared-library payloads as tracked
   compile-only fake interfaces; shared libraries use linkable ELF stubs instead
   of text placeholders.
-- When imported SoC vendor display/HDF targets fail compile-standard
-  part/subsystem checks, merge only the matching target-evidenced
-  `build/compile_standard_whitelist.json` entries for that SoC display prefix;
-  do not change product component selection to hide the targets.
+- When imported vendor/board/SoC targets fail compile-standard part/subsystem
+  checks, merge only matching target-evidenced
+  `build/compile_standard_whitelist.json` entries in the target product, board,
+  and SoC label spaces; do not change product component selection to hide the
+  targets.
 - For vendor product modules directly listed by `vendor/<vendor>/<product>/ohos.build`,
   import text/config closures such as image config, preinstall config, HDF `.hcs`,
   XML, JSON, `.para`, GN/GNI, and C/header files; represent non-text payloads as
   tracked compile-only fake interfaces, with `.so` payloads generated as
   target-architecture linkable stubs when needed.
+- In every base patch manifest, group fake interfaces into a dependency-debt
+  summary covering kernel/BSP, boot firmware, kernel modules, SoC proprietary
+  payloads, WebView/prebuilt apps, Rust/toolchain, fake component registries, and
+  other compile-only fakes. Treat fake component registries as review debt: if
+  real source/bundle evidence exists, replace the fake before completion claims.
+- Keep host/prebuilt tool failures separate from fake dependency debt. For
+  `compile_app.py` app packaging, resolve `ohpm` from the OpenHarmony source
+  root before changing into app module directories; do not fake missing OpenHarmony
+  command-line tools when the real workspace prebuilt is available.
+- After build attempts, run lightweight regression checks for ABI/LTO/Rust fixes:
+  use `llvm-readelf -h` on generated fake shared libraries, scan fake Rust
+  archives for non-RISC-V objects, and confirm the build logs no longer contain
+  prior blockers such as the rvbook bluetooth whitelist mismatch.
+- For ArkCompiler static_core RISC-V runtime failures, import only the
+  target-evidenced minimal runtime support needed for compile progress:
+  RISC-V `Arch`/`ArchTraits` mapping, runtime/fiber/signal context mappings,
+  RISC-V runtime assembly sources, and guarded object accessor overloads. Keep
+  this as source compatibility work, not product feature filtering.
 - For RISC-V graphics builds, add target-evidenced `graphic_3d` rofs `rv64`
   object mappings to compile files when GN reports empty generated asset paths;
   this is a build-compatibility source fix, not a product feature removal.

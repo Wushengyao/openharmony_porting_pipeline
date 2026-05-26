@@ -1209,6 +1209,25 @@ def target_has_riscv64_ark_target_define_evidence(target_root: Path) -> bool:
     return False
 
 
+def target_has_arkcompiler_runtime_riscv64_support_evidence(target_root: Path) -> bool:
+    arch_header = target_root / "arkcompiler/runtime_core/static_core/libarkbase/utils/arch.h"
+    object_accessor = target_root / "arkcompiler/runtime_core/static_core/runtime/include/object_accessor.h"
+    signal_handler = target_root / "arkcompiler/runtime_core/static_core/runtime/signal_handler.h"
+    fiber_context = target_root / "arkcompiler/runtime_core/static_core/runtime/fibers/fiber_context.h"
+    fiber_layout = target_root / "arkcompiler/runtime_core/static_core/runtime/fibers/arch/riscv64/context_layout.h"
+    runtime_build = target_root / "arkcompiler/runtime_core/static_core/runtime/BUILD.gn"
+    required = [arch_header, object_accessor, signal_handler, fiber_context, fiber_layout, runtime_build]
+    if not all(path.is_file() for path in required):
+        return False
+    return (
+        "Arch::RISCV64" in arch_header.read_text(encoding=TEXT_ENCODING, errors="ignore")
+        and "PANDA_TARGET_RISCV64" in signal_handler.read_text(encoding=TEXT_ENCODING, errors="ignore")
+        and "fibers/arch/riscv64/get.S" in runtime_build.read_text(encoding=TEXT_ENCODING, errors="ignore")
+        and "runtime/fibers/arch/riscv64/context_layout.h"
+        in fiber_context.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    )
+
+
 def target_has_compile_standard_whitelist_prefix_evidence(target_root: Path, prefix: str) -> bool:
     whitelist = target_root / "build/compile_standard_whitelist.json"
     if not whitelist.is_file():
@@ -1223,6 +1242,53 @@ def target_has_compile_standard_whitelist_prefix_evidence(target_root: Path, pre
         if not isinstance(values, list):
             continue
         if any(isinstance(value, str) and value.startswith(prefix) for value in values):
+            return True
+    return False
+
+
+def target_has_compile_app_root_ohpm_evidence(target_root: Path) -> bool:
+    compile_app = target_root / "build/scripts/compile_app.py"
+    if not compile_app.is_file():
+        return False
+    text = compile_app.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "root_dir = get_root_dir()" in text
+        and 'os.path.join(root_dir, "prebuilts/tool/command-line-tools/ohpm/bin/ohpm")' in text
+        and "ohpm_install_cmd = [ohpm_path, 'install']" in text
+    )
+
+
+def target_compile_standard_whitelist_prefixes(target: dict[str, Any]) -> list[str]:
+    vendor = clean_str(target.get("vendor"), "")
+    product = clean_str(target.get("product"), "")
+    board = clean_str(target.get("board"), "")
+    soc_vendor = clean_str(target.get("soc_vendor"), "")
+    soc = clean_str(target.get("soc"), "")
+    roots = [
+        f"//vendor/{vendor}/{product}" if vendor and product else "",
+        f"//device/board/{vendor}/{board}" if vendor and board else "",
+        f"//device/soc/{soc_vendor}/{soc}" if soc_vendor and soc else "",
+    ]
+    prefixes: list[str] = []
+    for root in roots:
+        if not root:
+            continue
+        prefixes.extend([f"{root}/", f"{root}:"])
+    return prefixes
+
+
+def target_compile_standard_whitelist_contains_label(target_root: Path, label: str) -> bool:
+    whitelist = target_root / "build/compile_standard_whitelist.json"
+    if not whitelist.is_file():
+        return False
+    try:
+        data = json.loads(whitelist.read_text(encoding=TEXT_ENCODING, errors="ignore"))
+    except Exception:
+        return False
+    if not isinstance(data, dict):
+        return False
+    for values in data.values():
+        if isinstance(values, list) and label in values:
             return True
     return False
 
@@ -2233,17 +2299,114 @@ def planned_actions(
             )
         )
 
-    soc_display_whitelist_prefix = f"//device/soc/{soc_vendor}/{soc}/hardware/display"
-    if target_has_compile_standard_whitelist_prefix_evidence(target_root, soc_display_whitelist_prefix):
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_arkcompiler_runtime_riscv64_support_evidence(target_root):
+        for rel_path, role, reason in [
+            (
+                "arkcompiler/runtime_core/static_core/libpandabase/utils/arch.h",
+                "arkcompiler_runtime_riscv64_arch_traits",
+                "Add target-evidenced RISC-V runtime Arch enum, ArchTraits, masks, string mapping, and RUNTIME_ARCH selection.",
+            ),
+            (
+                "arkcompiler/runtime_core/static_core/runtime/arch/helpers.h",
+                "arkcompiler_runtime_riscv64_ext_arch_traits",
+                "Add target-evidenced RISC-V runtime argument/register extension traits.",
+            ),
+            (
+                "arkcompiler/runtime_core/static_core/runtime/arch/memory_helpers.h",
+                "arkcompiler_runtime_riscv64_memory_helpers",
+                "Route runtime memory helpers to the target-evidenced RISC-V memory helper header.",
+            ),
+            (
+                "arkcompiler/runtime_core/static_core/runtime/arch/asm_support.h",
+                "arkcompiler_runtime_riscv64_asm_support",
+                "Add target-evidenced RISC-V THREAD_REG assembly support.",
+            ),
+            (
+                "arkcompiler/runtime_core/static_core/runtime/fibers/fiber_context.h",
+                "arkcompiler_runtime_riscv64_fiber_context",
+                "Include the target-evidenced RISC-V fiber context layout instead of hitting Unsupported target.",
+            ),
+            (
+                "arkcompiler/runtime_core/static_core/runtime/fibers/arch/asm_macros.h",
+                "arkcompiler_runtime_riscv64_fiber_asm_macros",
+                "Add target-evidenced RISC-V fiber assembly alignment macros.",
+            ),
+            (
+                "arkcompiler/runtime_core/static_core/runtime/signal_handler.h",
+                "arkcompiler_runtime_riscv64_signal_context",
+                "Add target-evidenced RISC-V ucontext PC/SP/FP/LR mappings.",
+            ),
+            (
+                "arkcompiler/runtime_core/static_core/runtime/include/object_accessor.h",
+                "arkcompiler_runtime_riscv64_object_accessor_overlap_guard",
+                "Avoid duplicate ObjectPointerType/coretypes::TaggedType overloads when RISC-V uses the same pointer representation.",
+            ),
+            (
+                "arkcompiler/runtime_core/static_core/runtime/BUILD.gn",
+                "arkcompiler_runtime_riscv64_build_sources",
+                "Add target-evidenced RISC-V runtime arch, bridge, and fiber assembly sources.",
+            ),
+        ]:
+            actions.append(workspace_transform_action(rel_path, role, "L1_build_compatibility", reason))
+
+        for rel_path in [
+            "arkcompiler/runtime_core/static_core/runtime/arch/riscv64/call_runtime.S",
+            "arkcompiler/runtime_core/static_core/runtime/arch/riscv64/helpers_riscv64.S",
+            "arkcompiler/runtime_core/static_core/runtime/arch/riscv64/interpreter_support.S",
+            "arkcompiler/runtime_core/static_core/runtime/arch/riscv64/memory.h",
+            "arkcompiler/runtime_core/static_core/runtime/arch/riscv64/osr_riscv64.S",
+            "arkcompiler/runtime_core/static_core/runtime/arch/riscv64/shorty.S",
+            "arkcompiler/runtime_core/static_core/runtime/arch/riscv64/tlab.S",
+            "arkcompiler/runtime_core/static_core/runtime/bridge/arch/riscv64/compiled_code_to_interpreter_bridge_dyn_riscv64.S",
+            "arkcompiler/runtime_core/static_core/runtime/bridge/arch/riscv64/compiled_code_to_interpreter_bridge_riscv64.S",
+            "arkcompiler/runtime_core/static_core/runtime/bridge/arch/riscv64/compiled_code_to_runtime_bridge_riscv64.S",
+            "arkcompiler/runtime_core/static_core/runtime/bridge/arch/riscv64/deoptimization_riscv64.S",
+            "arkcompiler/runtime_core/static_core/runtime/bridge/arch/riscv64/expand_compiled_code_args_dyn_riscv64.S",
+            "arkcompiler/runtime_core/static_core/runtime/bridge/arch/riscv64/interpreter_to_compiled_code_bridge_dyn_riscv64.S",
+            "arkcompiler/runtime_core/static_core/runtime/bridge/arch/riscv64/interpreter_to_compiled_code_bridge_riscv64.S",
+            "arkcompiler/runtime_core/static_core/runtime/fibers/arch/riscv64/context_layout.h",
+            "arkcompiler/runtime_core/static_core/runtime/fibers/arch/riscv64/get.S",
+            "arkcompiler/runtime_core/static_core/runtime/fibers/arch/riscv64/helpers.S",
+            "arkcompiler/runtime_core/static_core/runtime/fibers/arch/riscv64/switch.S",
+            "arkcompiler/runtime_core/static_core/runtime/fibers/arch/riscv64/update.S",
+        ]:
+            actions.append(
+                copy_action(
+                    rel_path,
+                    "arkcompiler_runtime_riscv64_arch_source",
+                    "L1_build_compatibility",
+                    "Import target-evidenced RISC-V ArkCompiler runtime assembly/header source needed by the RISC-V build graph.",
+                )
+            )
+
+    compile_standard_whitelist_prefixes = target_compile_standard_whitelist_prefixes(seed)
+    if any(
+        target_has_compile_standard_whitelist_prefix_evidence(target_root, prefix)
+        for prefix in compile_standard_whitelist_prefixes
+    ):
         actions.append(
             workspace_transform_action(
                 "build/compile_standard_whitelist.json",
-                "soc_display_compile_standard_whitelist_entries",
+                "target_compile_standard_whitelist_entries",
                 "L1_build_compatibility",
                 (
-                    "Merge target-evidenced compile-standard whitelist entries for SoC display "
-                    "vendor/HDF targets so part/subsystem check exceptions match the imported "
-                    "board display build graph."
+                    "Merge only target-evidenced compile-standard whitelist entries for this "
+                    "vendor/product, board, and SoC label space so imported targets keep their "
+                    "part/subsystem exceptions without hiding product features."
+                ),
+            )
+        )
+
+    if target_has_compile_app_root_ohpm_evidence(target_root):
+        actions.append(
+            workspace_transform_action(
+                "build/scripts/compile_app.py",
+                "compile_app_root_ohpm_path_resolution",
+                "L1_build_compatibility",
+                (
+                    "Resolve the ohpm command-line tool from the OpenHarmony source root before "
+                    "compile_app.py changes cwd into each app module, so app builds use the real "
+                    "workspace prebuilt instead of an app-relative ../../prebuilts path."
                 ),
             )
         )
@@ -3533,6 +3696,244 @@ def apply_riscv64_ark_cache_line_compat(data: bytes) -> tuple[bytes, list[str]]:
     return data, ["ArkCompiler riscv64 cache-line-size insertion point not found"]
 
 
+def apply_ark_runtime_riscv64_arch_traits(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    notes: list[str] = []
+    if "D(RISCV64)" not in text:
+        text = text.replace("    D(AARCH64)       \\\n    D(X86)", "    D(AARCH64)       \\\n    D(RISCV64)       \\\n    D(X86)", 1)
+        notes.append("added RISCV64 to ARCH_LIST")
+
+    if "struct ArchTraits<Arch::RISCV64>" not in text:
+        riscv_traits = r'''
+template <>
+struct ArchTraits<Arch::RISCV64> {
+    static constexpr size_t CODE_ALIGNMENT = 16;
+    static constexpr size_t INSTRUCTION_ALIGNMENT = 4;
+    static constexpr size_t INSTRUCTION_MAX_SIZE_BITS = 32;
+    static constexpr size_t POINTER_SIZE = 8;
+    static constexpr bool IS_64_BITS = true;
+    static constexpr size_t THREAD_REG = 28;
+    static constexpr size_t CALLER_REG_MASK = 0x0007ffff;
+    static constexpr size_t CALLER_FP_REG_MASK = 0xffff00ff;
+    static constexpr size_t CALLEE_REG_MASK = 0x1ff80000;
+    static constexpr size_t CALLEE_FP_REG_MASK = 0x0000ff00;
+    static constexpr size_t IRTOC_OPTIMIZED_CALLEE_REG_MASK = 0x1ff80000;
+    static constexpr size_t IRTOC_OPTIMIZED_CALLEE_FP_REG_MASK = ChooseIrtocOptimizedFpRegmask();
+    static constexpr bool SUPPORT_OSR = true;
+    static constexpr bool SUPPORT_DEOPTIMIZATION = true;
+    static constexpr const char *ISA_NAME = "riscv64";
+    static constexpr size_t DWARF_SP = 2;
+    static constexpr size_t DWARF_RIP = 0;
+    static constexpr size_t DWARF_FP = 8;
+    static constexpr size_t DWARF_LR = 1;
+    using WordType = uint64_t;
+};
+
+'''
+        marker = "template <>\nstruct ArchTraits<Arch::X86> {"
+        if marker in text:
+            text = text.replace(marker, riscv_traits + marker, 1)
+            notes.append("added target-evidenced RISCV64 ArchTraits")
+
+    if "ArchTraits<Arch::RISCV64>::property" not in text:
+        old = (
+            "        if (arch == Arch::AARCH64) {                                                                  \\\n"
+            "            /* CC-OFFNXT(G.PRE.02, G.PRE.05) namespace member, function gen */                        \\\n"
+            "            return ArchTraits<Arch::AARCH64>::property;                                               \\\n"
+            "        }                                                                                             \\\n"
+        )
+        new = old + (
+            "        if (arch == Arch::RISCV64) {                                                                  \\\n"
+            "            return ArchTraits<Arch::RISCV64>::property;                                               \\\n"
+            "        }                                                                                             \\\n"
+        )
+        if old in text:
+            text = text.replace(old, new, 1)
+            notes.append("added RISCV64 arch property getter branch")
+
+    if "case Arch::RISCV64:" not in text:
+        text = text.replace(
+            "        case Arch::AARCH64:\n"
+            "            return isFp ? ArchTraits<Arch::AARCH64>::CALLER_FP_REG_MASK : ArchTraits<Arch::AARCH64>::CALLER_REG_MASK;\n"
+            "        case Arch::X86:",
+            "        case Arch::AARCH64:\n"
+            "            return isFp ? ArchTraits<Arch::AARCH64>::CALLER_FP_REG_MASK : ArchTraits<Arch::AARCH64>::CALLER_REG_MASK;\n"
+            "        case Arch::RISCV64:\n"
+            "            return isFp ? ArchTraits<Arch::RISCV64>::CALLER_FP_REG_MASK : ArchTraits<Arch::RISCV64>::CALLER_REG_MASK;\n"
+            "        case Arch::X86:",
+            1,
+        )
+        text = text.replace(
+            "        case Arch::X86:\n"
+            "            return isFp ? ArchTraits<Arch::X86>::CALLEE_FP_REG_MASK : ArchTraits<Arch::X86>::CALLEE_REG_MASK;",
+            "        case Arch::RISCV64:\n"
+            "            return isFp ? ArchTraits<Arch::RISCV64>::CALLEE_FP_REG_MASK : ArchTraits<Arch::RISCV64>::CALLEE_REG_MASK;\n"
+            "        case Arch::X86:\n"
+            "            return isFp ? ArchTraits<Arch::X86>::CALLEE_FP_REG_MASK : ArchTraits<Arch::X86>::CALLEE_REG_MASK;",
+            1,
+        )
+        notes.append("added RISCV64 caller/callee register mask branches")
+
+    if "RUNTIME_ARCH = Arch::RISCV64" not in text:
+        text = text.replace(
+            "#elif defined(PANDA_TARGET_ARM64)\nstatic constexpr Arch RUNTIME_ARCH = Arch::AARCH64;\n#elif defined(PANDA_TARGET_X86)",
+            "#elif defined(PANDA_TARGET_ARM64)\nstatic constexpr Arch RUNTIME_ARCH = Arch::AARCH64;\n#elif defined(PANDA_TARGET_RISCV64)\nstatic constexpr Arch RUNTIME_ARCH = Arch::RISCV64;\n#elif defined(PANDA_TARGET_X86)",
+            1,
+        )
+        notes.append("added PANDA_TARGET_RISCV64 runtime arch selection")
+
+    if 'str == "riscv64"' not in text:
+        text = text.replace(
+            '    if (str == "arm64") {\n        return Arch::AARCH64;\n    }\n',
+            '    if (str == "arm64") {\n        return Arch::AARCH64;\n    }\n    if (str == "riscv64") {\n        return Arch::RISCV64;\n    }\n',
+            1,
+        )
+        notes.append("added riscv64 string-to-arch mapping")
+    if 'return "riscv64";' not in text:
+        text = text.replace(
+            '    if (arch == Arch::AARCH64) {\n        return "arm64";\n    }\n',
+            '    if (arch == Arch::AARCH64) {\n        return "arm64";\n    }\n    if (arch == Arch::RISCV64) {\n        return "riscv64";\n    }\n',
+            1,
+        )
+        notes.append("added RISCV64 arch-to-string mapping")
+
+    return text.encode(TEXT_ENCODING), notes or ["ArkCompiler runtime RISCV64 arch traits already present"]
+
+
+def apply_ark_runtime_riscv64_ext_arch_traits(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if "struct ExtArchTraits<Arch::RISCV64>" in text:
+        return data, ["ArkCompiler RISCV64 ExtArchTraits already present"]
+    marker = "template <class T>\ninline uint8_t *AlignPtr(uint8_t *ptr)"
+    block = r'''template <>
+struct ExtArchTraits<Arch::RISCV64> {
+    using SignedWordType = int64_t;
+    using UnsignedWordType = uint64_t;
+
+    static constexpr size_t NUM_GP_ARG_REGS = 6;
+    static constexpr size_t GP_ARG_NUM_BYTES = NUM_GP_ARG_REGS * ArchTraits<Arch::RISCV64>::POINTER_SIZE;
+    static constexpr size_t NUM_FP_ARG_REGS = 8;
+    static constexpr size_t FP_ARG_NUM_BYTES = NUM_FP_ARG_REGS * ArchTraits<Arch::RISCV64>::POINTER_SIZE;
+    static constexpr size_t GPR_SIZE = ArchTraits<Arch::RISCV64>::POINTER_SIZE;
+    static constexpr size_t FPR_SIZE = ArchTraits<Arch::RISCV64>::POINTER_SIZE;
+    static constexpr bool HARDFP = true;
+};
+
+'''
+    if marker in text:
+        return text.replace(marker, block + marker, 1).encode(TEXT_ENCODING), ["added target-evidenced RISCV64 ExtArchTraits"]
+    return data, ["ArkCompiler RISCV64 ExtArchTraits insertion point not found"]
+
+
+def apply_ark_runtime_riscv64_memory_helpers(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if 'defined(PANDA_TARGET_RISCV64)' in text and '"riscv64/memory.h"' in text:
+        return data, ["ArkCompiler RISCV64 memory helper include already present"]
+    old = '#elif defined(PANDA_TARGET_AMD64)\n#include "amd64/memory.h"\n#else'
+    new = '#elif defined(PANDA_TARGET_AMD64)\n#include "amd64/memory.h"\n#elif defined(PANDA_TARGET_RISCV64)\n#include "riscv64/memory.h"\n#else'
+    if old in text:
+        return text.replace(old, new, 1).encode(TEXT_ENCODING), ["added target-evidenced RISCV64 memory helper include"]
+    return data, ["ArkCompiler RISCV64 memory helper insertion point not found"]
+
+
+def apply_ark_runtime_riscv64_asm_support(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if "PANDA_TARGET_RISCV64" in text and "THREAD_REG tp" in text:
+        return data, ["ArkCompiler RISCV64 asm THREAD_REG already present"]
+    old = "#elif defined(PANDA_TARGET_AMD64)\n// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)\n#define THREAD_REG r15\n#else"
+    new = "#elif defined(PANDA_TARGET_AMD64)\n// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)\n#define THREAD_REG r15\n#elif defined(PANDA_TARGET_RISCV64)\n#define THREAD_REG tp\n#else"
+    if old in text:
+        return text.replace(old, new, 1).encode(TEXT_ENCODING), ["added target-evidenced RISCV64 asm THREAD_REG"]
+    return data, ["ArkCompiler RISCV64 asm support insertion point not found"]
+
+
+def apply_ark_runtime_riscv64_fiber_context(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if "runtime/fibers/arch/riscv64/context_layout.h" in text:
+        return data, ["ArkCompiler RISCV64 fiber context include already present"]
+    old = '#elif defined(PANDA_TARGET_AMD64)\n#include "runtime/fibers/arch/amd64/context_layout.h"\n#else'
+    new = '#elif defined(PANDA_TARGET_AMD64)\n#include "runtime/fibers/arch/amd64/context_layout.h"\n#elif defined(PANDA_TARGET_RISCV64)\n#include "runtime/fibers/arch/riscv64/context_layout.h"\n#else'
+    if old in text:
+        return text.replace(old, new, 1).encode(TEXT_ENCODING), ["added target-evidenced RISCV64 fiber context include"]
+    return data, ["ArkCompiler RISCV64 fiber context insertion point not found"]
+
+
+def apply_ark_runtime_riscv64_fiber_asm_macros(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if "PANDA_TARGET_RISCV64" in text and "FUNC_ALIGNMENT_BYTES 32" in text:
+        return data, ["ArkCompiler RISCV64 fiber asm macros already present"]
+    old = "#elif defined(PANDA_TARGET_AMD64)\n#define FUNC_ALIGNMENT_BYTES 16\n#else"
+    new = "#elif defined(PANDA_TARGET_AMD64)\n#define FUNC_ALIGNMENT_BYTES 16\n#elif defined(PANDA_TARGET_RISCV64)\n#define FUNC_ALIGNMENT_BYTES 32\n#else"
+    if old in text:
+        return text.replace(old, new, 1).encode(TEXT_ENCODING), ["added target-evidenced RISCV64 fiber function alignment"]
+    return data, ["ArkCompiler RISCV64 fiber asm macro insertion point not found"]
+
+
+def apply_ark_runtime_riscv64_signal_context(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    notes: list[str] = []
+    if "PANDA_TARGET_RISCV64" not in text or "CONTEXT_PC uc_->uc_mcontext.__gregs[0]" not in text:
+        old = "#elif defined(PANDA_TARGET_ARM64)\n#ifdef __APPLE__"
+        new = (
+            "#elif defined(PANDA_TARGET_RISCV64)\n"
+            "#define CONTEXT_PC uc_->uc_mcontext.__gregs[0]  // NOLINT(cppcoreguidelines-macro-usage)\n"
+            "#define CONTEXT_SP uc_->uc_mcontext.__gregs[2]  // NOLINT(cppcoreguidelines-macro-usage)\n"
+            "#define CONTEXT_FP uc_->uc_mcontext.__gregs[8]  // NOLINT(cppcoreguidelines-macro-usage)\n"
+            "#define CONTEXT_LR uc_->uc_mcontext.__gregs[1]  // NOLINT(cppcoreguidelines-macro-usage)\n"
+            "#elif defined(PANDA_TARGET_ARM64)\n#ifdef __APPLE__"
+        )
+        if old in text:
+            text = text.replace(old, new, 1)
+            notes.append("added target-evidenced RISCV64 ucontext register macros")
+    old_cond = "#if (defined(PANDA_TARGET_ARM64) || defined(PANDA_TARGET_ARM32))"
+    new_cond = "#if (defined(PANDA_TARGET_ARM64) || defined(PANDA_TARGET_ARM32) || defined(PANDA_TARGET_RISCV64))"
+    if old_cond in text:
+        text = text.replace(old_cond, new_cond, 1)
+        notes.append("included RISCV64 in SignalContext LR accessors")
+    return text.encode(TEXT_ENCODING), notes or ["ArkCompiler RISCV64 signal context already present"]
+
+
+def apply_ark_runtime_riscv64_object_accessor_guard(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    old = "#if !defined(ARK_HYBRID)\n    static bool IsHeapObject(coretypes::TaggedType v)"
+    new = "#if !defined(ARK_HYBRID) && !defined(PANDA_TARGET_RISCV64)\n    static bool IsHeapObject(coretypes::TaggedType v)"
+    if new in text:
+        return data, ["ArkCompiler RISCV64 object accessor overload guard already present"]
+    if old in text:
+        return text.replace(old, new, 1).encode(TEXT_ENCODING), [
+            "guarded duplicate TaggedType overloads for RISCV64 ObjectPointerType representation"
+        ]
+    return data, ["ArkCompiler RISCV64 object accessor guard insertion point not found"]
+
+
+def apply_ark_runtime_riscv64_build_sources(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if 'current_cpu == "riscv64"' in text and "arch/riscv64/interpreter_support.S" in text:
+        return data, ["ArkCompiler RISCV64 runtime BUILD.gn sources already present"]
+    old = '  } else if (current_cpu == "x86") {\n    sources += ['
+    riscv_branch = '''  } else if (current_cpu == "riscv64") {
+    sources += [
+      "arch/riscv64/interpreter_support.S",
+      "arch/riscv64/osr_riscv64.S",
+      "bridge/arch/riscv64/compiled_code_to_interpreter_bridge_riscv64.S",
+      "bridge/arch/riscv64/compiled_code_to_interpreter_bridge_dyn_riscv64.S",
+      "bridge/arch/riscv64/compiled_code_to_runtime_bridge_riscv64.S",
+      "bridge/arch/riscv64/deoptimization_riscv64.S",
+      "bridge/arch/riscv64/expand_compiled_code_args_dyn_riscv64.S",
+      "bridge/arch/riscv64/interpreter_to_compiled_code_bridge_riscv64.S",
+      "bridge/arch/riscv64/interpreter_to_compiled_code_bridge_dyn_riscv64.S",
+      "fibers/arch/riscv64/get.S",
+      "fibers/arch/riscv64/switch.S",
+      "fibers/arch/riscv64/update.S",
+    ]
+'''
+    if old in text:
+        return text.replace(old, riscv_branch + old, 1).encode(TEXT_ENCODING), [
+            "added target-evidenced RISCV64 runtime arch/bridge/fiber sources"
+        ]
+    return data, ["ArkCompiler RISCV64 runtime BUILD.gn source insertion point not found"]
+
+
 def apply_target_compile_standard_whitelist_prefix_entries(
     data: bytes,
     target_root: Path,
@@ -3575,13 +3976,68 @@ def apply_target_compile_standard_whitelist_prefix_entries(
                 existing.add(value)
                 added += 1
         if added:
-            notes.append(f"added {added} target-evidenced SoC display whitelist entries to {key}")
+            notes.append(f"added {added} target-evidenced compile-standard whitelist entries to {key}")
         else:
-            notes.append(f"SoC display whitelist entries already present in {key}")
+            notes.append(f"target-evidenced compile-standard whitelist entries already present in {key}")
 
     if not notes:
-        notes.append("no target-evidenced SoC display whitelist entries matched requested prefixes")
+        notes.append("no target-evidenced compile-standard whitelist entries matched requested prefixes")
     return (json.dumps(current, ensure_ascii=False, indent=4) + "\n").encode(TEXT_ENCODING), notes
+
+
+def apply_compile_app_root_ohpm_path_resolution(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    desired_path = 'ohpm_path = os.path.join(root_dir, "prebuilts/tool/command-line-tools/ohpm/bin/ohpm")'
+    notes: list[str] = []
+
+    if desired_path not in text:
+        if "import os\n" not in text:
+            text = text.replace("import sys\n", "import sys\nimport os\n", 1)
+            notes.append("added os import for source-root ohpm path resolution")
+
+        root_block = (
+            "    root_dir = get_root_dir()\n"
+            f"    {desired_path}\n"
+            "    if not os.path.exists(ohpm_path):\n"
+            '        ohpm_path = "ohpm"\n'
+        )
+        if "    root_dir = get_root_dir()\n" not in text and "    cur_dir = os.getcwd()\n" in text:
+            text = text.replace("    cur_dir = os.getcwd()\n", "    cur_dir = os.getcwd()\n" + root_block, 1)
+            notes.append("inserted source-root ohpm path before app cwd switch")
+        elif "    root_dir = get_root_dir()\n" in text:
+            text = re.sub(
+                r"    ohpm_path\s*=\s*['\"][^'\"]*prebuilts/tool/command-line-tools/ohpm/bin/ohpm['\"]\n",
+                f"    {desired_path}\n",
+                text,
+                count=1,
+            )
+            if desired_path in text:
+                notes.append("rewrote ohpm_path to source-root prebuilt path")
+
+    replacements = [
+        (
+            "        ohpm_install_cmd = ['../../prebuilts/tool/command-line-tools/ohpm/bin/ohpm', 'install']",
+            "        ohpm_install_cmd = [ohpm_path, 'install']",
+        ),
+        (
+            '        ohpm_install_cmd = ["../../prebuilts/tool/command-line-tools/ohpm/bin/ohpm", "install"]',
+            "        ohpm_install_cmd = [ohpm_path, 'install']",
+        ),
+        (
+            "        ohpm_install_cmd = [os.path.join('../../prebuilts/tool/command-line-tools/ohpm/bin/ohpm'), 'install']",
+            "        ohpm_install_cmd = [ohpm_path, 'install']",
+        ),
+    ]
+    for old, new in replacements:
+        if old in text:
+            text = text.replace(old, new, 1)
+            notes.append("rewrote ohpm install command to use resolved ohpm_path")
+
+    if desired_path in text and "ohpm_install_cmd = [ohpm_path, 'install']" in text:
+        if not notes:
+            notes.append("compile_app.py already resolves ohpm from the OpenHarmony source root")
+        return text.encode(TEXT_ENCODING), notes
+    return data, notes or ["compile_app.py ohpm path transform skipped: insertion point not found"]
 
 
 def apply_webview_bundle_app_fwk_update_migration(data: bytes) -> tuple[bytes, list[str]]:
@@ -3808,11 +4264,76 @@ def materialize_action(
         ):
             data, transforms = apply_riscv64_ark_cache_line_compat(data)
         elif (
-            rel_path == "build/compile_standard_whitelist.json"
-            and action.get("source_role") == "soc_display_compile_standard_whitelist_entries"
+            rel_path == "arkcompiler/runtime_core/static_core/libpandabase/utils/arch.h"
+            and action.get("source_role") == "arkcompiler_runtime_riscv64_arch_traits"
+            and target.get("architecture") == "riscv64"
         ):
-            prefix = f"//device/soc/{clean_str(target.get('soc_vendor'))}/{clean_str(target.get('soc'))}/hardware/display"
-            data, transforms = apply_target_compile_standard_whitelist_prefix_entries(data, target_root, [prefix])
+            data, transforms = apply_ark_runtime_riscv64_arch_traits(data)
+        elif (
+            rel_path == "arkcompiler/runtime_core/static_core/runtime/arch/helpers.h"
+            and action.get("source_role") == "arkcompiler_runtime_riscv64_ext_arch_traits"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_ark_runtime_riscv64_ext_arch_traits(data)
+        elif (
+            rel_path == "arkcompiler/runtime_core/static_core/runtime/arch/memory_helpers.h"
+            and action.get("source_role") == "arkcompiler_runtime_riscv64_memory_helpers"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_ark_runtime_riscv64_memory_helpers(data)
+        elif (
+            rel_path == "arkcompiler/runtime_core/static_core/runtime/arch/asm_support.h"
+            and action.get("source_role") == "arkcompiler_runtime_riscv64_asm_support"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_ark_runtime_riscv64_asm_support(data)
+        elif (
+            rel_path == "arkcompiler/runtime_core/static_core/runtime/fibers/fiber_context.h"
+            and action.get("source_role") == "arkcompiler_runtime_riscv64_fiber_context"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_ark_runtime_riscv64_fiber_context(data)
+        elif (
+            rel_path == "arkcompiler/runtime_core/static_core/runtime/fibers/arch/asm_macros.h"
+            and action.get("source_role") == "arkcompiler_runtime_riscv64_fiber_asm_macros"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_ark_runtime_riscv64_fiber_asm_macros(data)
+        elif (
+            rel_path == "arkcompiler/runtime_core/static_core/runtime/signal_handler.h"
+            and action.get("source_role") == "arkcompiler_runtime_riscv64_signal_context"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_ark_runtime_riscv64_signal_context(data)
+        elif (
+            rel_path == "arkcompiler/runtime_core/static_core/runtime/include/object_accessor.h"
+            and action.get("source_role") == "arkcompiler_runtime_riscv64_object_accessor_overlap_guard"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_ark_runtime_riscv64_object_accessor_guard(data)
+        elif (
+            rel_path == "arkcompiler/runtime_core/static_core/runtime/BUILD.gn"
+            and action.get("source_role") == "arkcompiler_runtime_riscv64_build_sources"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_ark_runtime_riscv64_build_sources(data)
+        elif (
+            rel_path == "build/compile_standard_whitelist.json"
+            and action.get("source_role")
+            in {"soc_display_compile_standard_whitelist_entries", "target_compile_standard_whitelist_entries"}
+        ):
+            if action.get("source_role") == "soc_display_compile_standard_whitelist_entries":
+                prefixes = [
+                    f"//device/soc/{clean_str(target.get('soc_vendor'))}/{clean_str(target.get('soc'))}/hardware/display"
+                ]
+            else:
+                prefixes = target_compile_standard_whitelist_prefixes(target)
+            data, transforms = apply_target_compile_standard_whitelist_prefix_entries(data, target_root, prefixes)
+        elif (
+            rel_path == "build/scripts/compile_app.py"
+            and action.get("source_role") == "compile_app_root_ohpm_path_resolution"
+        ):
+            data, transforms = apply_compile_app_root_ohpm_path_resolution(data)
         elif (
             rel_path == "base/web/webview/bundle.json"
             and action.get("source_role") == "webview_bundle_app_fwk_update_sa_migration"
@@ -3991,6 +4512,300 @@ def materialize_action(
     return data, str(source_path), "available", transforms
 
 
+def fake_dependency_category(item: dict[str, Any]) -> tuple[str, str, str]:
+    path = clean_str(item.get("path"), "")
+    role = clean_str(item.get("source_role"), "")
+    missing = clean_str(item.get("missing_dependency"), "").lower()
+    lower_path = path.lower()
+    if role == "fake_component_registry" or "/fake_components/" in f"/{lower_path}":
+        return (
+            "fake_component_registry",
+            "Compile-only bundle registry shims that preserve product selection while real source parts are missing.",
+            "Replace with real component source/bundle evidence, or remove only after an explicit product-scope decision.",
+        )
+    if "rustc-riscv" in lower_path or "rust" in lower_path or "rust" in missing:
+        return (
+            "rust_toolchain",
+            "RISC-V Rust toolchain or Rust prebuilt placeholders used only to keep compile flow moving.",
+            "Replace with provenance-checked prebuilts/rustc-riscv payloads before Rust, package, or runtime validation.",
+        )
+    if "base/web/webview" in lower_path or lower_path.endswith(".hap") or "prebuilt hap" in missing:
+        return (
+            "webview_prebuilt_apps",
+            "WebView or prebuilt application payload placeholders.",
+            "Replace with target-compatible HAP/prebuilt artifacts before image packaging or runtime validation.",
+        )
+    if lower_path.startswith("kernel/linux/"):
+        return (
+            "kernel_bsp_source",
+            "Board kernel/BSP source markers or fake build bridges.",
+            "Replace with provenance-checked board kernel source before boot, driver, or image validation.",
+        )
+    if "/kernel/ko/" in lower_path or lower_path.endswith(".ko"):
+        return (
+            "kernel_modules",
+            "Board kernel module placeholders.",
+            "Replace with modules produced by the real board kernel build before runtime validation.",
+        )
+    if "/kernel/boot/" in lower_path or lower_path.endswith((".bin", ".img", ".dtb", ".hcd")):
+        return (
+            "boot_firmware",
+            "Bootloader, firmware, Bluetooth firmware, or board image placeholders.",
+            "Replace with provenance-checked firmware/boot payloads before boot or hardware validation.",
+        )
+    if lower_path.startswith("device/soc/") and lower_path.endswith((".so", ".so.1", ".lib", ".bin")):
+        return (
+            "soc_proprietary_payloads",
+            "SoC firmware or proprietary shared-library placeholders, including linkable ELF stubs.",
+            "Replace with licensed target SoC vendor payloads before graphics, media, WiFi, or runtime validation.",
+        )
+    if lower_path.startswith("device/board/") or lower_path.startswith("vendor/"):
+        return (
+            "board_vendor_payloads",
+            "Board/vendor payload placeholders outside the main kernel and SoC buckets.",
+            "Replace with provenance-checked board/vendor payloads before device validation.",
+        )
+    return (
+        "other_compile_only_fakes",
+        "Other compile-only fake interfaces.",
+        "Review and replace with real source or dependency evidence before completion claims.",
+    )
+
+
+def summarize_dependency_debt(fake_interfaces: list[dict[str, Any]]) -> dict[str, Any]:
+    buckets: dict[str, dict[str, Any]] = {}
+    for item in fake_interfaces:
+        category, risk, follow_up = fake_dependency_category(item)
+        bucket = buckets.setdefault(
+            category,
+            {
+                "category": category,
+                "count": 0,
+                "risk": risk,
+                "follow_up": follow_up,
+                "sample_paths": [],
+            },
+        )
+        bucket["count"] += 1
+        if len(bucket["sample_paths"]) < 12:
+            bucket["sample_paths"].append(clean_str(item.get("path"), "unknown"))
+    categories = sorted(buckets.values(), key=lambda item: (-int(item["count"]), str(item["category"])))
+    fake_component_count = sum(1 for item in fake_interfaces if fake_dependency_category(item)[0] == "fake_component_registry")
+    return {
+        "total_fake_interface_count": len(fake_interfaces),
+        "category_count": len(categories),
+        "categories": categories,
+        "fake_component_registry_review": {
+            "count": fake_component_count,
+            "rule": (
+                "Do not treat fake component bundle.json files as final porting work. "
+                "If a real source component exists in the workspace or target-source evidence can import it, "
+                "replace the fake registry with the real component before completion claims."
+            ),
+        },
+    }
+
+
+def readelf_header_text(workspace: Path, path: Path) -> str:
+    readelf = llvm_readelf_path(workspace)
+    if not readelf.is_file() or not path.is_file():
+        return ""
+    try:
+        proc = subprocess.run(
+            [str(readelf), "-h", str(path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            errors="ignore",
+            timeout=20,
+            check=False,
+        )
+    except Exception:
+        return ""
+    if proc.returncode != 0:
+        return proc.stdout + proc.stderr
+    return proc.stdout
+
+
+def skipped_regression_check(check_id: str, expectation: str, reason: str) -> dict[str, Any]:
+    return {
+        "id": check_id,
+        "status": "skipped",
+        "checked_count": 0,
+        "sample_failures": [],
+        "expectation": expectation,
+        "reason": reason,
+    }
+
+
+def check_fake_shared_library_elf_headers(
+    workspace: Path,
+    target: dict[str, Any],
+    results: list[dict[str, Any]],
+) -> dict[str, Any]:
+    fake_shared_libs = [
+        workspace / clean_str(item.get("path"), "")
+        for item in results
+        if item.get("dependency_policy") == "compile_only_fake_shared_library"
+    ]
+    checked = 0
+    failures: list[dict[str, str]] = []
+    arch = clean_str(target.get("architecture"), "")
+    for path in fake_shared_libs[:80]:
+        if not path.is_file():
+            failures.append({"path": str(path), "reason": "missing fake shared library in workspace"})
+            continue
+        header = readelf_header_text(workspace, path)
+        checked += 1
+        if arch == "riscv64":
+            if "Machine:" not in header or "RISC-V" not in header:
+                failures.append({"path": str(path), "reason": "ELF machine is not RISC-V"})
+            elif "double-float ABI" not in header:
+                failures.append({"path": str(path), "reason": "RISC-V ELF flags do not advertise double-float ABI"})
+    status = "pass" if not failures else "fail"
+    if not fake_shared_libs:
+        status = "skipped"
+    return {
+        "id": "fake_shared_library_target_elf_header",
+        "status": status,
+        "checked_count": checked,
+        "total_count": len(fake_shared_libs),
+        "sample_failures": failures[:10],
+        "command": "llvm-readelf -h",
+        "expectation": "compile-only fake shared libraries match the target ELF machine/ABI",
+    }
+
+
+def check_rust_fake_archive_archives(workspace: Path, product: str, target: dict[str, Any]) -> dict[str, Any]:
+    if clean_str(target.get("architecture")) != "riscv64" or not workspace_fake_rust_driver_enabled(workspace):
+        return skipped_regression_check(
+            "riscv64_fake_rust_archive_arch",
+            "fake rustc-riscv archives contain only RISC-V ELF objects",
+            "riscv64 fake rust driver is not active",
+        )
+    obj_root = workspace / "out" / product / "obj"
+    if not obj_root.is_dir():
+        return skipped_regression_check(
+            "riscv64_fake_rust_archive_arch",
+            "fake rustc-riscv archives contain only RISC-V ELF objects",
+            "out/<product>/obj does not exist",
+        )
+    checked = 0
+    failures: list[dict[str, str]] = []
+    max_checked = 120
+    for pattern in ("*.a", "*.rlib"):
+        for archive in sorted(obj_root.rglob(pattern)):
+            if not rust_archive_path_suggests_fake_driver_output(archive):
+                continue
+            checked += 1
+            if archive_contains_non_riscv_elf_objects(workspace, archive):
+                failures.append({"path": str(archive), "reason": "archive contains non-RISC-V ELF object(s)"})
+                if len(failures) >= 10:
+                    break
+            if checked >= max_checked:
+                break
+        if len(failures) >= 10:
+            break
+        if checked >= max_checked:
+            break
+    return {
+        "id": "riscv64_fake_rust_archive_arch",
+        "status": "pass" if not failures else "fail",
+        "checked_count": checked,
+        "sample_failures": failures,
+        "expectation": "fake rustc-riscv archives contain only RISC-V ELF objects",
+    }
+
+
+def check_build_log_old_errors_absent(build_result: dict[str, Any] | None) -> dict[str, Any]:
+    patterns = {
+        "libbt_vendor_compile_standard_mismatch": [
+            "subsystem name or part name is incorrect",
+            "//vendor/iscas/rvbook/bluetooth:libbt_vendor",
+        ],
+        "old_rust_wrong_arch_archive": [
+            "is incompatible with elf64lriscv",
+            "librust_",
+            ".rcgu.",
+        ],
+        "old_objcopy_riscv64_keyerror": [
+            "run_objcopy.py",
+            "KeyError: 'riscv64'",
+        ],
+        "old_lto_float_abi_mismatch": [
+            "cannot link object files with different floating-point ABI",
+            "-flto=thin",
+        ],
+    }
+    if not build_result:
+        return {
+            "id": "build_log_old_error_absence",
+            "status": "skipped",
+            "checked_count": 0,
+            "sample_failures": [],
+            "expectation": "previously fixed build-log blockers remain absent",
+        }
+    log_paths = [Path(clean_str(build_result.get("log_path"), ""))]
+    probe = build_result.get("ninja_probe")
+    if isinstance(probe, dict):
+        log_paths.append(Path(clean_str(probe.get("log_path"), "")))
+    text = "\n".join(read_text_sample(path, 1_000_000) for path in log_paths)
+    plain = strip_ansi(text)
+    failures = []
+    for name, needles in patterns.items():
+        if name == "libbt_vendor_compile_standard_mismatch":
+            bad_lines = [
+                line.strip()
+                for line in plain.splitlines()
+                if all(needle in line for needle in needles) and "warning" not in line.lower()
+            ]
+            if bad_lines:
+                failures.append({"pattern": name, "needles": "; ".join(needles), "lines": bad_lines[:3]})
+            continue
+        if all(needle in plain for needle in needles):
+            failures.append({"pattern": name, "needles": "; ".join(needles)})
+    return {
+        "id": "build_log_old_error_absence",
+        "status": "pass" if not failures else "fail",
+        "checked_count": len(patterns),
+        "sample_failures": failures,
+        "expectation": "previously fixed build-log blockers remain absent",
+    }
+
+
+def run_regression_checks(
+    workspace: Path,
+    product: str,
+    target: dict[str, Any],
+    results: list[dict[str, Any]],
+    build_result: dict[str, Any] | None,
+    enabled: bool,
+) -> list[dict[str, Any]]:
+    if not enabled:
+        return [
+            skipped_regression_check(
+                "fake_shared_library_target_elf_header",
+                "compile-only fake shared libraries match the target ELF machine/ABI",
+                "regression checks are skipped for pure dry-run planning",
+            ),
+            skipped_regression_check(
+                "riscv64_fake_rust_archive_arch",
+                "fake rustc-riscv archives contain only RISC-V ELF objects",
+                "regression checks are skipped for pure dry-run planning",
+            ),
+            skipped_regression_check(
+                "build_log_old_error_absence",
+                "previously fixed build-log blockers remain absent",
+                "regression checks are skipped for pure dry-run planning",
+            ),
+        ]
+    return [
+        check_fake_shared_library_elf_headers(workspace, target, results),
+        check_rust_fake_archive_archives(workspace, product, target),
+        check_build_log_old_errors_absent(build_result),
+    ]
+
+
 def render_markdown(manifest: dict[str, Any]) -> str:
     summary = manifest["summary"]
     lines = [
@@ -4007,6 +4822,8 @@ def render_markdown(manifest: dict[str, Any]) -> str:
         f"- Blocking issues: {summary['blocking_issue_count']}",
         f"- Fake interfaces: {summary.get('fake_interface_count', 0)}",
         f"- Prebuild cleanups: {summary.get('prebuild_cleanup_count', 0)}",
+        f"- Regression checks: {summary.get('regression_check_count', 0)}",
+        f"- Regression check failures: {summary.get('regression_check_fail_count', 0)}",
         "",
         "## Actions",
         "",
@@ -4040,6 +4857,21 @@ def render_markdown(manifest: dict[str, Any]) -> str:
                 "",
             ]
         )
+        probe = build.get("ninja_probe")
+        if isinstance(probe, dict):
+            lines.extend(
+                [
+                    "### Direct Ninja Probe",
+                    "",
+                    f"- Command: `{probe.get('command', 'unknown')}`",
+                    f"- Return code: `{probe.get('return_code', 'unknown')}`",
+                    f"- Timed out: `{probe.get('timed_out', False)}`",
+                    f"- Skipped: `{probe.get('skipped', False)}`",
+                    f"- Log: `{probe.get('log_path', 'unknown')}`",
+                    f"- Reason: `{probe.get('reason', 'not recorded')}`",
+                    "",
+                ]
+            )
         cleanups = build.get("prebuild_cleanups") or []
         if cleanups:
             lines.extend(["### Prebuild Cleanups", ""])
@@ -4057,12 +4889,50 @@ def render_markdown(manifest: dict[str, Any]) -> str:
                     ]
                 )
             lines.append("")
+    regression_checks = manifest.get("regression_checks") or []
+    if regression_checks:
+        lines.extend(["## Regression Checks", ""])
+        for check in regression_checks:
+            lines.extend(
+                [
+                    f"- `{check.get('id', 'unknown')}`: `{check.get('status', 'unknown')}`",
+                    f"  - Checked: {check.get('checked_count', 0)}",
+                    f"  - Expectation: {check.get('expectation', 'not recorded')}",
+                ]
+            )
+            failures = check.get("sample_failures") or []
+            if failures:
+                lines.append(f"  - Sample failures: `{failures[:3]}`")
+        lines.append("")
     if manifest["blocking_issues"]:
         lines.extend(["## Blocking Issues", ""])
         for issue in manifest["blocking_issues"]:
             lines.append(f"- `{issue['path']}`: {issue['reason']}")
         lines.append("")
     fake_interfaces = manifest.get("fake_interfaces") or []
+    debt_summary = manifest.get("dependency_debt_summary") or {}
+    debt_categories = debt_summary.get("categories") or []
+    if debt_categories:
+        lines.extend(["## Dependency Debt Summary", ""])
+        lines.append(f"- Total fake interfaces: {debt_summary.get('total_fake_interface_count', len(fake_interfaces))}")
+        lines.append(f"- Categories: {debt_summary.get('category_count', len(debt_categories))}")
+        review = debt_summary.get("fake_component_registry_review") or {}
+        if review:
+            lines.append(f"- Fake component registries: {review.get('count', 0)}")
+            lines.append(f"- Fake component review rule: {review.get('rule', 'replace with real source evidence when available')}")
+        lines.append("")
+        for bucket in debt_categories:
+            lines.extend(
+                [
+                    f"### {bucket.get('category', 'unknown')}",
+                    "",
+                    f"- Count: {bucket.get('count', 0)}",
+                    f"- Risk: {bucket.get('risk', 'compile-only fake dependency')}",
+                    f"- Follow-up: {bucket.get('follow_up', 'replace with real dependency evidence')}",
+                    f"- Sample paths: `{'; '.join(bucket.get('sample_paths') or []) or 'none'}`",
+                    "",
+                ]
+            )
     if fake_interfaces:
         lines.extend(["## Fake Interfaces", ""])
         for item in fake_interfaces:
@@ -4248,6 +5118,19 @@ def build_diagnostic(
     }
 
 
+def compile_standard_mismatch_lines(text: str, target_path: str) -> list[str]:
+    return [
+        line.strip()
+        for line in strip_ansi(text).splitlines()
+        if "subsystem name or part name is incorrect" in line and target_path in line
+    ]
+
+
+def compile_standard_mismatch_is_warning_only(text: str, target_path: str) -> bool:
+    lines = compile_standard_mismatch_lines(text, target_path)
+    return bool(lines) and all("warning" in line.lower() for line in lines)
+
+
 def parse_build_diagnostics(
     build_result: dict[str, Any],
     workspace: Path,
@@ -4262,6 +5145,9 @@ def parse_build_diagnostics(
         workspace / "out" / product / "build.log",
         workspace / "out" / "sdk" / "error.log",
     ]
+    ninja_probe = build_result.get("ninja_probe")
+    if isinstance(ninja_probe, dict):
+        candidate_logs.append(Path(clean_str(ninja_probe.get("log_path"), "")))
     texts: list[tuple[Path, str]] = []
     started_at_epoch = float(build_result.get("started_at_epoch") or 0)
     for path in candidate_logs:
@@ -4288,6 +5174,66 @@ def parse_build_diagnostics(
                 "Repair or provision the host/prebuilt C++ standard library before treating this as a target-source porting failure.",
                 evidence_paths,
                 matching_lines(all_text, ["cstdlib", "ResourceLimits.cpp"], 6),
+            )
+        )
+
+    if (
+        "compile_app.py" in plain_text
+        and "prebuilts/tool/command-line-tools/ohpm/bin/ohpm" in plain_text
+        and (
+            "FileNotFoundError" in plain_text
+            or "No such file or directory" in plain_text
+        )
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "compile_app_ohpm_path_resolved_from_app_cwd",
+                "host_or_prebuilt_toolchain_path",
+                "Application packaging invokes ohpm through an app-relative prebuilts path, so the real workspace ohpm prebuilt is not found after compile_app.py changes cwd.",
+                "Patch build/scripts/compile_app.py to resolve ohpm from get_root_dir()/prebuilts/tool/command-line-tools/ohpm/bin/ohpm, and keep this as a real prebuilt tool dependency rather than a fake interface.",
+                [
+                    str(path)
+                    for path, text in texts
+                    if "prebuilts/tool/command-line-tools/ohpm/bin/ohpm" in strip_ansi(text)
+                ]
+                or [str(log_path)],
+                matching_lines(
+                    all_text,
+                    [
+                        "compile_app.py",
+                        "prebuilts/tool/command-line-tools/ohpm/bin/ohpm",
+                        "FileNotFoundError",
+                        "No such file or directory",
+                    ],
+                    14,
+                ),
+            )
+        )
+
+    duplicate_warning_count = plain_text.count("ninja: warning: multiple rules generate")
+    if (
+        duplicate_warning_count >= 20
+        and "BUILD Failed!" in plain_text
+        and "FAILED:" not in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "hb_build_failed_after_duplicate_output_warnings",
+                "build_log_infrastructure",
+                f"hb reported BUILD Failed after {duplicate_warning_count} duplicate-output warnings without preserving a concrete FAILED command in the sampled log.",
+                "Do not treat duplicate-output warnings alone as the primary porting blocker; inspect the direct Ninja probe log for the first real failing action, then fix that blocker while tracking duplicate-output graph debt separately.",
+                [
+                    str(path)
+                    for path, text in texts
+                    if "ninja: warning: multiple rules generate" in strip_ansi(text)
+                ]
+                or [str(log_path)],
+                matching_lines(
+                    all_text,
+                    ["ninja: warning: multiple rules generate", "BUILD Failed!", "direct_ninja"],
+                    14,
+                ),
+                severity="warning",
             )
         )
 
@@ -4463,6 +5409,51 @@ def parse_build_diagnostics(
             )
         )
 
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "arkcompiler/runtime_core/static_core" in plain_text
+        and (
+            "runtime/fibers/fiber_context.h" in plain_text
+            or "runtime/signal_handler.h" in plain_text
+            or "runtime/include/object_accessor.h" in plain_text
+            or "libpandabase/utils/arch.h" in plain_text
+        )
+        and (
+            '"Unsupported target"' in plain_text
+            or "CONTEXT_PC" in plain_text
+            or "class member cannot be redeclared" in plain_text
+            or "GetCalleeRegsMask" in plain_text
+        )
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "arkcompiler_runtime_core_riscv64_support_missing",
+                "source_build_compatibility",
+                "ArkCompiler static_core reaches RISC-V runtime compilation but runtime arch traits, signal context, object accessor overloads, or fiber context support are incomplete.",
+                "Apply the target-evidenced minimal RISC-V runtime support set: arch traits, runtime arch helpers, signal/fiber context mappings, object_accessor overlap guard, and RISC-V runtime assembly sources.",
+                [
+                    str(log_path),
+                    str(target_root / "arkcompiler/runtime_core/static_core/libarkbase/utils/arch.h"),
+                    str(target_root / "arkcompiler/runtime_core/static_core/runtime/fibers/arch/riscv64/context_layout.h"),
+                    str(target_root / "arkcompiler/runtime_core/static_core/runtime/signal_handler.h"),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "object_accessor.h",
+                        "class member cannot be redeclared",
+                        "cframe_layout.h",
+                        "GetCalleeRegsMask",
+                        "signal_handler.h",
+                        "CONTEXT_PC",
+                        "fiber_context.h",
+                        "Unsupported target",
+                    ],
+                    18,
+                ),
+            )
+        )
+
     for block in collect_duplicate_output_blocks(plain_text)[:8]:
         block_text = "\n".join(block)
         if (
@@ -4629,6 +5620,7 @@ def parse_build_diagnostics(
         (target_path, subsystem_name, part_name)
         for target_path, subsystem_name, part_name in part_subsystem_mismatches
         if target_path.startswith(soc_display_prefix)
+        and not compile_standard_mismatch_is_warning_only(plain_text, target_path)
     ]
     if soc_display_mismatches:
         diagnostics.append(
@@ -4656,14 +5648,30 @@ def parse_build_diagnostics(
     for target_path, subsystem_name, part_name in part_subsystem_mismatches[:8]:
         if target_path.startswith(soc_display_prefix):
             continue
+        if compile_standard_mismatch_is_warning_only(plain_text, target_path):
+            continue
+        target_whitelist_has_label = target_compile_standard_whitelist_contains_label(target_root, target_path)
+        diagnostic_id = (
+            "target_compile_standard_whitelist_missing"
+            if target_whitelist_has_label
+            else "compile_standard_part_subsystem_mismatch"
+        )
+        suggested_next_action = (
+            "Merge the exact target-source compile_standard_whitelist.json entry for this label, then rerun without dropping the product feature."
+            if target_whitelist_has_label
+            else "Compare the target path against target-source compile_standard_whitelist evidence or correct the component ownership metadata without dropping product features."
+        )
+        evidence_lines = matching_lines(all_text, ["subsystem name or part name is incorrect", target_path], 10)
+        if target_whitelist_has_label:
+            evidence_lines.append(f"target-source compile_standard_whitelist.json contains exact label {target_path}")
         diagnostics.append(
             build_diagnostic(
-                "compile_standard_part_subsystem_mismatch",
+                diagnostic_id,
                 "source_build_compatibility",
                 f"Compile-standard check rejects {target_path} for subsystem {subsystem_name} and part {part_name}.",
-                "Compare the target path against target-source compile_standard_whitelist evidence or correct the component ownership metadata without dropping product features.",
+                suggested_next_action,
                 [str(log_path), str(target_root / "build/compile_standard_whitelist.json")],
-                matching_lines(all_text, ["subsystem name or part name is incorrect", target_path], 10),
+                evidence_lines,
             )
         )
 
@@ -5449,6 +6457,64 @@ def run_build(
     }
 
 
+def run_direct_ninja_probe(
+    workspace: Path,
+    out_dir: Path,
+    product: str,
+    timeout_sec: int,
+    host_env_fix: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    ninja = workspace / "prebuilts/build-tools/linux-x86/bin/ninja"
+    build_dir = workspace / "out" / product
+    log_path = out_dir / f"direct_ninja_images_{product}.log"
+    command = [str(ninja), "-w", "dupbuild=warn", "-C", str(build_dir), "images"]
+    started_at_epoch = time.time()
+    if not ninja.is_file() or not (build_dir / "build.ninja").is_file():
+        return {
+            "command": " ".join(command),
+            "return_code": None,
+            "timed_out": False,
+            "timeout_sec": timeout_sec,
+            "log_path": str(log_path),
+            "started_at_epoch": started_at_epoch,
+            "skipped": True,
+            "reason": "ninja executable or out/<product>/build.ninja is missing",
+        }
+
+    timed_out = False
+    return_code = 0
+    env = os.environ.copy()
+    if host_env_fix and host_env_fix.get("applied") and isinstance(host_env_fix.get("env"), dict):
+        env.update({str(key): str(value) for key, value in host_env_fix["env"].items()})
+    with log_path.open("wb") as log:
+        log.write((f"# Command: {' '.join(command)}\n# CWD: {workspace}\n# Started: {now()}\n\n").encode(TEXT_ENCODING))
+        try:
+            proc = subprocess.run(
+                command,
+                cwd=workspace,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                timeout=timeout_sec,
+                env=env,
+                check=False,
+            )
+            return_code = proc.returncode
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            return_code = 124
+            log.write((f"\n# Direct ninja probe timed out after {timeout_sec} seconds at {now()}\n").encode(TEXT_ENCODING))
+    return {
+        "command": " ".join(command),
+        "return_code": return_code,
+        "timed_out": timed_out,
+        "timeout_sec": timeout_sec,
+        "log_path": str(log_path),
+        "started_at_epoch": started_at_epoch,
+        "skipped": False,
+        "reason": "direct ninja probe after build.sh failure",
+    }
+
+
 def prepare_generated_artifacts_for_build(workspace: Path, product: str, target: dict[str, Any]) -> list[dict[str, Any]]:
     cleanups: list[dict[str, Any]] = []
     if clean_str(target.get("architecture")) != "riscv64":
@@ -5727,17 +6793,37 @@ def main() -> int:
         host_env_fix = detect_host_cxx_env_fix(workspace)
         build_result = run_build(workspace, out_dir, target["product"], args.build_timeout_sec, host_env_fix)
         build_result["prebuild_cleanups"] = prebuild_cleanups
+        if build_result["return_code"] != 0 and not build_result.get("timed_out"):
+            probe_timeout = min(max(120, args.build_timeout_sec // 10), 600)
+            build_result["ninja_probe"] = run_direct_ninja_probe(
+                workspace,
+                out_dir,
+                target["product"],
+                probe_timeout,
+                host_env_fix,
+            )
         build_result["diagnostics"] = parse_build_diagnostics(build_result, workspace, target_root, target["product"], target)
 
     fake_interfaces = [
         {
             "path": item["path"],
+            "source_role": item.get("source_role", "unknown"),
+            "phase": item.get("phase", "unknown"),
             "source_sha256": item.get("source_sha256", "unknown"),
             **item.get("fake_interface", {}),
         }
         for item in results
         if isinstance(item.get("fake_interface"), dict)
     ]
+    dependency_debt_summary = summarize_dependency_debt(fake_interfaces)
+    regression_checks = run_regression_checks(
+        workspace,
+        target["product"],
+        target,
+        results,
+        build_result,
+        enabled=bool(args.apply or args.attempt_build),
+    )
     summary = {
         "planned_actions": len(results),
         "available_source_actions": sum(1 for item in results if item["source_status"] == "available"),
@@ -5747,6 +6833,8 @@ def main() -> int:
         "build_diagnostic_count": len(build_result.get("diagnostics", [])) if build_result else 0,
         "fake_interface_count": len(fake_interfaces),
         "prebuild_cleanup_count": len(prebuild_cleanups),
+        "regression_check_count": len(regression_checks),
+        "regression_check_fail_count": sum(1 for item in regression_checks if item.get("status") == "fail"),
     }
     manifest = {
         "schema_version": 1,
@@ -5772,6 +6860,8 @@ def main() -> int:
         "available_component_count": len(component_features) if component_features is not None else 0,
         "external_prebuilt_deferrals": list(component_deferrals.values()),
         "fake_interfaces": fake_interfaces,
+        "dependency_debt_summary": dependency_debt_summary,
+        "regression_checks": regression_checks,
         "prebuild_cleanups": prebuild_cleanups,
         "actions": results,
         "blocking_issues": blocking_issues,

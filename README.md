@@ -352,15 +352,33 @@ firmware, proprietary GPU/WiFi blobs, and shared-library payloads as
 compile-only fake interfaces. Vendor shared libraries are represented as
 target-architecture linkable ELF stubs, not copied binaries, and remain runtime
 dependency debt.
-When imported SoC vendor display/HDF targets trip compile-standard
-part/subsystem checks, the executor merges only the matching target-evidenced
-`build/compile_standard_whitelist.json` entries for that SoC display prefix,
-keeping product component selection visible.
+When imported vendor/board/SoC targets trip compile-standard part/subsystem
+checks, the executor merges only matching target-evidenced
+`build/compile_standard_whitelist.json` entries in the target product, board,
+and SoC label spaces, keeping product component selection visible.
 For vendor product modules directly listed by `vendor/<vendor>/<product>/ohos.build`,
 the executor imports text/config closures (image config, preinstall config,
 HDF `.hcs`, XML, JSON, `.para`, GN/GNI, C/header files) and records non-text
 payloads as compile-only fake interfaces; `.so` payloads use linkable ELF stubs
 when needed for compile progress.
+Each base patch manifest also groups compile-only fake interfaces into a
+dependency-debt summary (kernel/BSP, boot firmware, kernel modules, SoC
+proprietary payloads, WebView/prebuilt apps, Rust/toolchain, fake component
+registries, and other fakes) so build progress is not confused with runtime
+dependency completion.
+Host/prebuilt tool failures stay out of fake dependency debt: for app packaging,
+the executor resolves `compile_app.py`'s `ohpm` invocation from the
+OpenHarmony source root before changing into module directories, using the real
+workspace command-line-tool prebuilt when present. Build attempts also emit
+lightweight regression checks: `llvm-readelf -h` verifies generated fake shared
+library ELF machine/ABI, fake Rust archives are scanned for non-RISC-V objects,
+and old build-log blockers such as the rvbook bluetooth whitelist mismatch are
+checked for absence.
+When ArkCompiler static_core reaches RISC-V runtime compilation, the executor
+adds the target-evidenced minimal runtime support set: RISC-V `Arch` and
+`ArchTraits` mapping, runtime/fiber/signal context mappings, RISC-V runtime
+assembly sources, and guarded object accessor overloads. These are treated as
+source compatibility patches, not product feature filtering.
 Build attempts also probe the prebuilt host clang `<cstdlib>` include path. If
 clang selected an incomplete host GCC installation, the executor validates the
 candidate host paths but keeps `CPLUS_INCLUDE_PATH` probe-only for target product
