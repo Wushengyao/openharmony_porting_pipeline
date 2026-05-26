@@ -297,9 +297,12 @@ the executor imports text/config closures (image config, preinstall config,
 HDF `.hcs`, XML, JSON, `.para`, GN/GNI, C/header files) and records non-text
 payloads as compile-only fake interfaces.
 Build attempts also probe the prebuilt host clang `<cstdlib>` include path. If
-clang selected an incomplete host GCC installation, the executor validates and
-sets `CPLUS_INCLUDE_PATH`/`LIBRARY_PATH` only for the build subprocess, then
-records the environment fix in the build manifest.
+clang selected an incomplete host GCC installation, the executor validates the
+candidate host paths but keeps `CPLUS_INCLUDE_PATH` probe-only for target product
+builds, because a global host include path can contaminate riscv64 musl/libcxx
+compiles. A validated `LIBRARY_PATH` may still be exported for host
+`-static-libstdc++` link repair, and the manifest records the environment-scope
+decision.
 
 Minimum local checks for the new execution-assistant layer:
 

@@ -2475,6 +2475,45 @@ def parse_build_diagnostics(
         )
 
     if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and ("/usr/include/c++/" in plain_text or "/usr/include/x86_64-linux-gnu/c++/" in plain_text)
+        and ("riscv64-linux-ohos" in plain_text or "libcxx-ohos/include/c++/v1" in plain_text)
+        and (
+            "__locale_t" in plain_text
+            or "_ISupper" in plain_text
+            or "bits/std_abs.h" in plain_text
+            or "integral_constant' is ambiguous" in plain_text
+        )
+    ):
+        evidence_paths = [
+            str(path)
+            for path, text in texts
+            if "/usr/include/c++/" in strip_ansi(text) or "/usr/include/x86_64-linux-gnu/c++/" in strip_ansi(text)
+        ]
+        diagnostics.append(
+            build_diagnostic(
+                "host_cxx_include_path_pollutes_target_riscv64",
+                "host_or_prebuilt_toolchain_env_scope",
+                "Host GCC C++ headers are being mixed into riscv64 target C++ compilation alongside musl/libcxx-ohos headers.",
+                "Do not export host CPLUS_INCLUDE_PATH globally for the product build; keep any host C++ include repair scoped to host-tool probes or host-only actions, and export only validated link paths such as LIBRARY_PATH.",
+                evidence_paths or [str(log_path)],
+                matching_lines(
+                    all_text,
+                    [
+                        "/usr/include/c++/",
+                        "/usr/include/x86_64-linux-gnu/c++/",
+                        "riscv64-linux-ohos",
+                        "libcxx-ohos/include/c++/v1",
+                        "__locale_t",
+                        "_ISupper",
+                        "bits/std_abs.h",
+                    ],
+                    14,
+                ),
+            )
+        )
+
+    if (
         'assert(defined(_ndk_shlib_directory))' in plain_text
         and clean_str(target.get("architecture")) == "riscv64"
     ):
@@ -3004,17 +3043,20 @@ def detect_host_cxx_env_fix(workspace: Path) -> dict[str, Any]:
         if lib_paths:
             candidate_env["LIBRARY_PATH"] = ":".join(lib_paths)
         if test_host_clang_cstdlib(clangxx, candidate_env) and test_host_clang_static_libstdcxx(clangxx, candidate_env):
-            exported_env = {"CPLUS_INCLUDE_PATH": candidate_env["CPLUS_INCLUDE_PATH"]}
+            exported_env = {}
             if "LIBRARY_PATH" in candidate_env:
                 exported_env["LIBRARY_PATH"] = candidate_env["LIBRARY_PATH"]
             return {
-                "applied": True,
+                "applied": bool(exported_env),
                 "env": exported_env,
+                "probe_only_env": {"CPLUS_INCLUDE_PATH": candidate_env["CPLUS_INCLUDE_PATH"]},
+                "omitted_global_env": ["CPLUS_INCLUDE_PATH"],
                 "reason": (
                     "prebuilt host clang selected an incomplete GCC installation; "
-                    f"using host C++ include/library path {exported_env}"
+                    "validated host C++ include/library probes but omitted global CPLUS_INCLUDE_PATH "
+                    f"to avoid target C++ header pollution; exported env {exported_env}"
                 ),
-                "validation": "#include <cstdlib> and -static-libstdc++ link probes passed",
+                "validation": "#include <cstdlib> and -static-libstdc++ link probes passed with probe-only CPLUS_INCLUDE_PATH",
             }
     return {
         "applied": False,

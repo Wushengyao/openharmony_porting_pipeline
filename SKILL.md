@@ -207,9 +207,11 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   but the target reference declares, add a tracked feature-registry shim to the
   component `bundle.json` instead of removing the product feature.
 - If prebuilt host clang selects an incomplete host GCC installation and cannot
-  include `<cstdlib>` or cannot link `-static-libstdc++`, the executor may set
-  `CPLUS_INCLUDE_PATH`/`LIBRARY_PATH` for the build subprocess after validating
-  the detected host paths. Record this as an environment fix, not a source patch.
+  include `<cstdlib>` or cannot link `-static-libstdc++`, validate the detected
+  host paths, but do not export host `CPLUS_INCLUDE_PATH` globally into a target
+  product build. Treat host include paths as probe-only unless a later host-only
+  scope is available; `LIBRARY_PATH` may be exported after validation. Record
+  this as an environment-scope fix, not a source patch.
 - Use `target_dependency_inventory` to summarize binary, firmware, bootloader,
   prebuilt, and closed-driver candidates from selected evidence without
   promoting them to source fixes.
