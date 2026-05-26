@@ -83,6 +83,7 @@ PROFILER_NATIVE_DAEMON_RISCV64_SOURCE_RELS = [
         "Import target-evidenced DfxRegsRiscv64 unwind register selection for native daemon call stacks.",
     ),
 ]
+ARKUI_NAPI_RISCV64_CJ_SUPPORT_REL = "foundation/arkui/napi/native_engine/impl/ark/cj_support.cpp"
 CXX_STDLIB_HEADER_NAMES = {
     "algorithm",
     "array",
@@ -1527,6 +1528,24 @@ def target_has_profiler_native_daemon_riscv64_evidence(target_root: Path) -> boo
     )
 
 
+def target_has_arkui_napi_riscv64_evidence(target_root: Path) -> bool:
+    build_gn = target_root / "foundation/arkui/napi/BUILD.gn"
+    cj_support = target_root / ARKUI_NAPI_RISCV64_CJ_SUPPORT_REL
+    if not build_gn.is_file() or not cj_support.is_file():
+        return False
+    build_text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    cj_text = cj_support.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        'current_cpu == "riscv64"' in build_text
+        and "NAPI_TARGET_RISCV64" in build_text
+        and "_RISCV64_" in build_text
+        and "NAPI_TARGET_RISCV64" in cj_text
+        and 'LIBS_NAME "riscv_64"' in cj_text
+        and "ElfOff" in cj_text
+        and "ElfEhdr" in cj_text
+    )
+
+
 def file_has_riscv64_rofs_evidence(path: Path) -> bool:
     if not path.is_file():
         return False
@@ -2786,6 +2805,30 @@ def planned_actions(
                 )
             )
 
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_arkui_napi_riscv64_evidence(target_root):
+        actions.append(
+            workspace_transform_action(
+                "foundation/arkui/napi/BUILD.gn",
+                "arkui_napi_riscv64_target_defines",
+                "L1_build_compatibility",
+                (
+                    "Add target-evidenced NAPI_TARGET_RISCV64/NAPI_TARGET_64 and _RISCV64_ "
+                    "defines so ArkUI NAPI CJ support compiles for riscv64."
+                ),
+            )
+        )
+        actions.append(
+            copy_action(
+                ARKUI_NAPI_RISCV64_CJ_SUPPORT_REL,
+                "arkui_napi_riscv64_cj_support",
+                "L1_build_compatibility",
+                (
+                    "Import target-evidenced ArkUI NAPI CJ support that maps riscv64 to "
+                    "LIBS_NAME \"riscv_64\" and uses architecture-width ELF typedefs."
+                ),
+            )
+        )
+
     if clean_str(seed.get("architecture")) == "riscv64" and target_has_tee_riscv64_barrier_evidence(target_root):
         for rel_path in TEE_RISCV64_BARRIER_SOURCE_RELS:
             actions.append(
@@ -3602,6 +3645,60 @@ def apply_cj_environment_riscv64_app_lib_name(data: bytes) -> tuple[bytes, list[
         text = text.replace(old, new, 1)
         return text.encode(TEXT_ENCODING), ["added cj_environment riscv64 APP_LIB_NAME branch"]
     return data, ["cj_environment riscv64 APP_LIB_NAME insertion point not found"]
+
+
+def apply_arkui_napi_riscv64_target_defines(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    notes: list[str] = []
+
+    if "NAPI_TARGET_RISCV64" in text:
+        notes.append("ArkUI NAPI RISC-V NAPI_TARGET_RISCV64 define already present")
+    else:
+        old = (
+            '  } else if (current_cpu == "arm") {\n'
+            "    defines += [\n"
+            '      "NAPI_TARGET_ARM32",\n'
+            '      "NAPI_TARGET_32",\n'
+            "    ]\n"
+            "  }\n"
+        )
+        new = (
+            '  } else if (current_cpu == "arm") {\n'
+            "    defines += [\n"
+            '      "NAPI_TARGET_ARM32",\n'
+            '      "NAPI_TARGET_32",\n'
+            "    ]\n"
+            '  } else if (current_cpu == "riscv64") {\n'
+            "    defines += [\n"
+            '      "NAPI_TARGET_RISCV64",\n'
+            '      "NAPI_TARGET_64",\n'
+            "    ]\n"
+            "  }\n"
+        )
+        if old in text:
+            text = text.replace(old, new, 1)
+            notes.append("added ArkUI NAPI RISC-V target defines")
+        else:
+            notes.append("ArkUI NAPI RISC-V target define insertion point not found")
+
+    if '_RISCV64_' in text:
+        notes.append("ArkUI NAPI _RISCV64_ define already present")
+    else:
+        old = '  if (current_cpu == "arm64") {\n    defines += [ "_ARM64_" ]\n  }\n'
+        new = (
+            '  if (current_cpu == "arm64") {\n'
+            '    defines += [ "_ARM64_" ]\n'
+            '  } else if (current_cpu == "riscv64") {\n'
+            '    defines += [ "_RISCV64_" ]\n'
+            "  }\n"
+        )
+        if old in text:
+            text = text.replace(old, new, 1)
+            notes.append("added ArkUI NAPI _RISCV64_ define")
+        else:
+            notes.append("ArkUI NAPI _RISCV64_ define insertion point not found")
+
+    return text.encode(TEXT_ENCODING), notes or ["ArkUI NAPI RISC-V target defines unchanged"]
 
 
 def apply_riscv64_compiler_ldflags_mabi_compat(data: bytes) -> tuple[bytes, list[str]]:
@@ -5073,6 +5170,12 @@ def materialize_action(
         ):
             data, transforms = apply_cj_environment_riscv64_app_lib_name(data)
         elif (
+            rel_path == "foundation/arkui/napi/BUILD.gn"
+            and action.get("source_role") == "arkui_napi_riscv64_target_defines"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_arkui_napi_riscv64_target_defines(data)
+        elif (
             rel_path == "foundation/arkui/ace_engine/build/tools/run_objcopy.py"
             and action.get("source_role") == "arkui_run_objcopy_riscv64_compat"
             and target.get("architecture") == "riscv64"
@@ -5414,6 +5517,11 @@ def check_build_log_old_errors_absent(build_result: dict[str, Any] | None) -> di
             "developtools/profiler/device/plugins/native_daemon/include/register.h",
             "NOT SUPPORT ARCH",
             "buildArchType",
+        ],
+        "old_arkui_napi_cj_support_riscv64_platform_missing": [
+            "foundation/arkui/napi/native_engine/impl/ark/cj_support.cpp",
+            "current platform not supported",
+            "LIBS_NAME",
         ],
     }
     if not build_result:
@@ -6073,6 +6181,40 @@ def parse_build_diagnostics(
                     str(target_root / "arkcompiler/runtime_core/static_core/runtime/entrypoints/string_index_of.h"),
                 ],
                 matching_lines(all_text, ["string_index_of.h", "Unknown target architecture", "IndexOf implementation"], 12),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "foundation/arkui/napi/native_engine/impl/ark/cj_support.cpp" in plain_text
+        and "current platform not supported" in plain_text
+        and "LIBS_NAME" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "arkui_napi_cj_support_riscv64_platform_missing",
+                "source_build_compatibility",
+                "ArkUI NAPI CJ support is compiled for riscv64 without NAPI_TARGET_RISCV64/LIBS_NAME platform support.",
+                (
+                    "Apply the target-evidenced foundation/arkui/napi/BUILD.gn RISC-V target defines "
+                    "and import the target cj_support.cpp ELF typedef/LIBS_NAME support; keep CJ/ArkUI "
+                    "features selected."
+                ),
+                [
+                    str(log_path),
+                    str(target_root / "foundation/arkui/napi/BUILD.gn"),
+                    str(target_root / ARKUI_NAPI_RISCV64_CJ_SUPPORT_REL),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "foundation/arkui/napi/native_engine/impl/ark/cj_support.cpp",
+                        "current platform not supported",
+                        "LIBS_NAME",
+                        "NAPI_TARGET_RISCV64",
+                    ],
+                    16,
+                ),
             )
         )
 

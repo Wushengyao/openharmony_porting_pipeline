@@ -266,7 +266,11 @@ storage-size branch without importing broader 6.1 API enum changes. It also
 handles the follow-on FFRT coroutine `STACK_MAGIC` RISC-V branch,
 `task_client_adapter.h`'s `CTC_QUERY_INTERVAL` architecture guard, and
 `cj_environment`'s `APP_USE_RISCV64`/`APP_LIB_NAME "riscv64"` platform mapping
-when those errors appear. When TEE `teecd` agents still contain ARM-only
+when those errors appear. If ArkUI NAPI CJ support reports
+`current platform not supported` for riscv64, the executor adds the
+target-evidenced `NAPI_TARGET_RISCV64`/`_RISCV64_` defines and imports
+`cj_support.cpp` with the target `LIBS_NAME "riscv_64"` and ELF-width typedefs
+instead of disabling CJ or ArkUI features. When TEE `teecd` agents still contain ARM-only
 `isb`/`dsb sy` barriers, the executor applies the target-evidenced
 aarch64/riscv guard in `secfile_load_agent.c`, `fs_work_agent.c`, and
 `misc_work_agent.c`, using `fence.i` and `fence iorw, iorw` for RISC-V instead
