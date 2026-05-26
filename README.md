@@ -270,6 +270,10 @@ For ArkCompiler RISC-V GN assertion gaps, the executor may apply the
 target-evidenced minimal `ark_config.gni` rule that disables unsupported
 LLVM backend/irtoc/codegen paths for `target_cpu == "riscv64"`; it does not
 import the broader 6.1 ArkCompiler source rename set as part of the base patch.
+For ArkCompiler RISC-V target-definition gaps, the executor may also apply
+target-evidenced minimal `static_core/BUILD.gn` `PANDA_TARGET_RISCV64` defines
+and a `libpandabase/cpu_features.h` cache-line-size condition, again avoiding
+the broader 6.1 `libarkbase` rename set during base compile triage.
 For SmartPerf split conflicts, the executor may remove legacy
 `developtools/profiler/host/smartperf` labels from `developtools/profiler`
 `bundle.json` when target evidence shows SmartPerf is owned by

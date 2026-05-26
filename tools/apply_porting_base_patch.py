@@ -895,6 +895,30 @@ def target_has_riscv64_ark_llvm_disable_evidence(target_root: Path) -> bool:
     )
 
 
+def target_has_riscv64_ark_target_define_evidence(target_root: Path) -> bool:
+    target_build = target_root / "arkcompiler/runtime_core/static_core/BUILD.gn"
+    if not target_build.is_file():
+        return False
+    build_text = target_build.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    if not (
+        'current_cpu == "riscv64"' in build_text
+        and "PANDA_TARGET_RISCV64" in build_text
+        and "PANDA_TARGET_64" in build_text
+    ):
+        return False
+    cpu_features_candidates = [
+        target_root / "arkcompiler/runtime_core/static_core/libarkbase/cpu_features.h",
+        target_root / "arkcompiler/runtime_core/static_core/libpandabase/cpu_features.h",
+    ]
+    for path in cpu_features_candidates:
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding=TEXT_ENCODING, errors="ignore")
+        if "PANDA_TARGET_RISCV64" in text and "CACHE_LINE_SIZE = 64" in text:
+            return True
+    return False
+
+
 def target_has_webview_app_fwk_update_bundle_migration_evidence(target_root: Path) -> bool:
     bundle = target_root / "base/web/webview/bundle.json"
     if not bundle.is_file():
@@ -1408,6 +1432,30 @@ def planned_actions(
             )
         )
 
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_riscv64_ark_target_define_evidence(target_root):
+        actions.append(
+            workspace_transform_action(
+                "arkcompiler/runtime_core/static_core/BUILD.gn",
+                "arkcompiler_riscv64_target_defines",
+                "L1_build_compatibility",
+                (
+                    "Add target-evidenced ArkCompiler PANDA_TARGET_RISCV64/PANDA_TARGET_64 defines "
+                    "for riscv64 static_core builds."
+                ),
+            )
+        )
+        actions.append(
+            workspace_transform_action(
+                "arkcompiler/runtime_core/static_core/libpandabase/cpu_features.h",
+                "arkcompiler_riscv64_cache_line_size",
+                "L1_build_compatibility",
+                (
+                    "Extend the target-evidenced ArkCompiler cache-line-size condition to riscv64 "
+                    "without importing the broader 6.1 libarkbase rename set."
+                ),
+            )
+        )
+
     if clean_str(seed.get("architecture")) == "riscv64":
         for rel_path in collect_graphic_3d_riscv64_rofs_paths(target_root, workspace):
             if target_has_riscv64_rofs_evidence(target_root, rel_path):
@@ -1912,6 +1960,51 @@ def apply_riscv64_ark_llvmbackend_disable_compat(data: bytes) -> tuple[bytes, li
     return data, ["ArkCompiler riscv64 LLVM backend/codegen insertion point not found"]
 
 
+def apply_riscv64_ark_target_defines_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if 'current_cpu == "riscv64"' in text and "PANDA_TARGET_RISCV64" in text:
+        return data, ["ArkCompiler riscv64 target defines already present"]
+
+    old = (
+        '  } else if (current_cpu == "x86") {\n'
+        '    defines += [\n'
+        '      "PANDA_TARGET_32",\n'
+        '      "PANDA_TARGET_X86",\n'
+        '    ]\n'
+    )
+    new = (
+        '  } else if (current_cpu == "riscv64") {\n'
+        '    defines += [\n'
+        '      "PANDA_TARGET_RISCV64",\n'
+        '      "PANDA_TARGET_64",\n'
+        '    ]\n'
+        f"{old}"
+    )
+    if old in text:
+        text = text.replace(old, new, 1)
+        return (
+            text.encode(TEXT_ENCODING),
+            ["added target-evidenced ArkCompiler riscv64 target defines"],
+        )
+    return data, ["ArkCompiler riscv64 target defines insertion point not found"]
+
+
+def apply_riscv64_ark_cache_line_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if "PANDA_TARGET_RISCV64" in text and "CACHE_LINE_SIZE = 64" in text:
+        return data, ["ArkCompiler riscv64 cache-line-size condition already present"]
+
+    old = "#if defined(PANDA_TARGET_AMD64) || defined(PANDA_TARGET_ARM64) || defined(PANDA_TARGET_ARM32)"
+    new = old + " || defined(PANDA_TARGET_RISCV64)"
+    if old in text:
+        text = text.replace(old, new, 1)
+        return (
+            text.encode(TEXT_ENCODING),
+            ["added target-evidenced ArkCompiler riscv64 cache-line-size condition"],
+        )
+    return data, ["ArkCompiler riscv64 cache-line-size insertion point not found"]
+
+
 def apply_webview_bundle_app_fwk_update_migration(data: bytes) -> tuple[bytes, list[str]]:
     text = data.decode(TEXT_ENCODING, errors="ignore")
     replacements = {
@@ -2117,6 +2210,18 @@ def materialize_action(
             and target.get("architecture") == "riscv64"
         ):
             data, transforms = apply_riscv64_ark_llvmbackend_disable_compat(data)
+        elif (
+            rel_path == "arkcompiler/runtime_core/static_core/BUILD.gn"
+            and action.get("source_role") == "arkcompiler_riscv64_target_defines"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_riscv64_ark_target_defines_compat(data)
+        elif (
+            rel_path == "arkcompiler/runtime_core/static_core/libpandabase/cpu_features.h"
+            and action.get("source_role") == "arkcompiler_riscv64_cache_line_size"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_riscv64_ark_cache_line_compat(data)
         elif (
             rel_path == "base/web/webview/bundle.json"
             and action.get("source_role") == "webview_bundle_app_fwk_update_sa_migration"
@@ -2617,6 +2722,35 @@ def parse_build_diagnostics(
                 )
             )
 
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "Undefined cacheline size" in plain_text
+        and "arkcompiler/runtime_core/static_core/libpandabase/cpu_features.h" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "riscv64_arkcompiler_cache_line_size_missing",
+                "source_build_compatibility",
+                "ArkCompiler static_core is compiling for riscv64 without a defined PANDA_TARGET_RISCV64 cache-line-size path.",
+                "Apply the target-evidenced static_core riscv64 target defines and cpu_features cache-line-size condition, then rerun the compile flow.",
+                [
+                    str(log_path),
+                    str(target_root / "arkcompiler/runtime_core/static_core/BUILD.gn"),
+                    str(target_root / "arkcompiler/runtime_core/static_core/libarkbase/cpu_features.h"),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "Undefined cacheline size",
+                        "libpandabase/cpu_features.h",
+                        "PANDA_TARGET_RISCV64",
+                        "static_assert(CACHE_LINE_SIZE",
+                    ],
+                    12,
+                ),
+            )
+        )
+
     for block in collect_duplicate_output_blocks(plain_text)[:8]:
         block_text = "\n".join(block)
         if (
@@ -2944,7 +3078,13 @@ def parse_build_diagnostics(
                 )
             )
 
-    if "unsupported cpu riscv64" in plain_text and not any(diag["id"] == "riscv64_ndk_shlib_directory_mapping" for diag in diagnostics):
+    if "unsupported cpu riscv64" in plain_text and not any(
+        diag["id"] in {
+            "riscv64_ndk_shlib_directory_mapping",
+            "riscv64_arkcompiler_cache_line_size_missing",
+        }
+        for diag in diagnostics
+    ):
         diagnostics.append(
             build_diagnostic(
                 "unsupported_cpu_riscv64_message",

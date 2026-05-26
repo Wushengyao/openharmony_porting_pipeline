@@ -165,6 +165,10 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   minimal `ark_config.gni` rule that disables unsupported LLVM
   backend/irtoc/codegen paths for `target_cpu == "riscv64"`; avoid importing the
   broader ArkCompiler 6.1 source rename set during base compile triage.
+- For ArkCompiler RISC-V target-definition blockers, apply target-evidenced
+  minimal `static_core/BUILD.gn` `PANDA_TARGET_RISCV64` defines and
+  `libpandabase/cpu_features.h` cache-line-size compatibility rules; do not
+  import the broader 6.1 `libarkbase` rename set during base compile triage.
 - For SmartPerf split blockers, when target evidence shows SmartPerf is owned by
   `developtools/smartperf_host`, remove legacy `developtools/profiler/host/smartperf`
   labels from the hiprofiler bundle registry to avoid duplicate fuzz outputs.
