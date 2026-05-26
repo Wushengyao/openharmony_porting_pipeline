@@ -237,12 +237,13 @@ minimal `build/ohos/ndk/ndk.gni` compatibility patch; it can also apply the
 evidenced `third_party/curl/BUILD.gn` riscv64 cflags guard and
 `build/common/libcpp/BUILD.gn` libc++ prebuilt source mapping when needed. It
 also adds target-evidenced `graphic_3d` rofs `rv64` object mappings when GN
-reports empty generated asset paths for RISC-V graphics builds. Build
-attempts emit diagnostics in `base_patch_manifest.yaml` and `.md` for known
-blockers such as host/prebuilt C++ header gaps, missing `BUILD.gn` closures,
-unavailable product components, RISC-V build-compatibility gaps, and
-Ninja missing-source follow-ups, and prebuilt-backed feature blockers such as a
-WebView riscv64 ArkWebCore HAP.
+reports empty generated asset paths for RISC-V graphics builds, and
+target-evidenced `build/scripts/run_objcopy.py` riscv64 mappings when resource
+object generation raises `KeyError: 'riscv64'`. Build attempts emit diagnostics
+in `base_patch_manifest.yaml` and `.md` for known blockers such as
+host/prebuilt C++ header gaps, missing `BUILD.gn` closures, unavailable product
+components, RISC-V build-compatibility gaps, Ninja missing-source follow-ups,
+and prebuilt-backed feature blockers such as a WebView riscv64 ArkWebCore HAP.
 For the WebView riscv64 ArkWebCore gap, the executor keeps `web:webview` enabled,
 imports the evidenced text-only build rule, writes a marked compile-only fake
 `ArkWebCore.hap`, imports direct local WebView text/source closures from target

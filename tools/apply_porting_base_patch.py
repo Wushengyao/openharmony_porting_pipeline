@@ -954,6 +954,17 @@ def target_has_riscv64_rofs_evidence(target_root: Path, rel_path: str) -> bool:
     return file_has_riscv64_rofs_evidence(target_build)
 
 
+def target_has_riscv64_objcopy_evidence(target_root: Path) -> bool:
+    target_objcopy = target_root / "build/scripts/run_objcopy.py"
+    if not target_objcopy.is_file():
+        return False
+    text = target_objcopy.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        '"riscv64": "elf64-littleriscv"' in text
+        and '"riscv64": "riscv64"' in text
+    )
+
+
 def target_bundle_has_feature(target_root: Path, rel_path: str, feature: str) -> bool:
     target_bundle = target_root / rel_path
     if not target_bundle.is_file():
@@ -1388,6 +1399,19 @@ def planned_actions(
                     )
                 )
 
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_riscv64_objcopy_evidence(target_root):
+        actions.append(
+            workspace_transform_action(
+                "build/scripts/run_objcopy.py",
+                "build_scripts_run_objcopy_riscv64_compat",
+                "L1_build_compatibility",
+                (
+                    "Add target-evidenced riscv64 llvm-objcopy output and BFD arch mappings so "
+                    "binary-to-object resource generation does not fail with KeyError: 'riscv64'."
+                ),
+            )
+        )
+
     feature_registry_shims = [
         (
             "base/update/updater/bundle.json",
@@ -1561,6 +1585,7 @@ def planned_actions(
         "RISC-V build/common libcpp prebuilt source mapping is applied only when target-source evidence contains the riscv64 libc++ rule.",
         "RISC-V ArkCompiler LLVM backend/codegen disablement is applied only when target-source evidence contains the riscv64 ark_config rule.",
         "RISC-V graphic_3d embedded-asset rofs object mappings are applied only when target-source evidence contains matching rv64 object rules.",
+        "RISC-V run_objcopy architecture mappings are applied only when target-source evidence contains riscv64 BFD/output mappings.",
         "SmartPerf split component-registry migration removes legacy hiprofiler-hosted SmartPerf labels only when target evidence shows SmartPerf is owned by smartperf_host.",
         "Vendor product module text/config closures are imported only from direct target ohos.build module labels; non-text payloads become compile-only fake interfaces.",
         "Board module text/config closures are imported only from local labels in the target board root BUILD.gn; kernel modules, bootloader images, and firmware become compile-only fake interfaces.",
@@ -1733,6 +1758,35 @@ def apply_riscv64_graphic_3d_rofs_compat(data: bytes) -> tuple[bytes, list[str]]
             [f"added riscv64 graphic_3d rofs object mapping in {count} location(s)"],
         )
     return data, ["graphic_3d riscv64 rofs insertion point not found"]
+
+
+def apply_riscv64_objcopy_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    notes: list[str] = []
+
+    if '"riscv64": "elf64-littleriscv"' not in text:
+        old_output = '    "arm64": "elf64-littleaarch64",\n'
+        new_output = old_output + '    "riscv64": "elf64-littleriscv",\n'
+        if old_output in text:
+            text = text.replace(old_output, new_output, 1)
+            notes.append("added riscv64 llvm-objcopy output target mapping")
+        else:
+            notes.append("riscv64 objcopy output target insertion point not found")
+    else:
+        notes.append("riscv64 llvm-objcopy output target mapping already present")
+
+    if '"riscv64": "riscv64"' not in text:
+        old_bfd = '    "arm64": "aarch64",\n'
+        new_bfd = old_bfd + '    "riscv64": "riscv64",\n'
+        if old_bfd in text:
+            text = text.replace(old_bfd, new_bfd, 1)
+            notes.append("added riscv64 llvm-objcopy BFD architecture mapping")
+        else:
+            notes.append("riscv64 objcopy BFD architecture insertion point not found")
+    else:
+        notes.append("riscv64 llvm-objcopy BFD architecture mapping already present")
+
+    return text.encode(TEXT_ENCODING), notes
 
 
 def apply_riscv64_libcpp_compat(data: bytes) -> tuple[bytes, list[str]]:
@@ -2038,6 +2092,11 @@ def materialize_action(
             and target.get("architecture") == "riscv64"
         ):
             data, transforms = apply_riscv64_graphic_3d_rofs_compat(data)
+        elif (
+            rel_path == "build/scripts/run_objcopy.py"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_riscv64_objcopy_compat(data)
         elif rel_path in {"build/rust/BUILD.gn", "build/rust/tests/BUILD.gn"} and target.get("architecture") == "riscv64":
             source_path = target_root / rel_path
             if source_path.is_file():
@@ -2728,6 +2787,22 @@ def parse_build_diagnostics(
                     matching_lines(all_text, ["File path ends in a slash", gn_path], 8),
                 )
             )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "build/scripts/run_objcopy.py" in plain_text
+        and "KeyError: 'riscv64'" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "riscv64_run_objcopy_arch_mapping_missing",
+                "source_build_compatibility",
+                "build/scripts/run_objcopy.py lacks riscv64 llvm-objcopy mappings for binary-to-object resource generation.",
+                "Apply the target-evidenced riscv64 OUTPUT_TARGET and BUILD_ID_LINK_OUTPUT mappings in build/scripts/run_objcopy.py and rerun the compile flow.",
+                [str(log_path), str(target_root / "build/scripts/run_objcopy.py")],
+                matching_lines(all_text, ["run_objcopy.py", "KeyError: 'riscv64'", "--arch riscv64"], 10),
+            )
+        )
 
     component_failures = sorted(set(re.findall(r"find component ([^ ]+) failed", plain_text)))
     for component in component_failures[:8]:

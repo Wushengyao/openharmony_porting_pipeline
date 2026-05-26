@@ -193,6 +193,9 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
 - For RISC-V graphics builds, add target-evidenced `graphic_3d` rofs `rv64`
   object mappings to compile files when GN reports empty generated asset paths;
   this is a build-compatibility source fix, not a product feature removal.
+- For RISC-V resource object generation, add target-evidenced
+  `build/scripts/run_objcopy.py` `riscv64` output/BFD mappings when Ninja
+  reports `KeyError: 'riscv64'` from `run_objcopy.py`.
 - When a product references a component that has no real current-workspace
   `bundle.json`, generate a zero-subcomponent fake component registry under
   that subsystem's root from `build/subsystem_config.json` instead of deleting
