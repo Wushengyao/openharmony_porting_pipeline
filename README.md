@@ -279,6 +279,10 @@ When Ninja reaches board `audio_alsa` adapter objects and reports missing C
 sources, the executor imports the target-evidenced
 `device/board/<vendor>/<board>/audio_alsa` text/source closure rather than
 removing the audio feature; any non-text payloads remain fake-interface debt.
+When Ninja needs a missing `kernel/linux/<board-kernel>` BSP source tree, the
+executor keeps product image generation visible by adding a tracked fake
+kernel-source marker and a target-derived `build_kernel.sh` fake-output bridge;
+the real board kernel source remains dependency debt for provenance review.
 For SoC modules under `device/soc/<soc_vendor>/<soc>` directly referenced by the
 board root `BUILD.gn`, the executor imports text/source closures and records
 firmware, proprietary GPU/WiFi blobs, and shared-library payloads as

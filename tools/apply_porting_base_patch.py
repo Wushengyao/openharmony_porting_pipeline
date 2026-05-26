@@ -148,6 +148,18 @@ def workspace_transform_action(rel_path: str, role: str, phase: str, reason: str
     }
 
 
+def target_source_transform_action(rel_path: str, role: str, phase: str, reason: str) -> dict[str, Any]:
+    return {
+        "path": normalize_rel(rel_path),
+        "source_path": normalize_rel(rel_path),
+        "content_source": "target_source_transform",
+        "source_role": role,
+        "phase": phase,
+        "reason": reason,
+        "dependency_policy": "text_only",
+    }
+
+
 def generated_fake_interface_action(
     rel_path: str,
     role: str,
@@ -974,6 +986,23 @@ def component_feature_registry_action(
     return action
 
 
+def collect_board_kernel_source_rel(target_root: Path, board_root_rel: str) -> str:
+    build_gn = target_root / board_root_rel / "kernel" / "BUILD.gn"
+    if not build_gn.is_file():
+        return ""
+    text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    match = re.search(r'kernel_source_dir\s*=\s*"//([^"]+)"', text)
+    if not match:
+        return ""
+    try:
+        rel = normalize_rel(match.group(1))
+    except ValueError:
+        return ""
+    if rel.startswith("kernel/linux/"):
+        return rel
+    return ""
+
+
 def planned_actions(
     seed: dict[str, Any],
     target_root: Path,
@@ -1034,6 +1063,50 @@ def planned_actions(
     ]
 
     board_root_rel = f"device/board/{vendor}/{board}"
+    board_kernel_source_rel = collect_board_kernel_source_rel(target_root, board_root_rel)
+    if (
+        board_kernel_source_rel
+        and (target_root / board_kernel_source_rel).is_dir()
+        and not (workspace / board_kernel_source_rel).exists()
+    ):
+        fake_kernel_marker_rel = f"{board_kernel_source_rel}/.openharmony_porting_fake_kernel_source"
+        actions.append(
+            generated_fake_interface_action(
+                fake_kernel_marker_rel,
+                "board_kernel_fake_source_marker",
+                "L2_external_dependency_stub",
+                (
+                    "Create a compile-only marker for the missing board BSP kernel source tree so "
+                    "the board kernel build script can synthesize placeholder Image/DTB/KO outputs "
+                    "without removing product image generation."
+                ),
+                "\n".join(
+                    [
+                        "FAKE_OPENHARMONY_PORTING_INTERFACE=1",
+                        f"dependency={board_kernel_source_rel}",
+                        "scope=compile_only",
+                        "runtime_status=not_functional",
+                        f"reference={target_root / board_kernel_source_rel}",
+                        "note=replace_with_provenance_checked_board_kernel_source_before_runtime_validation",
+                    ]
+                )
+                + "\n",
+                f"board BSP kernel source tree {board_kernel_source_rel}",
+                str(target_root / board_kernel_source_rel),
+                "replace with provenance-checked board BSP kernel source before runtime, boot, or driver validation",
+            )
+        )
+        actions.append(
+            target_source_transform_action(
+                f"{board_root_rel}/kernel/build_kernel.sh",
+                "board_kernel_fake_output_bridge",
+                "L2_external_dependency_stub",
+                (
+                    "Add a compile-only fake-output branch to the target board kernel build script; "
+                    "it activates only when the generated fake kernel-source marker is present."
+                ),
+            )
+        )
     board_module_dirs = collect_local_gn_dependency_dirs(
         target_root / board_root_rel / "BUILD.gn",
         board_root_rel,
@@ -1492,6 +1565,7 @@ def planned_actions(
         "Vendor product module text/config closures are imported only from direct target ohos.build module labels; non-text payloads become compile-only fake interfaces.",
         "Board module text/config closures are imported only from local labels in the target board root BUILD.gn; kernel modules, bootloader images, and firmware become compile-only fake interfaces.",
         "Board audio_alsa text/source closures are imported when target evidence provides board-specific audio adapter sources required by Ninja.",
+        "Missing board BSP kernel source trees may use a tracked fake kernel-source marker plus a build_kernel.sh fake-output bridge so image generation remains visible during dependency triage.",
         "SoC module text/source closures are imported only from target board BUILD.gn labels under the selected SoC root; firmware and proprietary GPU/WiFi/shared-library payloads become compile-only fake interfaces.",
         "WebView local module text/source closures are imported from target ohos_nweb GN labels after resolving webview_path-style variables; binary/prebuilt payloads remain fake-interface debt.",
         "WebView app_fwk_update component-registry labels are migrated to the target sa/app_fwk_update module when target evidence shows the service moved from the old flat sa target.",
@@ -1811,6 +1885,61 @@ def apply_profiler_smartperf_split_migration(data: bytes) -> tuple[bytes, list[s
     return (json.dumps(bundle, ensure_ascii=False, indent=2) + "\n").encode(TEXT_ENCODING), notes
 
 
+def apply_board_kernel_fake_output_bridge(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if "OPENHARMONY_PORTING_FAKE_KERNEL_MARKER" in text:
+        return data, ["board kernel fake-output bridge already present"]
+
+    marker_export = (
+        'export PRODUCT_PATH=vendor/${DEVICE_BOARD}/${DEVICE_NAME}\n'
+        'export OPENHARMONY_PORTING_FAKE_KERNEL_MARKER="${KERNEL_SOURCE_DIR}/.openharmony_porting_fake_kernel_source"\n'
+    )
+    if 'export PRODUCT_PATH=vendor/${DEVICE_BOARD}/${DEVICE_NAME}\n' not in text:
+        return data, ["board kernel fake-output bridge insertion point not found: PRODUCT_PATH export"]
+    text = text.replace('export PRODUCT_PATH=vendor/${DEVICE_BOARD}/${DEVICE_NAME}\n', marker_export, 1)
+
+    fake_function = r'''
+function make_fake_kernel_outputs(){
+    echo "openharmony_porting: synthesizing compile-only fake kernel outputs for ${KERNEL_SOURCE_DIR}"
+    rm -rf "${KERNEL_BUILD_ROOT}"
+    mkdir -p "${KERNEL_BUILD_ROOT}/arch/riscv/boot/dts/thead"
+    mkdir -p "${KERNEL_BUILD_ROOT}/drivers/media/common/videobuf2"
+    mkdir -p "${KERNEL_BUILD_ROOT}/drivers/media/usb/uvc"
+    mkdir -p "${KERNEL_BUILD_ROOT}/drivers/gpu-viv"
+    printf 'FAKE_OPENHARMONY_PORTING_INTERFACE=1\nmissing_dependency=%s\nscope=compile_only\nruntime_status=not_functional\n' "${KERNEL_SOURCE_DIR}" > "${KERNEL_BUILD_ROOT}/arch/riscv/boot/Image"
+    printf 'FAKE_OPENHARMONY_PORTING_INTERFACE=1\nmissing_dependency=%s\nscope=compile_only\nruntime_status=not_functional\n' "${KERNEL_SOURCE_DIR}/${KERNEL_DTB}" > "${KERNEL_BUILD_ROOT}/arch/riscv/boot/dts/thead/${KERNEL_DTB}"
+    printf 'FAKE_OPENHARMONY_PORTING_INTERFACE=1\nmissing_dependency=videobuf2-vmalloc.ko\nscope=compile_only\nruntime_status=not_functional\n' > "${KERNEL_BUILD_ROOT}/drivers/media/common/videobuf2/videobuf2-vmalloc.ko"
+    printf 'FAKE_OPENHARMONY_PORTING_INTERFACE=1\nmissing_dependency=uvcvideo.ko\nscope=compile_only\nruntime_status=not_functional\n' > "${KERNEL_BUILD_ROOT}/drivers/media/usb/uvc/uvcvideo.ko"
+    printf 'FAKE_OPENHARMONY_PORTING_INTERFACE=1\nmissing_dependency=galcore.ko\nscope=compile_only\nruntime_status=not_functional\n' > "${KERNEL_BUILD_ROOT}/drivers/gpu-viv/galcore.ko"
+    mkdir -p "${OHOS_IMAGES_DIR}"
+    cp "${KERNEL_BUILD_ROOT}/arch/riscv/boot/Image" "${OHOS_IMAGES_DIR}/Image"
+    cp "${KERNEL_BUILD_ROOT}/arch/riscv/boot/dts/thead/${KERNEL_DTB}" "${OHOS_IMAGES_DIR}/${KERNEL_DTB}"
+    cp_ko
+    make_boot
+}
+
+'''
+    if "function copy_kernel(){" not in text:
+        return data, ["board kernel fake-output bridge insertion point not found: copy_kernel function"]
+    text = text.replace("function copy_kernel(){\n", fake_function + "function copy_kernel(){\n", 1)
+
+    fake_dispatch = (
+        'if [ -f "${OPENHARMONY_PORTING_FAKE_KERNEL_MARKER}" ]; then\n'
+        '    make_fake_kernel_outputs\n'
+        '    popd\n'
+        '    exit 0\n'
+        'fi\n\n'
+    )
+    if 'if [ ! -f "${OHOS_IMAGES_DIR}/Image" ]; then' not in text:
+        return data, ["board kernel fake-output bridge insertion point not found: Image guard"]
+    text = text.replace(
+        'if [ ! -f "${OHOS_IMAGES_DIR}/Image" ]; then',
+        fake_dispatch + 'if [ ! -f "${OHOS_IMAGES_DIR}/Image" ]; then',
+        1,
+    )
+    return text.encode(TEXT_ENCODING), ["added compile-only fake-output branch to board kernel build script"]
+
+
 def apply_component_feature_compat(data: bytes, features_to_add: list[str]) -> tuple[bytes, list[str]]:
     notes: list[str] = []
     try:
@@ -1868,6 +1997,15 @@ def materialize_action(
         if removed:
             notes.append("filtered unavailable components/features from generated productdefine: " + ", ".join(removed))
         return productdefine_bytes(config), "generated", "available", notes
+    if action.get("content_source") == "target_source_transform":
+        source_path = target_root / clean_str(action.get("source_path"), "")
+        if not source_path.is_file():
+            return None, str(source_path), "missing_source", []
+        data = source_path.read_bytes()
+        transforms: list[str] = []
+        if action.get("source_role") == "board_kernel_fake_output_bridge":
+            data, transforms = apply_board_kernel_fake_output_bridge(data)
+        return data, str(source_path), "available", transforms
     if action.get("content_source") == "workspace_transform":
         source_path = workspace / rel_path
         if not source_path.is_file():
@@ -2444,6 +2582,17 @@ def parse_build_diagnostics(
                     "source_import_follow_up",
                     f"Ninja needs board audio_alsa source {missing_rel}, but it is not present in the current workspace.",
                     "Import the target-evidenced board audio_alsa text/source closure and rerun the compile flow; keep non-text audio payloads as tracked fake interfaces if encountered.",
+                    [str(log_path), str(target_root / missing_rel)],
+                    evidence_lines,
+                )
+            )
+        elif missing_rel.startswith("kernel/linux/"):
+            diagnostics.append(
+                build_diagnostic(
+                    "board_kernel_bsp_source_missing",
+                    "external_bsp_dependency",
+                    f"Ninja needs board BSP kernel source path {missing_rel}, but it is not present in the current workspace.",
+                    "Keep product image generation visible; add a tracked compile-only fake kernel source marker plus a board build_kernel.sh fake-output bridge, then report the real BSP kernel source as dependency debt.",
                     [str(log_path), str(target_root / missing_rel)],
                     evidence_lines,
                 )

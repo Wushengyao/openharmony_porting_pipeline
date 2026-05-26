@@ -178,6 +178,10 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   target-evidenced `device/board/<vendor>/<board>/audio_alsa` text/source
   closure instead of removing the audio adapter feature; keep any non-text
   payloads as fake-interface dependency debt.
+- When Ninja reports a missing `kernel/linux/<board-kernel>` BSP source tree,
+  keep image generation enabled and use a tracked fake kernel-source marker plus
+  a `build_kernel.sh` fake-output bridge for compile triage; report the real
+  board kernel source as unresolved BSP dependency debt.
 - For SoC modules under `device/soc/<soc_vendor>/<soc>` directly referenced by
   the board root `BUILD.gn`, import text/source closures and represent firmware,
   proprietary GPU/WiFi blobs, and shared-library payloads as tracked

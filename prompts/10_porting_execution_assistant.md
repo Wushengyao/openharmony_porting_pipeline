@@ -360,6 +360,7 @@ controlled_executor:
     - board vendor text closures may be imported, but firmware payloads must become tracked compile-only fake artifacts
     - board root local-module text/config closures may be imported; kernel modules, bootloader images, and firmware must become tracked fake interfaces
     - board audio_alsa Ninja missing-source blockers should import the target-evidenced board audio_alsa text/source closure instead of disabling the audio feature
+    - missing kernel/linux board BSP source trees may use tracked fake kernel-source markers and build_kernel.sh fake-output bridges for compile triage while reporting the real kernel source as dependency debt
     - board-referenced SoC module text/source closures may be imported; firmware, GPU/WiFi blobs, and shared libraries must become tracked fake interfaces
     - vendor product module text/config closures may be imported from direct target ohos.build labels; non-text payloads must become tracked fake interfaces
     - WebView local text/source closures and their local GN/GNI support imports may be imported from target ohos_nweb GN labels after resolving webview_path-style variables; .idl and linker map files are text inputs, while prebuilts remain fake-interface debt
