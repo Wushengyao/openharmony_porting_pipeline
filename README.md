@@ -221,6 +221,11 @@ triage where possible. When a blocker is caused by a missing binary, prebuilt,
 firmware, or third-party payload, the executor may create a clearly marked
 compile-only fake interface and record it as dependency debt instead of removing
 the feature from product config.
+For missing `.so` payloads that participate in target linking, fake interfaces
+must be target-architecture ELF shared-library stubs rather than text marker
+files. When the reference target binary is available, the executor derives
+compile-only stub symbols from its dynamic symbol table and still records the
+real vendor/third-party payload as unresolved runtime dependency debt.
 When a selected product component has no real current-workspace `bundle.json`,
 the executor can add a zero-subcomponent fake registry under that subsystem's
 root from `build/subsystem_config.json` (for example `third_party/...` for
@@ -337,7 +342,9 @@ the real board kernel source remains dependency debt for provenance review.
 For SoC modules under `device/soc/<soc_vendor>/<soc>` directly referenced by the
 board root `BUILD.gn`, the executor imports text/source closures and records
 firmware, proprietary GPU/WiFi blobs, and shared-library payloads as
-compile-only fake interfaces.
+compile-only fake interfaces. Vendor shared libraries are represented as
+target-architecture linkable ELF stubs, not copied binaries, and remain runtime
+dependency debt.
 When imported SoC vendor display/HDF targets trip compile-standard
 part/subsystem checks, the executor merges only the matching target-evidenced
 `build/compile_standard_whitelist.json` entries for that SoC display prefix,
@@ -345,7 +352,8 @@ keeping product component selection visible.
 For vendor product modules directly listed by `vendor/<vendor>/<product>/ohos.build`,
 the executor imports text/config closures (image config, preinstall config,
 HDF `.hcs`, XML, JSON, `.para`, GN/GNI, C/header files) and records non-text
-payloads as compile-only fake interfaces.
+payloads as compile-only fake interfaces; `.so` payloads use linkable ELF stubs
+when needed for compile progress.
 Build attempts also probe the prebuilt host clang `<cstdlib>` include path. If
 clang selected an incomplete host GCC installation, the executor validates the
 candidate host paths but keeps `CPLUS_INCLUDE_PATH` probe-only for target product

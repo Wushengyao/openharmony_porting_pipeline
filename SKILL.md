@@ -128,6 +128,11 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   build blocker is caused by a missing binary/prebuilt/third-party payload,
   prefer a clearly marked compile-only fake interface over removing the feature
   from product config; summarize every fake in dependency debt reports.
+- When a missing `.so` participates in target linking, generate a
+  target-architecture ELF shared-library stub rather than a text marker file.
+  If reference target `.so` evidence exists, derive compile-only exported
+  symbols from its dynamic symbol table while keeping the real binary as
+  unresolved runtime dependency debt.
 - For RISC-V targets, allow the controlled executor to stage/apply a minimal
   `build/ohos/ndk/ndk.gni` compatibility patch only when the reference target
   source tree contains the `riscv64-linux-ohos` NDK mapping evidence.
@@ -189,7 +194,8 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
 - For SoC modules under `device/soc/<soc_vendor>/<soc>` directly referenced by
   the board root `BUILD.gn`, import text/source closures and represent firmware,
   proprietary GPU/WiFi blobs, and shared-library payloads as tracked
-  compile-only fake interfaces.
+  compile-only fake interfaces; shared libraries use linkable ELF stubs instead
+  of text placeholders.
 - When imported SoC vendor display/HDF targets fail compile-standard
   part/subsystem checks, merge only the matching target-evidenced
   `build/compile_standard_whitelist.json` entries for that SoC display prefix;
@@ -197,7 +203,8 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
 - For vendor product modules directly listed by `vendor/<vendor>/<product>/ohos.build`,
   import text/config closures such as image config, preinstall config, HDF `.hcs`,
   XML, JSON, `.para`, GN/GNI, and C/header files; represent non-text payloads as
-  tracked compile-only fake interfaces.
+  tracked compile-only fake interfaces, with `.so` payloads generated as
+  target-architecture linkable stubs when needed.
 - For RISC-V graphics builds, add target-evidenced `graphic_3d` rofs `rv64`
   object mappings to compile files when GN reports empty generated asset paths;
   this is a build-compatibility source fix, not a product feature removal.

@@ -215,6 +215,34 @@ def generated_fake_interface_action(
     }
 
 
+def generated_fake_shared_library_action(
+    rel_path: str,
+    role: str,
+    phase: str,
+    reason: str,
+    missing_dependency: str,
+    provenance_path: str,
+    follow_up: str = "replace with provenance-checked vendor/third-party shared library before runtime validation",
+) -> dict[str, Any]:
+    return {
+        "path": normalize_rel(rel_path),
+        "source_path": normalize_rel(rel_path),
+        "content_source": "generated_fake_shared_library",
+        "source_role": role,
+        "phase": phase,
+        "reason": reason,
+        "dependency_policy": "compile_only_fake_shared_library",
+        "fake_interface": {
+            "missing_dependency": missing_dependency,
+            "provenance_path": provenance_path,
+            "scope": "compile_only_linkable_shared_library",
+            "runtime_status": "not_functional",
+            "symbol_policy": "reference_dynsym_stub_when_available",
+            "follow_up": follow_up,
+        },
+    }
+
+
 def workspace_fake_binary_action(
     rel_path: str,
     source_path: str,
@@ -654,6 +682,21 @@ def collect_target_module_closure_actions(
             if is_text_closure_file(path):
                 actions.append(copy_action(rel_path, text_role, phase, reason))
                 continue
+            if path.name.endswith(".so") or ".so." in path.name:
+                actions.append(
+                    generated_fake_shared_library_action(
+                        rel_path,
+                        fake_role,
+                        phase,
+                        (
+                            "Create a target-architecture compile-only shared-library stub for "
+                            "a non-text target payload referenced by the target module closure."
+                        ),
+                        f"shared-library target payload {rel_path}",
+                        str(path),
+                    )
+                )
+                continue
             actions.append(
                 generated_fake_interface_action(
                     rel_path,
@@ -681,6 +724,226 @@ def collect_target_module_closure_actions(
                 )
             )
     return actions
+
+
+def llvm_readelf_path(workspace: Path) -> Path:
+    return workspace / "prebuilts/clang/ohos/linux-x86_64/llvm/bin/llvm-readelf"
+
+
+def ohos_clang_path(workspace: Path) -> Path:
+    return workspace / "prebuilts/clang/ohos/linux-x86_64/llvm/bin/clang"
+
+
+def normalize_elf_symbol_name(name: str) -> str:
+    name = name.strip()
+    if "@" in name:
+        name = name.split("@", 1)[0]
+    return name
+
+
+def is_c_identifier(name: str) -> bool:
+    return bool(re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name))
+
+
+def collect_defined_dynsym_symbols(workspace: Path, shared_library: Path) -> list[dict[str, Any]]:
+    readelf = llvm_readelf_path(workspace)
+    if not readelf.is_file() or not shared_library.is_file():
+        return []
+    try:
+        proc = subprocess.run(
+            [str(readelf), "--dyn-syms", "--wide", str(shared_library)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            errors="ignore",
+            timeout=30,
+            check=False,
+        )
+    except Exception:
+        return []
+    if proc.returncode != 0:
+        return []
+    symbols: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for line in proc.stdout.splitlines():
+        parts = line.split()
+        if len(parts) < 8 or not parts[0].rstrip(":").isdigit():
+            continue
+        symbol_type = parts[3]
+        bind = parts[4]
+        ndx = parts[6]
+        raw_name = " ".join(parts[7:])
+        name = normalize_elf_symbol_name(raw_name)
+        if (
+            not name
+            or name in seen
+            or ndx == "UND"
+            or bind not in {"GLOBAL", "WEAK"}
+            or symbol_type not in {"FUNC", "OBJECT", "NOTYPE"}
+            or not is_c_identifier(name)
+        ):
+            continue
+        try:
+            size = int(parts[2])
+        except ValueError:
+            size = 0
+        seen.add(name)
+        symbols.append({"name": name, "type": symbol_type, "size": size})
+    return symbols
+
+
+def fake_shared_library_c_source(symbols: list[dict[str, Any]], source_path: Path) -> str:
+    lines = [
+        "/* Auto-generated compile-only OpenHarmony porting shared-library stub.",
+        f" * Reference dependency: {source_path}",
+        " * Runtime implementation is intentionally absent.",
+        " */",
+        "__attribute__((visibility(\"default\"))) long __openharmony_porting_fake_shared_library_marker(void) { return 0; }",
+    ]
+    for index, symbol in enumerate(symbols):
+        name = clean_str(symbol.get("name"), "")
+        if not is_c_identifier(name):
+            continue
+        symbol_type = clean_str(symbol.get("type"), "NOTYPE")
+        try:
+            size = int(symbol.get("size") or 0)
+        except (TypeError, ValueError):
+            size = 0
+        if symbol_type == "OBJECT":
+            object_size = min(max(size, 8), 4096)
+            lines.append(
+                f"__attribute__((visibility(\"default\"))) unsigned char {name}[{object_size}] = {{0}};"
+            )
+            continue
+        lines.append(f"__attribute__((visibility(\"default\"))) long {name}(void) {{ return 0; }}")
+        if index >= 2000:
+            break
+    return "\n".join(lines) + "\n"
+
+
+def fake_shared_library_riscv64_asm_source(symbols: list[dict[str, Any]], source_path: Path) -> str:
+    lines = [
+        "# Auto-generated compile-only OpenHarmony porting shared-library stub.",
+        f"# Reference dependency: {source_path}",
+        "# Runtime implementation is intentionally absent.",
+        ".text",
+        ".globl __openharmony_porting_fake_shared_library_marker",
+        ".type __openharmony_porting_fake_shared_library_marker,@function",
+        "__openharmony_porting_fake_shared_library_marker:",
+        "    li a0, 0",
+        "    ret",
+        ".size __openharmony_porting_fake_shared_library_marker, .-__openharmony_porting_fake_shared_library_marker",
+    ]
+    for symbol in symbols:
+        name = clean_str(symbol.get("name"), "")
+        if not is_c_identifier(name):
+            continue
+        symbol_type = clean_str(symbol.get("type"), "NOTYPE")
+        try:
+            size = int(symbol.get("size") or 0)
+        except (TypeError, ValueError):
+            size = 0
+        if symbol_type == "OBJECT":
+            object_size = min(max(size, 8), 4096)
+            lines.extend(
+                [
+                    ".data",
+                    f".globl {name}",
+                    f".type {name},@object",
+                    f".size {name}, {object_size}",
+                    f"{name}:",
+                    f"    .zero {object_size}",
+                ]
+            )
+            continue
+        lines.extend(
+            [
+                ".text",
+                f".globl {name}",
+                f".type {name},@function",
+                f"{name}:",
+                "    li a0, 0",
+                "    ret",
+                f".size {name}, .-{name}",
+            ]
+        )
+    return "\n".join(lines) + "\n"
+
+
+def fake_shared_library_source(
+    symbols: list[dict[str, Any]],
+    source_path: Path,
+    target: dict[str, str],
+) -> tuple[str, str]:
+    if clean_str(target.get("architecture"), "") == "riscv64":
+        return fake_shared_library_riscv64_asm_source(symbols, source_path), "assembler"
+    return fake_shared_library_c_source(symbols, source_path), "c"
+
+
+def target_clang_flags(target: dict[str, str]) -> list[str]:
+    arch = clean_str(target.get("architecture"), "")
+    if arch == "riscv64":
+        return ["--target=riscv64-linux-ohos", "-march=rv64imafdc", "-mabi=lp64d"]
+    if arch in {"arm64", "aarch64"}:
+        return ["--target=aarch64-linux-ohos"]
+    if arch in {"arm", "arm32"}:
+        return ["--target=arm-linux-ohos"]
+    if arch in {"x86_64", "amd64"}:
+        return ["--target=x86_64-linux-ohos"]
+    return []
+
+
+def generate_fake_shared_library_bytes(
+    workspace: Path,
+    target: dict[str, str],
+    rel_path: str,
+    source_path: Path,
+) -> tuple[bytes | None, list[str]]:
+    clang = ohos_clang_path(workspace)
+    if not clang.is_file():
+        return None, [f"fake shared-library generation failed: missing clang at {clang}"]
+    symbols = collect_defined_dynsym_symbols(workspace, source_path)
+    source, source_lang = fake_shared_library_source(symbols, source_path, target)
+    with tempfile.TemporaryDirectory(prefix="ohos_fake_shared_lib_") as tmpdir:
+        tmp = Path(tmpdir)
+        src = tmp / ("fake_shared_library.S" if source_lang == "assembler" else "fake_shared_library.c")
+        out = tmp / Path(rel_path).name
+        src.write_text(source, encoding=TEXT_ENCODING)
+        cmd = [
+            str(clang),
+            *target_clang_flags(target),
+            "-x",
+            source_lang,
+            "-fno-builtin",
+            "-shared",
+            "-fPIC",
+            "-nostdlib",
+            "-fuse-ld=lld",
+            "-Wl,--build-id=none",
+            f"-Wl,-soname,{Path(rel_path).name}",
+            str(src),
+            "-o",
+            str(out),
+        ]
+        try:
+            proc = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                errors="ignore",
+                timeout=60,
+                check=False,
+            )
+        except Exception as exc:
+            return None, [f"fake shared-library generation failed: {exc}"]
+        if proc.returncode != 0 or not out.is_file():
+            detail = (proc.stderr or proc.stdout or "unknown compiler failure").strip().splitlines()
+            return None, ["fake shared-library generation failed"] + detail[:6]
+        return out.read_bytes(), [
+            "generated target-architecture compile-only shared-library stub",
+            f"stubbed exported symbols from reference dynsym: {len(symbols)}",
+        ]
 
 
 def apply_dependent_feature_deferrals(
@@ -3346,6 +3609,12 @@ def materialize_action(
         return content.encode(TEXT_ENCODING), "generated_fake_interface", "available", [
             "generated compile-only fake interface; runtime implementation is intentionally absent"
         ]
+    if action.get("content_source") == "generated_fake_shared_library":
+        source_path = target_root / clean_str(action.get("source_path"), rel_path)
+        data, notes = generate_fake_shared_library_bytes(workspace, target, rel_path, source_path)
+        if data is None:
+            return None, str(source_path), "fake_shared_library_generation_failed", notes
+        return data, str(source_path), "available", notes
     if action.get("content_source") == "workspace_fake_binary_from_existing":
         source_path = workspace / clean_str(action.get("source_path"), "")
         if not source_path.is_file():
@@ -4304,6 +4573,35 @@ def parse_build_diagnostics(
                 "Preserve the product feature; import the target component feature declaration or add a tracked compile-only feature-registry shim before validating runtime behavior.",
                 [str(log_path)],
                 matching_lines(all_text, ["not supported by this part", part_name, feature], 8),
+            )
+        )
+
+    fake_shared_library_script_errors = sorted(
+        set(
+            normalize_ninja_source_path(path, workspace)
+            for path in re.findall(
+                r"ld\.lld:\s+error:\s+([^:\s]+\.so):1:\s+unknown directive:\s+FAKE_OPENHARMONY_PORTING_INTERFACE=1",
+                plain_text,
+            )
+        )
+    )
+    for fake_so in fake_shared_library_script_errors[:8]:
+        diagnostics.append(
+            build_diagnostic(
+                "fake_shared_library_placeholder_not_elf",
+                "external_prebuilt_dependency",
+                f"The compile-only placeholder for {fake_so} is text, so lld interprets it as an invalid linker script.",
+                "Generate a target-architecture ELF shared-library stub from the reference dependency's dynamic symbol table instead of writing a text marker, then report the real vendor binary as dependency debt.",
+                [str(log_path), str(target_root / fake_so)],
+                matching_lines(
+                    all_text,
+                    [
+                        fake_so,
+                        "unknown directive: FAKE_OPENHARMONY_PORTING_INTERFACE=1",
+                        "ld.lld",
+                    ],
+                    12,
+                ),
             )
         )
 
