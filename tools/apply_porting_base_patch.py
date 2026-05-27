@@ -1975,6 +1975,47 @@ def cleanup_stale_mmi_fake_rust_key_library(workspace: Path, product: str) -> li
     return cleanups
 
 
+def cleanup_stale_mmi_fake_rust_motion_library(workspace: Path, product: str) -> list[dict[str, Any]]:
+    cleanups: list[dict[str, Any]] = []
+    if not workspace_fake_rust_driver_enabled(workspace):
+        return cleanups
+    required_symbols = {
+        "HandleMotionDynamicAccelerateMouse",
+        "HandleMotionAccelerateMouse",
+        "HandleMotionDynamicAccelerateTouchpad",
+        "HandleMotionAccelerateTouchpad",
+        "HandleAxisAccelerateTouchpad",
+    }
+    candidates = [
+        workspace / "out" / product / "lib.unstripped/multimodalinput/input/libmmi_rust.z.so",
+        workspace / "out" / product / "multimodalinput/input/libmmi_rust.z.so",
+    ]
+    workspace_resolved = workspace.resolve()
+    for library in candidates:
+        if not library.is_file():
+            continue
+        library_resolved = library.resolve()
+        if workspace_resolved not in library_resolved.parents:
+            continue
+        symbols = {clean_str(item.get("name"), "") for item in collect_defined_dynsym_symbols(workspace, library)}
+        missing = sorted(required_symbols - symbols)
+        if not missing:
+            continue
+        library.unlink()
+        cleanups.append(
+            {
+                "path": str(library),
+                "status": "removed",
+                "reason": (
+                    "stale fake Rust MMI motion shared library did not export "
+                    + ", ".join(missing)
+                    + " after no_mangle symbol extraction was enabled"
+                ),
+            }
+        )
+    return cleanups
+
+
 def target_has_riscv64_objcopy_evidence(target_root: Path, rel_path: str = "build/scripts/run_objcopy.py") -> bool:
     target_objcopy = target_root / rel_path
     if not target_objcopy.is_file():
@@ -2058,6 +2099,38 @@ def target_has_riscv64_compiler_mabi_evidence(target_root: Path) -> bool:
         and '"-march=rv64imafdc"' in text
         and '"-mabi=lp64d"' in text
     )
+
+
+def target_has_hidumper_memory_raw_param_standalone_evidence(target_root: Path) -> bool:
+    target_build = target_root / "base/hiviewdfx/hidumper/services/BUILD.gn"
+    target_raw_param = target_root / "base/hiviewdfx/hidumper/services/native/src/raw_param.cpp"
+    if not target_build.is_file() or not target_raw_param.is_file():
+        return False
+    build_text = target_build.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    raw_text = target_raw_param.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        'ohos_source_set("hidumpermemory_source")' in build_text
+        and '"native/src/raw_param.cpp"' in build_text
+        and '"${hidumper_service_path}:zidl_config"' in build_text
+        and "HIDUMPER_RAW_PARAM_STANDALONE" in build_text
+        and "#ifndef HIDUMPER_RAW_PARAM_STANDALONE" in raw_text
+        and 'DumpDelayedSpSingleton<DumpManagerService>::GetInstance()' in raw_text
+    )
+
+
+def target_has_mmi_rust_motion_no_mangle_evidence(target_root: Path) -> bool:
+    target_lib = target_root / "foundation/multimodalinput/input/service/rust/src/lib.rs"
+    if not target_lib.is_file():
+        return False
+    text = target_lib.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    required = {
+        "HandleMotionDynamicAccelerateMouse",
+        "HandleMotionAccelerateMouse",
+        "HandleMotionDynamicAccelerateTouchpad",
+        "HandleMotionAccelerateTouchpad",
+        "HandleAxisAccelerateTouchpad",
+    }
+    return all(f"fn {name}" in text and "#[no_mangle]" in text for name in required)
 
 
 def target_has_tee_riscv64_barrier_evidence(target_root: Path) -> bool:
@@ -3383,6 +3456,32 @@ def planned_actions(
             )
         )
 
+    if target_has_hidumper_memory_raw_param_standalone_evidence(target_root):
+        actions.append(
+            workspace_transform_action(
+                "base/hiviewdfx/hidumper/services/BUILD.gn",
+                "hidumper_memory_raw_param_standalone_closure",
+                "L2_text_closure",
+                (
+                    "Add the target-evidenced RawParam text closure to hidumpermemory_source so "
+                    "libhidumpermemory exports RawParam progress/output methods without pulling in "
+                    "the full DumpManagerService runtime path."
+                ),
+            )
+        )
+        actions.append(
+            target_source_transform_action(
+                "base/hiviewdfx/hidumper/services/native/src/raw_param.cpp",
+                "hidumper_raw_param_standalone_guard",
+                "L2_text_closure",
+                (
+                    "Import the target-evidenced RawParam standalone guard that excludes "
+                    "DumpManagerService singleton access when raw_param.cpp is compiled into "
+                    "hidumpermemory_source."
+                ),
+            )
+        )
+
     if clean_str(seed.get("architecture")) == "riscv64" and target_has_profiler_native_daemon_riscv64_evidence(target_root):
         for rel_path, role, reason in PROFILER_NATIVE_DAEMON_RISCV64_SOURCE_RELS:
             actions.append(
@@ -3581,6 +3680,8 @@ def planned_actions(
         "WebView generated glue sources are not faked: target-evidenced ohos_interface BUILD/base/scripts/input files are imported so the existing prepare/translator actions regenerate out/gen sources.",
         "WebView app_fwk_update component-registry labels are migrated to the target sa/app_fwk_update module when target evidence shows the service moved from the old flat sa target.",
         "WebView app_fwk_update test closures are migrated with target evidence when test deps would otherwise keep the old flat sa service in the GN graph.",
+        "Hidumper RawParam is added to hidumpermemory only with the target-evidenced standalone guard, avoiding a broader DumpManagerService/plugin source import during compile triage.",
+        "MMI Rust fake shared libraries are cleaned and regenerated when target-evidenced #[no_mangle] motion symbols are missing from stale fake-driver outputs.",
     ]
     return actions, notes
 
@@ -5307,6 +5408,90 @@ def apply_target_compile_standard_whitelist_prefix_entries(
     return (json.dumps(current, ensure_ascii=False, indent=4) + "\n").encode(TEXT_ENCODING), notes
 
 
+def apply_hidumper_memory_raw_param_standalone_closure(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    notes: list[str] = []
+    start = text.find('ohos_source_set("hidumpermemory_source") {')
+    if start < 0:
+        return data, ["hidumpermemory_source insertion point not found"]
+
+    def replace_after_start(old: str, new: str, note: str, already: str) -> None:
+        nonlocal text
+        if already in text[start:]:
+            notes.append(f"{note} already present")
+            return
+        index = text.find(old, start)
+        if index < 0:
+            notes.append(f"{note} insertion point not found")
+            return
+        text = text[:index] + new + text[index + len(old):]
+        notes.append(note)
+
+    replace_after_start(
+        '    "native/src/dump_common_utils.cpp",\n  ]',
+        '    "native/src/dump_common_utils.cpp",\n    "native/src/raw_param.cpp",\n  ]',
+        "added raw_param.cpp to hidumpermemory_source",
+        '"native/src/raw_param.cpp"',
+    )
+    replace_after_start(
+        '    "${hidumper_service_path}:service_config",\n  ]',
+        '    "${hidumper_service_path}:service_config",\n    "${hidumper_service_path}:zidl_config",\n  ]',
+        "added zidl_config to hidumpermemory_source configs",
+        '"${hidumper_service_path}:zidl_config"',
+    )
+    replace_after_start(
+        '  deps = [ "${hidumper_utils_path}:utils" ]',
+        '  deps = [\n    "${hidumper_service_path}:zidl_service",\n    "${hidumper_utils_path}:utils",\n  ]',
+        "added zidl_service dependency to hidumpermemory_source",
+        '"${hidumper_service_path}:zidl_service"',
+    )
+    replace_after_start(
+        "  defines = []",
+        '  defines = []\n  defines += [ "HIDUMPER_RAW_PARAM_STANDALONE" ]',
+        "added HIDUMPER_RAW_PARAM_STANDALONE define to hidumpermemory_source",
+        "HIDUMPER_RAW_PARAM_STANDALONE",
+    )
+    return text.encode(TEXT_ENCODING), notes
+
+
+def apply_hidumper_raw_param_standalone_guard(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    notes: list[str] = []
+    if "#ifndef HIDUMPER_RAW_PARAM_STANDALONE" in text:
+        notes.append("RawParam standalone guard already present")
+    else:
+        include_old = '#include "hilog_wrapper.h"\n#include "dump_manager_service.h"\n'
+        include_new = (
+            '#include "hilog_wrapper.h"\n'
+            "#ifndef HIDUMPER_RAW_PARAM_STANDALONE\n"
+            '#include "dump_manager_service.h"\n'
+            "#endif\n"
+        )
+        if include_old in text:
+            text = text.replace(include_old, include_new, 1)
+            notes.append("guarded dump_manager_service include for standalone RawParam use")
+        else:
+            notes.append("RawParam include guard insertion point not found")
+
+        singleton_old = (
+            "    auto dumpManagerService = DumpDelayedSpSingleton<DumpManagerService>::GetInstance();\n"
+            "    if (dumpManagerService == nullptr) {\n"
+            "        return;\n"
+            "    }\n"
+        )
+        singleton_new = (
+            "#ifndef HIDUMPER_RAW_PARAM_STANDALONE\n"
+            + singleton_old
+            + "#endif\n"
+        )
+        if singleton_old in text:
+            text = text.replace(singleton_old, singleton_new, 1)
+            notes.append("guarded DumpManagerService singleton lookup for standalone RawParam use")
+        else:
+            notes.append("RawParam singleton guard insertion point not found")
+    return text.encode(TEXT_ENCODING), notes
+
+
 def apply_compile_app_root_ohpm_path_resolution(data: bytes) -> tuple[bytes, list[str]]:
     text = data.decode(TEXT_ENCODING, errors="ignore")
     desired_path = 'ohpm_path = os.path.join(root_dir, "prebuilts/tool/command-line-tools/ohpm/bin/ohpm")'
@@ -5653,6 +5838,11 @@ def materialize_action(
             and target.get("architecture") == "riscv64"
         ):
             data, transforms = apply_rust_riscv64_toolchain_host_split(data)
+        elif (
+            rel_path == "base/hiviewdfx/hidumper/services/native/src/raw_param.cpp"
+            and action.get("source_role") == "hidumper_raw_param_standalone_guard"
+        ):
+            data, transforms = apply_hidumper_raw_param_standalone_guard(data)
         return data, str(source_path), "available", transforms
     if action.get("content_source") == "workspace_transform":
         source_path = workspace / rel_path
@@ -5786,6 +5976,11 @@ def materialize_action(
             else:
                 prefixes = target_compile_standard_whitelist_prefixes(target)
             data, transforms = apply_target_compile_standard_whitelist_prefix_entries(data, target_root, prefixes)
+        elif (
+            rel_path == "base/hiviewdfx/hidumper/services/BUILD.gn"
+            and action.get("source_role") == "hidumper_memory_raw_param_standalone_closure"
+        ):
+            data, transforms = apply_hidumper_memory_raw_param_standalone_closure(data)
         elif (
             rel_path == "build/scripts/compile_app.py"
             and action.get("source_role") == "compile_app_root_ohpm_path_resolution"
@@ -6373,6 +6568,14 @@ def check_build_log_old_errors_absent(build_result: dict[str, Any] | None) -> di
         "old_riscv64_mmi_rust_key_missing_symbol": [
             "multimodalinput/input/libmmi-util.z.so",
             "undefined symbol: ReadConfigInfo",
+        ],
+        "old_hidumper_memory_raw_param_missing_symbols": [
+            "hiviewdfx/hidumper/libhidumpermemory.z.so",
+            "undefined symbol: OHOS::HiviewDFX::RawParam::GetOutputFd()",
+        ],
+        "old_riscv64_mmi_rust_motion_missing_symbols": [
+            "multimodalinput/input/libmmi-server.z.so",
+            "undefined symbol: HandleMotionAccelerateTouchpad",
         ],
     }
     if not build_result:
@@ -8552,6 +8755,75 @@ def parse_build_diagnostics(
         )
 
     if (
+        "hiviewdfx/hidumper/libhidumpermemory.z.so" in plain_text
+        and "undefined symbol: OHOS::HiviewDFX::RawParam::GetOutputFd()" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "hidumper_memory_raw_param_standalone_missing_source",
+                "source_build_compatibility",
+                "libhidumpermemory links memory executor code that references RawParam progress/output methods, but hidumpermemory_source does not compile raw_param.cpp.",
+                (
+                    "Apply the target-evidenced hidumpermemory_source closure: add native/src/raw_param.cpp, "
+                    "zidl_config/zidl_service, and HIDUMPER_RAW_PARAM_STANDALONE with the guarded raw_param.cpp "
+                    "include/singleton block instead of importing unrelated Hidumper plugin/runtime sources."
+                ),
+                [
+                    str(log_path),
+                    str(target_root / "base/hiviewdfx/hidumper/services/BUILD.gn"),
+                    str(target_root / "base/hiviewdfx/hidumper/services/native/src/raw_param.cpp"),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "hiviewdfx/hidumper/libhidumpermemory.z.so",
+                        "RawParam::GetOutputFd",
+                        "RawParam::UpdateProgress",
+                    ],
+                    22,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "multimodalinput/input/libmmi-server.z.so" in plain_text
+        and (
+            "undefined symbol: HandleMotionAccelerateTouchpad" in plain_text
+            or "undefined symbol: HandleMotionDynamicAccelerateMouse" in plain_text
+            or "undefined symbol: HandleAxisAccelerateTouchpad" in plain_text
+        )
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "riscv64_mmi_rust_motion_fake_driver_missing_no_mangle_symbols",
+                "source_build_compatibility",
+                "libmmi-server depends on MMI Rust motion-acceleration FFI symbols, but the stale compile-only fake libmmi_rust output did not export the #[no_mangle] C ABI functions.",
+                (
+                    "Keep the MMI feature selected; use the fake Rust driver that expands response files "
+                    "and exports #[no_mangle] symbols, then remove stale out/<product>/libmmi_rust.z.so "
+                    "outputs so Ninja regenerates them with HandleMotion*/HandleAxis* exports."
+                ),
+                [
+                    str(log_path),
+                    str(workspace / "foundation/multimodalinput/input/service/rust/src/lib.rs"),
+                    str(target_root / "foundation/multimodalinput/input/service/rust/src/lib.rs"),
+                    str(workspace / "prebuilts/rustc-riscv/linux-x86_64/current/bin/rustc"),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "multimodalinput/input/libmmi-server.z.so",
+                        "undefined symbol: HandleMotion",
+                        "undefined symbol: HandleAxis",
+                        "libmmi_rust",
+                    ],
+                    22,
+                ),
+            )
+        )
+
+    if (
         clean_str(target.get("architecture")) == "riscv64"
         and "is incompatible with elf64lriscv" in plain_text
         and "librust_" in plain_text
@@ -8974,7 +9246,12 @@ def run_direct_ninja_probe(
     }
 
 
-def prepare_generated_artifacts_for_build(workspace: Path, product: str, target: dict[str, Any]) -> list[dict[str, Any]]:
+def prepare_generated_artifacts_for_build(
+    workspace: Path,
+    product: str,
+    target: dict[str, Any],
+    target_root: Path,
+) -> list[dict[str, Any]]:
     cleanups: list[dict[str, Any]] = []
     if clean_str(target.get("architecture")) != "riscv64":
         return cleanups
@@ -9031,6 +9308,8 @@ def prepare_generated_artifacts_for_build(workspace: Path, product: str, target:
     cleanups.extend(cleanup_stale_fake_rust_archives(workspace, product))
     cleanups.extend(cleanup_stale_fake_rust_build_scripts(workspace, product))
     cleanups.extend(cleanup_stale_mmi_fake_rust_key_library(workspace, product))
+    if target_has_mmi_rust_motion_no_mangle_evidence(target_root):
+        cleanups.extend(cleanup_stale_mmi_fake_rust_motion_library(workspace, product))
     return cleanups
 
 
@@ -9250,7 +9529,7 @@ def main() -> int:
     build_result: dict[str, Any] | None = None
     prebuild_cleanups: list[dict[str, Any]] = []
     if args.attempt_build and not blocking_issues:
-        prebuild_cleanups = prepare_generated_artifacts_for_build(workspace, target["product"], target)
+        prebuild_cleanups = prepare_generated_artifacts_for_build(workspace, target["product"], target, target_root)
         host_env_fix = detect_host_cxx_env_fix(workspace)
         build_result = run_build(workspace, out_dir, target["product"], args.build_timeout_sec, host_env_fix)
         build_result["prebuild_cleanups"] = prebuild_cleanups
