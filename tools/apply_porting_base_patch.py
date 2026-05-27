@@ -137,6 +137,7 @@ WEBVIEW_REGISTER_JSFUNCTION_SOURCE_RELS = [
     "base/web/webview/interfaces/kits/napi/webviewcontroller/webview_controller.cpp",
     "base/web/webview/interfaces/kits/ani/webview/native/webviewcontroller/webview_controller.cpp",
     "base/web/webview/interfaces/kits/cj/src/webview_controller_impl.cpp",
+    "foundation/arkui/ace_engine/frameworks/core/components/web/resource/web_delegate.cpp",
 ]
 WEBVIEW_ADAPTER_BRIDGE_HELPER_SOURCE_REL = (
     "base/web/webview/ohos_interface/ohos_glue/ohos_adapter/bridge/webview/"
@@ -10538,6 +10539,34 @@ def parse_build_diagnostics(
                         "requires at least argument 'runMode'",
                     ],
                     14,
+                ),
+            )
+        )
+
+    if (
+        "web_delegate.cpp" in plain_text
+        and "no matching member function for call to 'RegisterArkJSfunction'" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "arkui_web_delegate_register_ark_jsfunction_v2_missing",
+                "source_build_compatibility",
+                "ArkUI web_delegate still calls the old permission-bearing RegisterArkJSfunction overload while the target WebView NWeb API exposes RegisterArkJSfunctionV2 for that 5-argument form.",
+                "Apply the same target-evidenced RegisterArkJSfunctionV2 migration used by WebView kits to foundation/arkui/ace_engine/frameworks/core/components/web/resource/web_delegate.cpp.",
+                [
+                    str(log_path),
+                    str(workspace / "foundation/arkui/ace_engine/frameworks/core/components/web/resource/web_delegate.cpp"),
+                    str(target_root / "foundation/arkui/ace_engine/frameworks/core/components/web/resource/web_delegate.cpp"),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "web_delegate.cpp",
+                        "RegisterArkJSfunction",
+                        "RegisterArkJSfunctionV2",
+                        "requires 4 arguments, but 5 were provided",
+                    ],
+                    16,
                 ),
             )
         )
