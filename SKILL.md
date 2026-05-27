@@ -241,8 +241,9 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   real source/bundle evidence exists, replace the fake before completion claims.
 - Keep host/prebuilt tool failures separate from fake dependency debt. For
   `compile_app.py` app packaging, resolve `ohpm` from the OpenHarmony source
-  root before changing into app module directories; do not fake missing OpenHarmony
-  command-line tools when the real workspace prebuilt is available.
+  root with an absolute `get_root_dir()` before changing into app module
+  directories; do not fake missing OpenHarmony command-line tools when the real
+  workspace prebuilt is available.
 - After build attempts, run lightweight regression checks for ABI/LTO/Rust fixes:
   use `llvm-readelf -h` on generated fake shared libraries, scan fake Rust
   archives for non-RISC-V objects, and confirm the build logs no longer contain
@@ -349,6 +350,15 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   fake Rust driver that emits placeholder RISC-V ELF outputs, exports
   discovered `#[no_mangle] extern fn` symbols, and record it as dependency
   debt.
+- If that fake Rust driver causes the host `cxxbridge` executable to produce
+  empty `wrapper.rs.h/.cc` files, keep the failure classified as Rust/toolchain
+  dependency debt and use a compile-only generated bridge header as a temporary
+  fake interface; do not delete request/Rust components to hide the missing
+  toolchain.
+- If `rust_template.gni` reports GN "Assignment had no effect" on
+  `crate_type = _crate_type`, check for stale riscv64 guards that stop forwarding
+  Rust `sources` or `rustflags`; restore the target-evidenced template forwarding
+  before adding new fake interfaces.
 - If a riscv64 link fails because a `librust_*.a` archive contains rcgu objects
   that are incompatible with `elf64lriscv`, classify it as stale or host-built
   Rust output. Remove the wrong-architecture archive before rebuilding so the

@@ -1342,6 +1342,19 @@ def target_has_riscv64_rust_toolchain_evidence(target_root: Path) -> bool:
     )
 
 
+def target_has_rust_template_source_forwarding_evidence(target_root: Path) -> bool:
+    target_template = target_root / "build/templates/rust/rust_template.gni"
+    if not target_template.is_file():
+        return False
+    text = target_template.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        'target(invoker.target_type, "${target_name}")' in text
+        and "rustflags = _rustflags" in text
+        and '"sources",' not in text
+        and 'target_cpu != "riscv64"' not in text
+    )
+
+
 def target_has_riscv64_buildconfig_arch_evidence(target_root: Path) -> bool:
     target_buildconfig = target_root / "build/config/BUILDCONFIG.gn"
     if not target_buildconfig.is_file():
@@ -1477,10 +1490,27 @@ def target_has_compile_app_root_ohpm_evidence(target_root: Path) -> bool:
         return False
     text = compile_app.read_text(encoding=TEXT_ENCODING, errors="ignore")
     return (
-        "root_dir = get_root_dir()" in text
+        ("root_dir = get_root_dir()" in text or "root_dir = os.path.abspath(get_root_dir())" in text)
         and 'os.path.join(root_dir, "prebuilts/tool/command-line-tools/ohpm/bin/ohpm")' in text
         and "ohpm_install_cmd = [ohpm_path, 'install']" in text
     )
+
+
+def target_has_request_rust_cxxbridge_evidence(target_root: Path) -> bool:
+    rels = [
+        "base/request/request/common/ffrt_rs/src/wrapper.rs",
+        "base/request/request/common/database/src/wrapper.rs",
+        "base/request/request/common/netstack_rs/src/wrapper.rs",
+    ]
+    matched = 0
+    for rel in rels:
+        path = target_root / rel
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding=TEXT_ENCODING, errors="ignore")
+        if "#[cxx::bridge" in text and 'extern "Rust"' in text:
+            matched += 1
+    return matched >= 2
 
 
 def host_clang_x64_stdlib_fix_actions(workspace: Path) -> list[dict[str, Any]]:
@@ -2864,6 +2894,20 @@ def planned_actions(
             action["force_executable"] = True
             actions.append(action)
 
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_rust_template_source_forwarding_evidence(target_root):
+        actions.append(
+            workspace_transform_action(
+                "build/templates/rust/rust_template.gni",
+                "rust_template_restore_source_forwarding",
+                "L1_build_compatibility",
+                (
+                    "Restore the target-evidenced Rust template source/rustflags forwarding for "
+                    "riscv64. This removes an earlier compile-triage guard that suppressed Rust "
+                    "sources and caused GN to reject crate_type assignments as unused."
+                ),
+            )
+        )
+
     if clean_str(seed.get("architecture")) == "riscv64" and target_has_riscv64_libcpp_evidence(target_root):
         actions.append(
             workspace_transform_action(
@@ -3143,6 +3187,22 @@ def planned_actions(
                     "Resolve the ohpm command-line tool from the OpenHarmony source root before "
                     "compile_app.py changes cwd into each app module, so app builds use the real "
                     "workspace prebuilt instead of an app-relative ../../prebuilts path."
+                ),
+            )
+        )
+
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_request_rust_cxxbridge_evidence(target_root):
+        actions.append(
+            workspace_transform_action(
+                "build/templates/rust/rust_cxxbridge.py",
+                "rust_cxxbridge_empty_output_fake_header_fallback",
+                "L2_external_dependency_stub",
+                (
+                    "When the missing riscv64 Rust toolchain forces cxxbridge to be represented by "
+                    "a compile-only fake host executable, generate minimal Rust-side opaque type "
+                    "headers from the bridge source if cxxbridge returns empty stdout. This keeps "
+                    "request Rust/C++ glue compiling while recording the real cxxbridge/Rust "
+                    "toolchain as dependency debt."
                 ),
             )
         )
@@ -5564,8 +5624,13 @@ def apply_hidumper_raw_param_standalone_guard(data: bytes) -> tuple[bytes, list[
 
 def apply_compile_app_root_ohpm_path_resolution(data: bytes) -> tuple[bytes, list[str]]:
     text = data.decode(TEXT_ENCODING, errors="ignore")
+    desired_root = "    root_dir = os.path.abspath(get_root_dir())\n"
     desired_path = 'ohpm_path = os.path.join(root_dir, "prebuilts/tool/command-line-tools/ohpm/bin/ohpm")'
     notes: list[str] = []
+
+    if desired_root not in text and "    root_dir = get_root_dir()\n" in text:
+        text = text.replace("    root_dir = get_root_dir()\n", desired_root, 1)
+        notes.append("normalized OpenHarmony root to an absolute path before app cwd switch")
 
     if desired_path not in text:
         if "import os\n" not in text:
@@ -5573,15 +5638,15 @@ def apply_compile_app_root_ohpm_path_resolution(data: bytes) -> tuple[bytes, lis
             notes.append("added os import for source-root ohpm path resolution")
 
         root_block = (
-            "    root_dir = get_root_dir()\n"
-            f"    {desired_path}\n"
-            "    if not os.path.exists(ohpm_path):\n"
-            '        ohpm_path = "ohpm"\n'
+            desired_root
+            + f"    {desired_path}\n"
+            + "    if not os.path.exists(ohpm_path):\n"
+            + '        ohpm_path = "ohpm"\n'
         )
-        if "    root_dir = get_root_dir()\n" not in text and "    cur_dir = os.getcwd()\n" in text:
+        if desired_root not in text and "    root_dir = get_root_dir()\n" not in text and "    cur_dir = os.getcwd()\n" in text:
             text = text.replace("    cur_dir = os.getcwd()\n", "    cur_dir = os.getcwd()\n" + root_block, 1)
             notes.append("inserted source-root ohpm path before app cwd switch")
-        elif "    root_dir = get_root_dir()\n" in text:
+        elif desired_root in text or "    root_dir = get_root_dir()\n" in text:
             text = re.sub(
                 r"    ohpm_path\s*=\s*['\"][^'\"]*prebuilts/tool/command-line-tools/ohpm/bin/ohpm['\"]\n",
                 f"    {desired_path}\n",
@@ -5615,6 +5680,480 @@ def apply_compile_app_root_ohpm_path_resolution(data: bytes) -> tuple[bytes, lis
             notes.append("compile_app.py already resolves ohpm from the OpenHarmony source root")
         return text.encode(TEXT_ENCODING), notes
     return data, notes or ["compile_app.py ohpm path transform skipped: insertion point not found"]
+
+
+def apply_rust_cxxbridge_empty_output_fake_header_fallback(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    marker = "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V5"
+    legacy_markers = [
+        "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V4",
+        "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V3",
+        "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V2",
+        "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT",
+    ]
+    if marker in text:
+        return data, ["rust_cxxbridge.py already has typed empty-output fake header fallback scoped to bridge module body"]
+
+    notes: list[str] = []
+    if "import re\n" not in text:
+        if "import argparse\n" in text:
+            text = text.replace("import argparse\n", "import argparse\nimport re\n", 1)
+            notes.append("added re import for cxxbridge source parsing")
+        else:
+            return data, ["rust_cxxbridge fallback transform skipped: import insertion point not found"]
+
+    helper = r'''
+
+# OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V5
+def _fake_bridge_source_path(args):
+    for arg in args:
+        if arg == "--" or not arg.endswith(".rs"):
+            continue
+        path = arg if os.path.isabs(arg) else os.path.abspath(arg)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def _fake_bridge_namespace(source_text):
+    match = re.search(r"#\s*\[\s*cxx::bridge\s*(?:\(\s*namespace\s*=\s*\"([^\"]+)\"\s*\))?\s*\]", source_text)
+    if not match:
+        return ""
+    return match.group(1) or ""
+
+
+def _fake_bridge_body(source_text):
+    bridge_match = re.search(r"#\s*\[\s*cxx::bridge[^\]]*\]\s*mod\s+[A-Za-z_][A-Za-z0-9_]*\s*\{", source_text)
+    if not bridge_match:
+        bridge_pos = source_text.find("#[cxx::bridge")
+        return source_text[bridge_pos:] if bridge_pos != -1 else source_text
+    start = bridge_match.end()
+    depth = 1
+    index = start
+    while index < len(source_text):
+        char = source_text[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return source_text[start:index]
+        index += 1
+    return source_text[start:]
+
+
+def _fake_bridge_cpp_type(rust_type, type_namespaces=None):
+    type_namespaces = type_namespaces or {}
+    rust_type = (rust_type or "").strip()
+    rust_type = re.sub(r"^pub(?:\([^)]*\))?\s+", "", rust_type)
+    rust_type = re.sub(r"\s+", " ", rust_type)
+    rust_type = re.sub(r"^&\s*'static\s+", "&", rust_type)
+    rust_type = rust_type.replace("&'a str", "&str").replace("& str", "&str")
+    mapping = {
+        "i8": "int8_t",
+        "i16": "int16_t",
+        "i32": "int32_t",
+        "i64": "int64_t",
+        "u8": "uint8_t",
+        "u16": "uint16_t",
+        "u32": "uint32_t",
+        "u64": "uint64_t",
+        "usize": "size_t",
+        "bool": "bool",
+        "f32": "float",
+        "f64": "double",
+        "String": "rust::String",
+        "&str": "rust::Str",
+        "&[u8]": "rust::Slice<const uint8_t>",
+        "*const CacheDownloadService": "const CacheDownloadService *",
+    }
+    if rust_type in mapping:
+        return mapping[rust_type]
+    shared = re.fullmatch(r"SharedPtr\s*<\s*([A-Za-z_][A-Za-z0-9_]*)\s*>", rust_type)
+    if shared:
+        inner = _fake_bridge_cpp_type(shared.group(1), type_namespaces)
+        return f"std::shared_ptr<{inner}>"
+    unique = re.fullmatch(r"UniquePtr\s*<\s*([A-Za-z_][A-Za-z0-9_]*)\s*>", rust_type)
+    if unique:
+        inner = _fake_bridge_cpp_type(unique.group(1), type_namespaces)
+        return f"std::unique_ptr<{inner}>"
+    vec = re.fullmatch(r"Vec\s*<\s*(.*?)\s*>", rust_type)
+    if vec:
+        item_type = _fake_bridge_cpp_type(vec.group(1), type_namespaces)
+        return f"rust::Vec<{item_type}>"
+    if rust_type in type_namespaces:
+        namespace = type_namespaces[rust_type]
+        return f"{namespace}::{rust_type}" if namespace else rust_type
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", rust_type):
+        return rust_type
+    return "void"
+
+
+def _fake_bridge_return_type(ret, type_namespaces=None):
+    cpp_type = _fake_bridge_cpp_type(ret, type_namespaces)
+    mapping = {
+        "int8_t": "return 0;",
+        "int16_t": "return 0;",
+        "int32_t": "return 0;",
+        "int64_t": "return 0;",
+        "uint8_t": "return 0;",
+        "uint16_t": "return 0;",
+        "uint32_t": "return 0;",
+        "uint64_t": "return 0;",
+        "size_t": "return 0;",
+        "bool": "return false;",
+        "float": "return 0.0F;",
+        "double": "return 0.0;",
+        "const CacheDownloadService *": "return nullptr;",
+    }
+    if cpp_type == "void":
+        return "void", ""
+    return cpp_type, mapping.get(cpp_type, "return {};")
+
+
+def _fake_bridge_structs(source_text):
+    source_text = _fake_bridge_body(source_text)
+    structs = []
+    for match in re.finditer(
+        r"(?:pub(?:\([^)]*\))?\s+)?struct\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s*<[^>{}]+>)?\s*\{(.*?)\}",
+        source_text,
+        flags=re.S,
+    ):
+        name = match.group(1)
+        body = match.group(2)
+        fields = []
+        for field_match in re.finditer(
+            r"(?:pub(?:\([^)]*\))?\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([^,\n]+),",
+            body,
+        ):
+            fields.append((field_match.group(1), field_match.group(2)))
+        if fields:
+            structs.append((name, fields))
+    return structs
+
+
+def _fake_bridge_struct_dependencies(field_type, struct_names):
+    return {
+        token
+        for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", field_type or "")
+        if token in struct_names
+    }
+
+
+def _fake_bridge_order_structs(structs):
+    struct_names = {name for name, _fields in structs}
+    emitted = set()
+    ordered = []
+    pending = list(structs)
+    while pending:
+        next_pending = []
+        progressed = False
+        for name, fields in pending:
+            deps = set()
+            for _field_name, field_type in fields:
+                deps.update(_fake_bridge_struct_dependencies(field_type, struct_names))
+            deps.discard(name)
+            if deps.issubset(emitted):
+                ordered.append((name, fields))
+                emitted.add(name)
+                progressed = True
+            else:
+                next_pending.append((name, fields))
+        if not progressed:
+            ordered.extend(next_pending)
+            break
+        pending = next_pending
+    return ordered
+
+
+def _fake_bridge_enum_underlying(attrs):
+    repr_match = re.search(r"#\s*\[\s*repr\s*\(\s*([A-Za-z0-9_]+)\s*\)\s*\]", attrs or "")
+    repr_name = repr_match.group(1) if repr_match else "u32"
+    mapping = {
+        "u8": "uint8_t",
+        "u16": "uint16_t",
+        "u32": "uint32_t",
+        "u64": "uint64_t",
+        "i8": "int8_t",
+        "i16": "int16_t",
+        "i32": "int32_t",
+        "i64": "int64_t",
+    }
+    return mapping.get(repr_name, "uint32_t")
+
+
+def _fake_bridge_enum_variants(body):
+    variants = []
+    for raw_entry in (body or "").split(","):
+        entry = re.sub(r"//.*", "", raw_entry)
+        entry = re.sub(r"(?m)^\s*///.*$", "", entry)
+        entry = re.sub(r"#\s*\[[^\]]+\]\s*", "", entry)
+        entry = entry.strip()
+        if not entry:
+            continue
+        match = re.match(r"([A-Za-z_][A-Za-z0-9_]*)(?:\s*=\s*([^,]+))?", entry)
+        if not match:
+            continue
+        value = (match.group(2) or "").strip()
+        variants.append((match.group(1), value))
+    return variants
+
+
+def _fake_bridge_enums(source_text):
+    source_text = _fake_bridge_body(source_text)
+    enums = []
+    enum_re = re.compile(
+        r"((?:(?:\s*#\s*\[[^\]]+\]\s*)|(?:\s*///[^\n]*\n))*)"
+        r"(?:pub(?:\([^)]*\))?\s+)?enum\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{(.*?)\}",
+        flags=re.S,
+    )
+    for match in enum_re.finditer(source_text):
+        attrs = match.group(1) or ""
+        name = match.group(2)
+        variants = _fake_bridge_enum_variants(match.group(3))
+        if variants:
+            enums.append((name, _fake_bridge_enum_underlying(attrs), variants))
+    return enums
+
+
+def _fake_bridge_includes(source_text):
+    source_text = _fake_bridge_body(source_text)
+    includes = []
+    seen = set()
+    for include in re.findall(r'include!\s*\(\s*"([^"]+)"\s*\)', source_text):
+        if include in seen:
+            continue
+        seen.add(include)
+        includes.append(include)
+    return includes
+
+
+def _fake_bridge_type_namespaces(source_text):
+    source_text = _fake_bridge_body(source_text)
+    type_namespaces = {}
+    pattern = re.compile(
+        r'(?:#\s*\[\s*namespace\s*=\s*"([^"]+)"\s*\]\s*)?'
+        r'(?:#\s*\[[^\]]+\]\s*)*'
+        r'(?:enum|type)\s+([A-Za-z_][A-Za-z0-9_]*)',
+        flags=re.S,
+    )
+    for namespace, name in pattern.findall(source_text):
+        if namespace:
+            type_namespaces[name] = namespace
+    return type_namespaces
+
+
+def _fake_bridge_rust_items(source_text):
+    source_text = _fake_bridge_body(source_text)
+    blocks = re.findall(r'extern\s+"Rust"\s*\{(.*?)\}', source_text, flags=re.S)
+    rust_types = {}
+    free_functions = []
+    token_re = re.compile(
+        r"type\s+([A-Za-z_][A-Za-z0-9_]*)\s*;"
+        r"|(?:unsafe\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\((.*?)\)\s*(?:->\s*([^;{}]+))?\s*;",
+        flags=re.S,
+    )
+    for block in blocks:
+        current_type = None
+        for match in token_re.finditer(block):
+            if match.group(1):
+                current_type = match.group(1)
+                rust_types.setdefault(current_type, [])
+                continue
+            fn_name = match.group(2)
+            params = match.group(3) or ""
+            ret = match.group(4) or ""
+            owner = None
+            for pattern in (
+                r"self\s*:\s*&\s*(?:'[A-Za-z_][A-Za-z0-9_]*\s+)?mut\s*([A-Za-z_][A-Za-z0-9_]*)",
+                r"self\s*:\s*&\s*(?:'[A-Za-z_][A-Za-z0-9_]*\s+)?([A-Za-z_][A-Za-z0-9_]*)",
+                r"self\s*:\s*Pin\s*<\s*&\s*mut\s*([A-Za-z_][A-Za-z0-9_]*)\s*>",
+            ):
+                owner_match = re.search(pattern, params)
+                if owner_match:
+                    owner = owner_match.group(1)
+                    break
+            if owner is None and re.search(r"(^|,)\s*(?:&\s*mut\s+self|&\s*self|self)\s*(?:,|$)", params):
+                owner = current_type
+            if owner:
+                rust_types.setdefault(owner, []).append((fn_name, ret))
+            else:
+                free_functions.append((fn_name, ret))
+    return rust_types, free_functions
+
+
+def _fake_bridge_qualified(namespace, type_name):
+    parts = [part for part in namespace.split("::") if part]
+    return "::" + "::".join(parts + [type_name]) if parts else "::" + type_name
+
+
+def _fake_bridge_method_line(fn_name, ret, type_namespaces):
+    cpp_ret, statement = _fake_bridge_return_type(ret, type_namespaces)
+    prefix = f"    template <typename... Args> {cpp_ret} {fn_name}(Args&&...) const noexcept"
+    if statement:
+        return f"{prefix} {{ {statement} }}"
+    return f"{prefix} {{}}"
+
+
+def _fake_bridge_free_function_line(fn_name, ret, type_namespaces):
+    cpp_ret, statement = _fake_bridge_return_type(ret, type_namespaces)
+    prefix = f"template <typename... Args> {cpp_ret} {fn_name}(Args&&...) noexcept"
+    if statement:
+        return f"{prefix} {{ {statement} }}"
+    return f"{prefix} {{}}"
+
+
+def _fake_bridge_header(source_text):
+    rust_types, free_functions = _fake_bridge_rust_items(source_text)
+    structs = _fake_bridge_order_structs(_fake_bridge_structs(source_text))
+    enums = _fake_bridge_enums(source_text)
+    includes = _fake_bridge_includes(source_text)
+    type_namespaces = _fake_bridge_type_namespaces(source_text)
+    if not rust_types and not free_functions and not structs and not enums:
+        return None
+    namespace = _fake_bridge_namespace(source_text)
+    lines = [
+        "#pragma once",
+        "/* Compile-only fake cxxbridge header generated because cxxbridge produced empty output. */",
+        "#include <cstddef>",
+        "#include <cstdint>",
+        "#include <memory>",
+        "#include \"cxx.h\"",
+    ]
+    for include in includes:
+        lines.append(f"#include \"{include}\"")
+    lines.append("")
+    namespace_parts = [part for part in namespace.split("::") if part]
+    for part in namespace_parts:
+        lines.append(f"namespace {part} {{")
+    for enum_name, underlying, variants in enums:
+        lines.append(f"enum class {enum_name} : {underlying} {{")
+        for variant_name, value in variants:
+            suffix = f" = {value}" if value else ""
+            lines.append(f"    {variant_name}{suffix},")
+        lines.append("};")
+        lines.append("")
+    for struct_name, fields in structs:
+        lines.append(f"struct {struct_name} {{")
+        for field_name, field_type in fields:
+            lines.append(f"    {_fake_bridge_cpp_type(field_type, type_namespaces)} {field_name};")
+        lines.append("};")
+        lines.append("")
+    for type_name, methods in rust_types.items():
+        lines.append(f"struct {type_name} final {{")
+        if not methods:
+            lines.append(f"    {type_name}() = default;")
+        for fn_name, ret in methods:
+            lines.append(_fake_bridge_method_line(fn_name, ret, type_namespaces))
+        lines.append("};")
+        lines.append("")
+    for fn_name, ret in free_functions:
+        lines.append(_fake_bridge_free_function_line(fn_name, ret, type_namespaces))
+    for part in reversed(namespace_parts):
+        lines.append(f"}} // namespace {part}")
+    lines.extend(
+        [
+            "namespace rust {",
+            "inline namespace cxxbridge1 {",
+        ]
+    )
+    for type_name in rust_types:
+        lines.append(f"template <> inline void Box<{_fake_bridge_qualified(namespace, type_name)}>::drop() noexcept {{}}")
+    lines.extend(
+        [
+            "} // namespace cxxbridge1",
+            "} // namespace rust",
+            "",
+        ]
+    )
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def _fake_bridge_empty_output(args, is_header_file):
+    source_path = _fake_bridge_source_path(args)
+    if source_path is None:
+        return None
+    try:
+        source_text = open(source_path, encoding="utf-8", errors="ignore").read()
+    except OSError:
+        return None
+    if "#[cxx::bridge" not in source_text:
+        return None
+    if is_header_file:
+        return _fake_bridge_header(source_text)
+    return b"/* Compile-only fake cxxbridge cc generated because cxxbridge produced empty output. */\n"
+'''
+
+    if "\ndef run(cxx_exe, args, output, is_header_file):\n" not in text:
+        return data, ["rust_cxxbridge fallback transform skipped: run() insertion point not found"]
+    legacy_start = -1
+    for legacy_marker in legacy_markers:
+        legacy_start = text.find("\n# " + legacy_marker)
+        if legacy_start != -1:
+            break
+    if legacy_start != -1:
+        start = legacy_start
+        end = text.find("\ndef run(cxx_exe, args, output, is_header_file):\n", start)
+        if start == -1 or end == -1:
+            return data, ["rust_cxxbridge fallback transform skipped: legacy helper replacement bounds not found"]
+        text = text[:start] + helper + text[end:]
+        notes.append("upgraded compile-only cxxbridge fallback to typed template method stubs")
+    else:
+        text = text.replace("\ndef run(cxx_exe, args, output, is_header_file):\n", helper + "\ndef run(cxx_exe, args, output, is_header_file):\n", 1)
+        notes.append("inserted compile-only cxxbridge empty-output fallback helpers")
+
+    old = (
+        "    if res.returncode != 0:\n"
+        "        return res.returncode\n"
+        "    with build_utils.atomic_output(output) as output:\n"
+        "        output.write(res.stdout)\n"
+    )
+    new = (
+        "    if res.returncode != 0:\n"
+        "        return res.returncode\n"
+        "    stdout = res.stdout\n"
+        "    if not stdout:\n"
+        "        fake_stdout = _fake_bridge_empty_output(args, is_header_file)\n"
+        "        if fake_stdout is not None:\n"
+        "            stdout = fake_stdout\n"
+        "    with build_utils.atomic_output(output) as output:\n"
+        "        output.write(stdout)\n"
+    )
+    if old not in text:
+        if "fake_stdout = _fake_bridge_empty_output(args, is_header_file)" in text and "output.write(stdout)" in text:
+            notes.append("empty cxxbridge stdout routing already present")
+            return text.encode(TEXT_ENCODING), notes
+        return data, ["rust_cxxbridge fallback transform skipped: run() output write block not found"]
+    text = text.replace(old, new, 1)
+    notes.append("routed empty cxxbridge stdout through fake header/cc generator")
+    return text.encode(TEXT_ENCODING), notes
+
+
+def apply_rust_template_restore_source_forwarding(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    notes: list[str] = []
+
+    sources_exclusion = '                             "sources",\n'
+    if sources_exclusion in text:
+        text = text.replace(sources_exclusion, "", 1)
+        notes.append("removed stale sources exclusion so invoker.sources is forwarded into rust targets")
+
+    stale_guard = (
+        '    if (target_cpu != "riscv64") {\n'
+        "      rustflags = _rustflags\n"
+        "      sources = invoker.sources\n"
+        "    }\n"
+    )
+    if stale_guard in text:
+        text = text.replace(stale_guard, "    rustflags = _rustflags\n", 1)
+        notes.append("removed stale riscv64 Rust source-suppression guard")
+
+    if not notes and "rustflags = _rustflags" in text and sources_exclusion not in text:
+        notes.append("Rust template source forwarding already matches target-evidenced form")
+        return data, notes
+    if notes:
+        return text.encode(TEXT_ENCODING), notes
+    return data, ["Rust template source-forwarding transform skipped: stale guard not found"]
 
 
 def gn_flag_path(path: str) -> str:
@@ -6056,6 +6595,16 @@ def materialize_action(
             and action.get("source_role") == "compile_app_root_ohpm_path_resolution"
         ):
             data, transforms = apply_compile_app_root_ohpm_path_resolution(data)
+        elif (
+            rel_path == "build/templates/rust/rust_cxxbridge.py"
+            and action.get("source_role") == "rust_cxxbridge_empty_output_fake_header_fallback"
+        ):
+            data, transforms = apply_rust_cxxbridge_empty_output_fake_header_fallback(data)
+        elif (
+            rel_path == "build/templates/rust/rust_template.gni"
+            and action.get("source_role") == "rust_template_restore_source_forwarding"
+        ):
+            data, transforms = apply_rust_template_restore_source_forwarding(data)
         elif (
             rel_path == "build/toolchain/linux/BUILD.gn"
             and action.get("source_role") == "host_clang_x64_cxx_stdlib_paths"
@@ -6652,6 +7201,16 @@ def check_build_log_old_errors_absent(build_result: dict[str, Any] | None) -> di
             "multimodalinput/input/libmmi-server.z.so",
             "undefined symbol: HandleMotionAccelerateTouchpad",
         ],
+        "old_request_rust_cxxbridge_empty_outputs": [
+            "base/request/request/common",
+            "wrapper.rs.h",
+            "member access into incomplete type",
+        ],
+        "old_rust_template_riscv64_sources_suppressed_unused_crate_type": [
+            "build/templates/rust/rust_template.gni",
+            "Assignment had no effect",
+            "crate_type = _crate_type",
+        ],
     }
     if not build_result:
         return {
@@ -7150,6 +7709,47 @@ def parse_build_diagnostics(
 
     if (
         clean_str(target.get("architecture")) == "riscv64"
+        and "Assignment had no effect" in plain_text
+        and "build/templates/rust/rust_template.gni" in plain_text
+        and "crate_type = _crate_type" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "rust_template_riscv64_sources_suppressed_unused_crate_type",
+                "rust_build_template_compatibility",
+                (
+                    "GN rejected rust_template.gni because an earlier riscv64 guard suppressed "
+                    "Rust source/rustflag forwarding, leaving crate_type assigned but unused inside "
+                    "ohos_rust_library expansion."
+                ),
+                (
+                    "Restore the target-evidenced Rust template form: allow invoker.sources to be "
+                    "forwarded normally and set rustflags = _rustflags without a target_cpu != "
+                    "\"riscv64\" guard. Keep request/Rust components selected so real or fake "
+                    "cxxbridge issues remain visible."
+                ),
+                [
+                    str(path)
+                    for path, text in texts
+                    if "build/templates/rust/rust_template.gni" in strip_ansi(text)
+                    and "crate_type = _crate_type" in strip_ansi(text)
+                ]
+                or [str(log_path)],
+                matching_lines(
+                    all_text,
+                    [
+                        "Assignment had no effect",
+                        "build/templates/rust/rust_template.gni",
+                        "crate_type = _crate_type",
+                        "ohos_rust_library",
+                    ],
+                    16,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
         and "cross_values_generator.rb" in plain_text
         and "Failed: input file, output file and arch-name required" in plain_text
     ):
@@ -7436,7 +8036,7 @@ def parse_build_diagnostics(
                 "compile_app_ohpm_path_resolved_from_app_cwd",
                 "host_or_prebuilt_toolchain_path",
                 "Application packaging invokes ohpm through an app-relative prebuilts path, so the real workspace ohpm prebuilt is not found after compile_app.py changes cwd.",
-                "Patch build/scripts/compile_app.py to resolve ohpm from get_root_dir()/prebuilts/tool/command-line-tools/ohpm/bin/ohpm, and keep this as a real prebuilt tool dependency rather than a fake interface.",
+                "Patch build/scripts/compile_app.py to normalize os.path.abspath(get_root_dir()) before resolving prebuilts/tool/command-line-tools/ohpm/bin/ohpm, and keep this as a real prebuilt tool dependency rather than a fake interface.",
                 [
                     str(path)
                     for path, text in texts
@@ -7452,6 +8052,55 @@ def parse_build_diagnostics(
                         "No such file or directory",
                     ],
                     14,
+                ),
+            )
+        )
+
+    if (
+        "base/request/request/common" in plain_text
+        and "wrapper.rs.h" in plain_text
+        and "member access into incomplete type" in plain_text
+        and (
+            "ClosureWrapper" in plain_text
+            or "OpenCallbackWrapper" in plain_text
+            or "CallbackWrapper" in plain_text
+            or "RustPerformanceInfo" in plain_text
+        )
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "request_rust_cxxbridge_empty_outputs",
+                "rust_toolchain_fake_interface",
+                (
+                    "Request Rust/C++ bridge headers are empty or incomplete, so C++ wrapper code "
+                    "only sees opaque Rust callback types and fails on member calls."
+                ),
+                (
+                    "Treat this as missing functional host cxxbridge/Rust toolchain debt. During "
+                    "compile triage, patch build/templates/rust/rust_cxxbridge.py so empty "
+                    "cxxbridge stdout for cxx::bridge sources emits a minimal compile-only fake "
+                    "header/cc; replace the fake Rust toolchain with real prebuilts before runtime "
+                    "or API validation."
+                ),
+                [
+                    str(path)
+                    for path, text in texts
+                    if "base/request/request/common" in strip_ansi(text)
+                    and "member access into incomplete type" in strip_ansi(text)
+                ]
+                or [str(log_path)],
+                matching_lines(
+                    all_text,
+                    [
+                        "base/request/request/common",
+                        "wrapper.rs.h",
+                        "member access into incomplete type",
+                        "ClosureWrapper",
+                        "OpenCallbackWrapper",
+                        "CallbackWrapper",
+                        "RustPerformanceInfo",
+                    ],
+                    18,
                 ),
             )
         )
