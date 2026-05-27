@@ -2152,6 +2152,44 @@ def cleanup_stale_mmi_fake_rust_motion_library(workspace: Path, product: str) ->
     return cleanups
 
 
+def cleanup_stale_code_signature_fake_key_enable_library(workspace: Path, product: str) -> list[dict[str, Any]]:
+    cleanups: list[dict[str, Any]] = []
+    if not workspace_fake_rust_driver_enabled(workspace):
+        return cleanups
+    required_symbols = {
+        "EnableKeyInProfileByRust",
+        "RemoveKeyInProfileByRust",
+    }
+    candidates = [
+        workspace / "out" / product / "lib.unstripped/security/code_signature/libkey_enable.z.so",
+        workspace / "out" / product / "security/code_signature/libkey_enable.z.so",
+    ]
+    workspace_resolved = workspace.resolve()
+    for library in candidates:
+        if not library.is_file():
+            continue
+        library_resolved = library.resolve()
+        if workspace_resolved not in library_resolved.parents:
+            continue
+        symbols = {clean_str(item.get("name"), "") for item in collect_defined_dynsym_symbols(workspace, library)}
+        missing = sorted(required_symbols - symbols)
+        if not missing:
+            continue
+        library.unlink()
+        cleanups.append(
+            {
+                "path": str(library),
+                "status": "removed",
+                "reason": (
+                    "stale fake Rust code_signature key_enable shared library did not export "
+                    + ", ".join(missing)
+                    + " after no_mangle symbol extraction was enabled"
+                ),
+            }
+        )
+    return cleanups
+
+
 def target_has_riscv64_objcopy_evidence(target_root: Path, rel_path: str = "build/scripts/run_objcopy.py") -> bool:
     target_objcopy = target_root / rel_path
     if not target_objcopy.is_file():
@@ -2265,6 +2303,18 @@ def target_has_mmi_rust_motion_no_mangle_evidence(target_root: Path) -> bool:
         "HandleMotionDynamicAccelerateTouchpad",
         "HandleMotionAccelerateTouchpad",
         "HandleAxisAccelerateTouchpad",
+    }
+    return all(f"fn {name}" in text and "#[no_mangle]" in text for name in required)
+
+
+def target_has_code_signature_key_enable_no_mangle_evidence(target_root: Path) -> bool:
+    target_lib = target_root / "base/security/code_signature/services/key_enable/src/profile_utils.rs"
+    if not target_lib.is_file():
+        return False
+    text = target_lib.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    required = {
+        "EnableKeyInProfileByRust",
+        "RemoveKeyInProfileByRust",
     }
     return all(f"fn {name}" in text and "#[no_mangle]" in text for name in required)
 
@@ -2407,7 +2457,8 @@ def collect_no_mangle_symbols(args):
     symbols = []
     seen = set()
     pattern = re.compile(
-        r"#\\s*\\[\\s*no_mangle\\s*\\]\\s*(?:\\n\\s*#\\[[^\\n]+\\]\\s*)*\\n\\s*"
+        r"#\\s*\\[\\s*no_mangle\\s*\\]\\s*"
+        r"(?:\\n\\s*(?:#\\[[^\\n]+\\]|///[^\\n]*|//[^\\n]*))*\\n\\s*"
         r"(?:pub\\s+)?(?:unsafe\\s+)?extern(?:\\s+\\\"C\\\")?\\s+fn\\s+([A-Za-z_][A-Za-z0-9_]*)",
         re.MULTILINE,
     )
@@ -3924,6 +3975,7 @@ def planned_actions(
         "WebView app_fwk_update test closures are migrated with target evidence when test deps would otherwise keep the old flat sa service in the GN graph.",
         "Hidumper RawParam is added to hidumpermemory only with the target-evidenced standalone guard, avoiding a broader DumpManagerService/plugin source import during compile triage.",
         "MMI Rust fake shared libraries are cleaned and regenerated when target-evidenced #[no_mangle] motion symbols are missing from stale fake-driver outputs.",
+        "Rust fake-driver no_mangle extraction tolerates doc comments between #[no_mangle] and extern C functions, and stale key_enable fake libraries are regenerated when code_signature exports are missing.",
         "Hiperf RISC-V support is imported as a target-evidenced text closure for register/callstack/report handling, keeping the hiperf feature selected rather than filtering it out.",
     ]
     return actions, notes
@@ -10073,6 +10125,42 @@ def parse_build_diagnostics(
         )
 
     if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "security/code_signature/libcode_sign_utils.z.so" in plain_text
+        and (
+            "undefined symbol: EnableKeyInProfileByRust" in plain_text
+            or "undefined symbol: RemoveKeyInProfileByRust" in plain_text
+        )
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "riscv64_code_signature_key_enable_fake_driver_missing_no_mangle_symbols",
+                "source_build_compatibility",
+                "libcode_sign_utils depends on code_signature Rust key-enable FFI symbols, but the stale compile-only fake libkey_enable output did not export the documented #[no_mangle] extern C functions.",
+                (
+                    "Teach the fake Rust driver to collect #[no_mangle] extern C symbols even when "
+                    "doc comments appear between the attribute and function declaration, then remove "
+                    "stale libkey_enable.z.so outputs so Ninja regenerates them."
+                ),
+                [
+                    str(log_path),
+                    str(workspace / "base/security/code_signature/services/key_enable/src/profile_utils.rs"),
+                    str(target_root / "base/security/code_signature/services/key_enable/src/profile_utils.rs"),
+                    str(workspace / "prebuilts/rustc-riscv/linux-x86_64/current/bin/rustc"),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "security/code_signature/libcode_sign_utils.z.so",
+                        "undefined symbol: EnableKeyInProfileByRust",
+                        "undefined symbol: RemoveKeyInProfileByRust",
+                    ],
+                    18,
+                ),
+            )
+        )
+
+    if (
         "hiviewdfx/hidumper/libhidumpermemory.z.so" in plain_text
         and "undefined symbol: OHOS::HiviewDFX::RawParam::GetOutputFd()" in plain_text
     ):
@@ -10680,6 +10768,8 @@ def prepare_generated_artifacts_for_build(
     cleanups.extend(cleanup_stale_mmi_fake_rust_key_library(workspace, product))
     if target_has_mmi_rust_motion_no_mangle_evidence(target_root):
         cleanups.extend(cleanup_stale_mmi_fake_rust_motion_library(workspace, product))
+    if target_has_code_signature_key_enable_no_mangle_evidence(target_root):
+        cleanups.extend(cleanup_stale_code_signature_fake_key_enable_library(workspace, product))
     return cleanups
 
 
