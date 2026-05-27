@@ -138,6 +138,10 @@ WEBVIEW_REGISTER_JSFUNCTION_SOURCE_RELS = [
     "base/web/webview/interfaces/kits/ani/webview/native/webviewcontroller/webview_controller.cpp",
     "base/web/webview/interfaces/kits/cj/src/webview_controller_impl.cpp",
 ]
+WEBVIEW_ADAPTER_BRIDGE_HELPER_SOURCE_REL = (
+    "base/web/webview/ohos_interface/ohos_glue/ohos_adapter/bridge/webview/"
+    "ark_web_adapter_webview_bridge_helper.cpp"
+)
 APPSPAWN_INNERKITS_HEADER_REL = "base/startup/appspawn/interfaces/innerkits/include/appspawn.h"
 CXX_STDLIB_HEADER_NAMES = {
     "algorithm",
@@ -1349,6 +1353,14 @@ def target_has_appspawn_unload_weblib_msg_evidence(target_root: Path) -> bool:
     )
 
 
+def target_has_webview_adapter_bridge_helper_run_mode_evidence(target_root: Path) -> bool:
+    source = target_root / WEBVIEW_ADAPTER_BRIDGE_HELPER_SOURCE_REL
+    if not source.is_file():
+        return False
+    text = source.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return "ArkWebBridgeHelperSharedInit(true)" in text
+
+
 def target_has_riscv64_ndk_evidence(target_root: Path) -> bool:
     target_ndk = target_root / "build/ohos/ndk/ndk.gni"
     if not target_ndk.is_file():
@@ -2187,6 +2199,44 @@ def cleanup_stale_code_signature_fake_key_enable_library(workspace: Path, produc
                 ),
             }
         )
+    return cleanups
+
+
+def cleanup_stale_webview_adapter_bridge_helper_generated_source(workspace: Path, product: str) -> list[dict[str, Any]]:
+    cleanups: list[dict[str, Any]] = []
+    source = workspace / WEBVIEW_ADAPTER_BRIDGE_HELPER_SOURCE_REL
+    generated = (
+        workspace
+        / "out"
+        / product
+        / "gen/base/web/webview/ohos_glue/ohos_adapter/bridge/ark_web_adapter_webview_bridge_helper.cpp"
+    )
+    if not source.is_file() or not generated.is_file():
+        return cleanups
+    source_text = source.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    generated_text = generated.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    if "ArkWebBridgeHelperSharedInit(true)" not in source_text:
+        return cleanups
+    if "ArkWebBridgeHelperSharedInit()" not in generated_text:
+        return cleanups
+    workspace_resolved = workspace.resolve()
+    generated_resolved = generated.resolve()
+    if workspace_resolved not in generated_resolved.parents:
+        return [
+            {
+                "path": str(generated),
+                "status": "skipped_path_safety_check_failed",
+                "reason": "refused to remove generated WebView bridge helper outside the workspace",
+            }
+        ]
+    generated.unlink()
+    cleanups.append(
+        {
+            "path": str(generated),
+            "status": "removed",
+            "reason": "stale generated WebView adapter bridge helper still called ArkWebBridgeHelperSharedInit without runMode",
+        }
+    )
     return cleanups
 
 
@@ -3793,6 +3843,19 @@ def planned_actions(
                     ),
                 )
             )
+        if target_has_webview_adapter_bridge_helper_run_mode_evidence(target_root):
+            actions.append(
+                workspace_transform_action(
+                    WEBVIEW_ADAPTER_BRIDGE_HELPER_SOURCE_REL,
+                    "webview_adapter_bridge_helper_shared_init_run_mode",
+                    "L2_webview_local_module_text_closure",
+                    (
+                        "Pass the target-evidenced webview run-mode argument to "
+                        "ArkWebBridgeHelperSharedInit in the WebView adapter bridge helper so "
+                        "generated ohos_glue sources match the 6.1 arkweb_utils API."
+                    ),
+                )
+            )
         actions.append(
             copy_action(
                 "base/web/webview/ohos_nweb/BUILD.gn",
@@ -3973,6 +4036,7 @@ def planned_actions(
         "WebView generated glue sources are not faked: target-evidenced ohos_interface BUILD/base/scripts/input files are imported so the existing prepare/translator actions regenerate out/gen sources.",
         "WebView app_fwk_update component-registry labels are migrated to the target sa/app_fwk_update module when target evidence shows the service moved from the old flat sa target.",
         "WebView app_fwk_update test closures are migrated with target evidence when test deps would otherwise keep the old flat sa service in the GN graph.",
+        "WebView adapter bridge-helper generated sources are invalidated when target evidence changes ArkWebBridgeHelperSharedInit from the old no-arg API to the runMode API.",
         "Hidumper RawParam is added to hidumpermemory only with the target-evidenced standalone guard, avoiding a broader DumpManagerService/plugin source import during compile triage.",
         "MMI Rust fake shared libraries are cleaned and regenerated when target-evidenced #[no_mangle] motion symbols are missing from stale fake-driver outputs.",
         "Rust fake-driver no_mangle extraction tolerates doc comments between #[no_mangle] and extern C functions, and stale key_enable fake libraries are regenerated when code_signature exports are missing.",
@@ -6816,6 +6880,19 @@ def apply_appspawn_unload_weblib_msg_type(data: bytes) -> tuple[bytes, list[str]
     return data, ["appspawn WebView unload message insertion point not found"]
 
 
+def apply_webview_adapter_bridge_helper_shared_init_run_mode(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if "ArkWebBridgeHelperSharedInit(true)" in text:
+        return data, ["WebView adapter bridge helper already passes runMode to shared init"]
+    count = text.count("ArkWebBridgeHelperSharedInit()")
+    if count:
+        text = text.replace("ArkWebBridgeHelperSharedInit()", "ArkWebBridgeHelperSharedInit(true)")
+        return text.encode(TEXT_ENCODING), [
+            f"rewrote {count} WebView adapter bridge helper shared-init call(s) to pass runMode"
+        ]
+    return data, ["WebView adapter bridge helper shared-init call not found"]
+
+
 def item_mentions_profiler_smartperf_host(item: Any) -> bool:
     if isinstance(item, str):
         return "//developtools/profiler/host/smartperf/" in item
@@ -7192,6 +7269,11 @@ def materialize_action(
             and action.get("source_role") == "appspawn_unload_weblib_msg_type"
         ):
             data, transforms = apply_appspawn_unload_weblib_msg_type(data)
+        elif (
+            rel_path == WEBVIEW_ADAPTER_BRIDGE_HELPER_SOURCE_REL
+            and action.get("source_role") == "webview_adapter_bridge_helper_shared_init_run_mode"
+        ):
+            data, transforms = apply_webview_adapter_bridge_helper_shared_init_run_mode(data)
         elif (
             rel_path == "developtools/profiler/bundle.json"
             and action.get("source_role") == "profiler_smartperf_split_bundle_migration"
@@ -10433,6 +10515,33 @@ def parse_build_diagnostics(
             )
         )
 
+    if (
+        "ark_web_adapter_webview_bridge_helper.cpp" in plain_text
+        and "no matching function for call to 'ArkWebBridgeHelperSharedInit'" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "webview_adapter_bridge_helper_shared_init_run_mode_missing",
+                "source_build_compatibility",
+                "Generated WebView adapter bridge-helper code still calls the old no-argument ArkWebBridgeHelperSharedInit while arkweb_utils.h exposes the newer runMode API.",
+                "Patch the target-evidenced ohos_interface bridge-helper input to call ArkWebBridgeHelperSharedInit(true), remove the stale generated cpp, and let the glue prepare action regenerate it.",
+                [
+                    str(log_path),
+                    str(workspace / WEBVIEW_ADAPTER_BRIDGE_HELPER_SOURCE_REL),
+                    str(target_root / WEBVIEW_ADAPTER_BRIDGE_HELPER_SOURCE_REL),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "ark_web_adapter_webview_bridge_helper.cpp",
+                        "ArkWebBridgeHelperSharedInit",
+                        "requires at least argument 'runMode'",
+                    ],
+                    14,
+                ),
+            )
+        )
+
     component_failures = sorted(set(re.findall(r"find component ([^ ]+) failed", plain_text)))
     for component in component_failures[:8]:
         diagnostics.append(
@@ -10714,6 +10823,9 @@ def prepare_generated_artifacts_for_build(
     if clean_str(target.get("architecture")) != "riscv64":
         return cleanups
     workspace_resolved = workspace.resolve()
+
+    if target_has_webview_adapter_bridge_helper_run_mode_evidence(target_root):
+        cleanups.extend(cleanup_stale_webview_adapter_bridge_helper_generated_source(workspace, product))
 
     if workspace_lume_asset_compiler_sources_support_riscv64(workspace):
         binary_path = generated_lume_asset_compiler_path(workspace, product)
