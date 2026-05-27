@@ -115,6 +115,7 @@ GRAPHIC_2D_VSYNC_LOG_REL = "foundation/graphic/graphic_2d/rosen/modules/composer
 LUME_STATIC_PLUGIN_DECL_REL = "foundation/graphic/graphic_3d/lume/LumeEngine/src/static_plugin_decl.h"
 ARK_ETS_RUNTIME_BUILD_REL = "arkcompiler/ets_runtime/BUILD.gn"
 ARK_ETS_RUNTIME_RISCV64_TRAMPOLINE_REL = "arkcompiler/ets_runtime/ecmascript/trampoline/riscv64/raw_asm_stub.S"
+ARK_ETS_DEOPTIMIZER_CPP_REL = "arkcompiler/ets_runtime/ecmascript/deoptimizer/deoptimizer.cpp"
 ARK_RUNTIME_ASM_SUPPORT_CPP_REL = "arkcompiler/runtime_core/static_core/runtime/arch/asm_support.cpp"
 ARK_ETS_SUBPROJECT_SOURCES_REL = "arkcompiler/runtime_core/static_core/plugins/ets/subproject_sources.gn"
 ARK_ETS_PROXY_ENTRYPOINTS_CPP_REL = "arkcompiler/runtime_core/static_core/plugins/ets/runtime/entrypoints/ets_proxy_entrypoints.cpp"
@@ -3426,6 +3427,17 @@ def planned_actions(
                 ),
             )
         )
+        actions.append(
+            workspace_transform_action(
+                ARK_ETS_DEOPTIMIZER_CPP_REL,
+                "ark_jsruntime_riscv64_lazy_deopt_cpp_guard",
+                "L1_build_compatibility",
+                (
+                    "Exclude riscv64 from the OpenHarmony 6.0 C++ LazyDeoptEntry fallback "
+                    "when the target-evidenced RISC-V raw_asm_stub.S provides the symbol."
+                ),
+            )
+        )
 
     if clean_str(seed.get("architecture")) == "riscv64" and target_has_tee_riscv64_barrier_evidence(target_root):
         for rel_path in TEE_RISCV64_BARRIER_SOURCE_RELS:
@@ -4474,8 +4486,25 @@ def apply_ark_jsruntime_riscv64_explicit_thin_lto_compat(data: bytes) -> tuple[b
 
 def apply_ark_jsruntime_riscv64_trampoline_source(data: bytes) -> tuple[bytes, list[str]]:
     text = data.decode(TEXT_ENCODING, errors="ignore")
+    notes: list[str] = []
+    invalid_nolto = (
+        '  if (target_cpu == "riscv64") {\n'
+        '    cflags_cc += [ "-fno-lto" ]\n'
+        '    ldflags += [ "-fno-lto" ]\n'
+        "  }\n"
+    )
+    valid_nolto = (
+        '  if (target_cpu == "riscv64") {\n'
+        '    configs += [ ":ark_jsruntime_nolto_config" ]\n'
+        "  }\n"
+    )
+    if invalid_nolto in text:
+        text = text.replace(invalid_nolto, valid_nolto, 1)
+        notes.append("normalized Ark JS runtime riscv64 no-LTO block to a config reference")
+
     if "ecmascript/trampoline/riscv64/raw_asm_stub.S" in text:
-        return data, ["Ark JS runtime RISC-V trampoline source already present"]
+        notes.append("Ark JS runtime RISC-V trampoline source already present")
+        return text.encode(TEXT_ENCODING), notes
     old = (
         '  } else if (current_cpu == "arm") {\n'
         '    ecma_source += [ "ecmascript/trampoline/arm32/raw_asm_stub.S" ]\n'
@@ -4490,8 +4519,65 @@ def apply_ark_jsruntime_riscv64_trampoline_source(data: bytes) -> tuple[bytes, l
     )
     if old in text:
         text = text.replace(old, new, 1)
-        return text.encode(TEXT_ENCODING), ["added Ark JS runtime RISC-V trampoline source"]
+        notes.append("added Ark JS runtime RISC-V trampoline source")
+        return text.encode(TEXT_ENCODING), notes
+    if notes:
+        notes.append("Ark JS runtime RISC-V trampoline insertion point not found")
+        return text.encode(TEXT_ENCODING), notes
     return data, ["Ark JS runtime RISC-V trampoline insertion point not found"]
+
+
+def apply_ark_jsruntime_riscv64_lazy_deopt_cpp_guard(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if "defined(__riscv)" in text and "JSTaggedType LazyDeoptEntry()" in text:
+        return data, ["Ark JS runtime C++ LazyDeoptEntry fallback is already guarded for riscv64"]
+    define_only_guard = (
+        "#if !defined(PANDA_TARGET_AMD64) && !defined(PANDA_TARGET_ARM64) && !defined(PANDA_TARGET_ARM32) && \\\n"
+        "    !defined(PANDA_TARGET_RISCV64)\n"
+    )
+    compiler_builtin_guard = (
+        "#if !defined(PANDA_TARGET_AMD64) && !defined(PANDA_TARGET_ARM64) && !defined(PANDA_TARGET_ARM32) && \\\n"
+        "    !defined(PANDA_TARGET_RISCV64) && \\\n"
+        "    !(defined(__riscv) && (__riscv_xlen == 64))\n"
+    )
+    if define_only_guard in text:
+        text = text.replace(define_only_guard, compiler_builtin_guard, 1)
+        return text.encode(TEXT_ENCODING), ["extended Ark JS runtime C++ LazyDeoptEntry guard with compiler riscv64 builtin"]
+    old = (
+        "// Lazy deopt is only needed on platforms without assembly stub implementation.\n"
+        "// x64, aarch64, and arm32 have assembly stubs that provide LazyDeoptEntry.\n"
+        "// arkui_x and riscv64 use the C++ stub below.\n"
+        "#if !defined(PANDA_TARGET_AMD64) && !defined(PANDA_TARGET_ARM64) && !defined(PANDA_TARGET_ARM32)\n"
+    )
+    new = (
+        "// Lazy deopt is only needed on platforms without assembly stub implementation.\n"
+        "// x64, aarch64, arm32, and riscv64 have assembly stubs that provide LazyDeoptEntry.\n"
+        "// arkui_x keeps the C++ fallback below.\n"
+        "#if !defined(PANDA_TARGET_AMD64) && !defined(PANDA_TARGET_ARM64) && !defined(PANDA_TARGET_ARM32) && \\\n"
+        "    !defined(PANDA_TARGET_RISCV64) && \\\n"
+        "    !(defined(__riscv) && (__riscv_xlen == 64))\n"
+    )
+    if old in text:
+        text = text.replace(old, new, 1)
+        return text.encode(TEXT_ENCODING), ["guarded Ark JS runtime C++ LazyDeoptEntry fallback for riscv64"]
+    target_like = (
+        "// Not use lazy deopt on arkui_x.\n"
+        "#ifdef CROSS_PLATFORM\n"
+        "JSTaggedType LazyDeoptEntry()\n"
+    )
+    if target_like in text:
+        return data, ["Ark JS runtime C++ LazyDeoptEntry fallback already matches target-style guard"]
+    generic = "#if !defined(PANDA_TARGET_AMD64) && !defined(PANDA_TARGET_ARM64) && !defined(PANDA_TARGET_ARM32)\n"
+    if generic in text and "JSTaggedType LazyDeoptEntry()" in text:
+        text = text.replace(
+            generic,
+            "#if !defined(PANDA_TARGET_AMD64) && !defined(PANDA_TARGET_ARM64) && !defined(PANDA_TARGET_ARM32) && \\\n"
+            "    !defined(PANDA_TARGET_RISCV64) && \\\n"
+            "    !(defined(__riscv) && (__riscv_xlen == 64))\n",
+            1,
+        )
+        return text.encode(TEXT_ENCODING), ["guarded generic C++ LazyDeoptEntry fallback for riscv64"]
+    return data, ["Ark JS runtime C++ LazyDeoptEntry guard insertion point not found"]
 
 
 def apply_skia_raster_pipeline_riscv64_scalar_sqrt_fallback(data: bytes) -> tuple[bytes, list[str]]:
@@ -5684,15 +5770,18 @@ def apply_compile_app_root_ohpm_path_resolution(data: bytes) -> tuple[bytes, lis
 
 def apply_rust_cxxbridge_empty_output_fake_header_fallback(data: bytes) -> tuple[bytes, list[str]]:
     text = data.decode(TEXT_ENCODING, errors="ignore")
-    marker = "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V5"
+    marker = "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V8"
     legacy_markers = [
+        "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V7",
+        "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V6",
+        "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V5",
         "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V4",
         "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V3",
         "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V2",
         "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT",
     ]
     if marker in text:
-        return data, ["rust_cxxbridge.py already has typed empty-output fake header fallback scoped to bridge module body"]
+        return data, ["rust_cxxbridge.py already has typed empty-output fake header/cc fallback with weak cxx runtime symbols"]
 
     notes: list[str] = []
     if "import re\n" not in text:
@@ -5704,7 +5793,7 @@ def apply_rust_cxxbridge_empty_output_fake_header_fallback(data: bytes) -> tuple
 
     helper = r'''
 
-# OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V5
+# OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V8
 def _fake_bridge_source_path(args):
     for arg in args:
         if arg == "--" or not arg.endswith(".rs"):
@@ -5884,10 +5973,11 @@ def _fake_bridge_enum_underlying(attrs):
 
 def _fake_bridge_enum_variants(body):
     variants = []
-    for raw_entry in (body or "").split(","):
-        entry = re.sub(r"//.*", "", raw_entry)
-        entry = re.sub(r"(?m)^\s*///.*$", "", entry)
-        entry = re.sub(r"#\s*\[[^\]]+\]\s*", "", entry)
+    body = re.sub(r"/\*.*?\*/", "", body or "", flags=re.S)
+    body = re.sub(r"(?m)//.*$", "", body)
+    body = re.sub(r"#\s*\[[^\]]+\]\s*", "", body)
+    for raw_entry in body.split(","):
+        entry = raw_entry
         entry = entry.strip()
         if not entry:
             continue
@@ -5899,8 +5989,14 @@ def _fake_bridge_enum_variants(body):
     return variants
 
 
+def _fake_bridge_external_type_names(source_text):
+    source_text = _fake_bridge_body(source_text)
+    return set(re.findall(r"(?:^|[;\n{]\s*)type\s+([A-Za-z_][A-Za-z0-9_]*)\s*;", source_text))
+
+
 def _fake_bridge_enums(source_text):
     source_text = _fake_bridge_body(source_text)
+    external_type_names = _fake_bridge_external_type_names(source_text)
     enums = []
     enum_re = re.compile(
         r"((?:(?:\s*#\s*\[[^\]]+\]\s*)|(?:\s*///[^\n]*\n))*)"
@@ -5910,6 +6006,8 @@ def _fake_bridge_enums(source_text):
     for match in enum_re.finditer(source_text):
         attrs = match.group(1) or ""
         name = match.group(2)
+        if name in external_type_names or re.search(r"#\s*\[\s*namespace\s*=", attrs):
+            continue
         variants = _fake_bridge_enum_variants(match.group(3))
         if variants:
             enums.append((name, _fake_bridge_enum_underlying(attrs), variants))
@@ -6003,13 +6101,58 @@ def _fake_bridge_free_function_line(fn_name, ret, type_namespaces):
     return f"{prefix} {{}}"
 
 
+def _fake_bridge_struct_uses_external_type(fields, type_namespaces, local_type_names):
+    builtin_tokens = {
+        "bool",
+        "char",
+        "const",
+        "double",
+        "f32",
+        "f64",
+        "float",
+        "i8",
+        "i16",
+        "i32",
+        "i64",
+        "int8_t",
+        "int16_t",
+        "int32_t",
+        "int64_t",
+        "mut",
+        "rust",
+        "size_t",
+        "str",
+        "String",
+        "u8",
+        "u16",
+        "u32",
+        "u64",
+        "uint8_t",
+        "uint16_t",
+        "uint32_t",
+        "uint64_t",
+        "usize",
+        "Vec",
+    }
+    for _field_name, field_type in fields:
+        tokens = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", field_type or "")
+        for token in tokens:
+            if token in builtin_tokens or token in local_type_names:
+                continue
+            if token in type_namespaces:
+                return True
+            if token[:1].isupper():
+                return True
+    return False
+
+
 def _fake_bridge_header(source_text):
     rust_types, free_functions = _fake_bridge_rust_items(source_text)
     structs = _fake_bridge_order_structs(_fake_bridge_structs(source_text))
     enums = _fake_bridge_enums(source_text)
     includes = _fake_bridge_includes(source_text)
     type_namespaces = _fake_bridge_type_namespaces(source_text)
-    if not rust_types and not free_functions and not structs and not enums:
+    if not rust_types and not free_functions and not structs and not enums and not includes:
         return None
     namespace = _fake_bridge_namespace(source_text)
     lines = [
@@ -6020,25 +6163,55 @@ def _fake_bridge_header(source_text):
         "#include <memory>",
         "#include \"cxx.h\"",
     ]
+    namespace_parts = [part for part in namespace.split("::") if part]
+    local_type_names = set(rust_types) | {name for name, _fields in structs} | {name for name, _underlying, _variants in enums}
+    early_structs = [
+        (name, fields)
+        for name, fields in structs
+        if not _fake_bridge_struct_uses_external_type(fields, type_namespaces, local_type_names)
+    ]
+    late_structs = [
+        (name, fields)
+        for name, fields in structs
+        if _fake_bridge_struct_uses_external_type(fields, type_namespaces, local_type_names)
+    ]
+
+    def open_namespace():
+        for part in namespace_parts:
+            lines.append(f"namespace {part} {{")
+
+    def close_namespace():
+        for part in reversed(namespace_parts):
+            lines.append(f"}} // namespace {part}")
+
+    def emit_enums(items):
+        for enum_name, underlying, variants in items:
+            lines.append(f"enum class {enum_name} : {underlying} {{")
+            for variant_name, value in variants:
+                suffix = f" = {value}" if value else ""
+                lines.append(f"    {variant_name}{suffix},")
+            lines.append("};")
+            lines.append("")
+
+    def emit_structs(items):
+        for struct_name, fields in items:
+            lines.append(f"struct {struct_name} {{")
+            for field_name, field_type in fields:
+                lines.append(f"    {_fake_bridge_cpp_type(field_type, type_namespaces)} {field_name};")
+            lines.append("};")
+            lines.append("")
+
+    open_namespace()
+    emit_enums(enums)
+    emit_structs(early_structs)
+    close_namespace()
+    if enums or early_structs:
+        lines.append("")
     for include in includes:
         lines.append(f"#include \"{include}\"")
     lines.append("")
-    namespace_parts = [part for part in namespace.split("::") if part]
-    for part in namespace_parts:
-        lines.append(f"namespace {part} {{")
-    for enum_name, underlying, variants in enums:
-        lines.append(f"enum class {enum_name} : {underlying} {{")
-        for variant_name, value in variants:
-            suffix = f" = {value}" if value else ""
-            lines.append(f"    {variant_name}{suffix},")
-        lines.append("};")
-        lines.append("")
-    for struct_name, fields in structs:
-        lines.append(f"struct {struct_name} {{")
-        for field_name, field_type in fields:
-            lines.append(f"    {_fake_bridge_cpp_type(field_type, type_namespaces)} {field_name};")
-        lines.append("};")
-        lines.append("")
+    open_namespace()
+    emit_structs(late_structs)
     for type_name, methods in rust_types.items():
         lines.append(f"struct {type_name} final {{")
         if not methods:
@@ -6069,6 +6242,134 @@ def _fake_bridge_header(source_text):
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
+def _fake_bridge_cc_runtime_stubs():
+    return r"""
+extern "C" {
+#define OHOS_PORTING_CXXBRIDGE_WEAK __attribute__((weak))
+
+OHOS_PORTING_CXXBRIDGE_WEAK void cxxbridge1$string$new(rust::String *self) noexcept
+{
+    std::memset(self, 0, sizeof(*self));
+}
+
+OHOS_PORTING_CXXBRIDGE_WEAK void cxxbridge1$string$clone(rust::String *self, const rust::String &) noexcept
+{
+    std::memset(self, 0, sizeof(*self));
+}
+
+OHOS_PORTING_CXXBRIDGE_WEAK bool cxxbridge1$string$from_utf8(rust::String *self, const char *, std::size_t) noexcept
+{
+    std::memset(self, 0, sizeof(*self));
+    return true;
+}
+
+OHOS_PORTING_CXXBRIDGE_WEAK void cxxbridge1$string$from_utf8_lossy(rust::String *self, const char *, std::size_t) noexcept
+{
+    std::memset(self, 0, sizeof(*self));
+}
+
+OHOS_PORTING_CXXBRIDGE_WEAK bool cxxbridge1$string$from_utf16(rust::String *self, const char16_t *, std::size_t) noexcept
+{
+    std::memset(self, 0, sizeof(*self));
+    return true;
+}
+
+OHOS_PORTING_CXXBRIDGE_WEAK void cxxbridge1$string$from_utf16_lossy(rust::String *self, const char16_t *, std::size_t) noexcept
+{
+    std::memset(self, 0, sizeof(*self));
+}
+
+OHOS_PORTING_CXXBRIDGE_WEAK void cxxbridge1$string$drop(rust::String *) noexcept {}
+
+OHOS_PORTING_CXXBRIDGE_WEAK const char *cxxbridge1$string$ptr(const rust::String *) noexcept
+{
+    return "";
+}
+
+OHOS_PORTING_CXXBRIDGE_WEAK std::size_t cxxbridge1$string$len(const rust::String *) noexcept
+{
+    return 0;
+}
+
+OHOS_PORTING_CXXBRIDGE_WEAK std::size_t cxxbridge1$string$capacity(const rust::String *) noexcept
+{
+    return 0;
+}
+
+OHOS_PORTING_CXXBRIDGE_WEAK void cxxbridge1$string$reserve_additional(rust::String *, std::size_t) noexcept {}
+OHOS_PORTING_CXXBRIDGE_WEAK void cxxbridge1$string$reserve_total(rust::String *, std::size_t) noexcept {}
+
+OHOS_PORTING_CXXBRIDGE_WEAK void cxxbridge1$str$new(rust::Str *self) noexcept
+{
+    std::memset(self, 0, sizeof(*self));
+}
+
+OHOS_PORTING_CXXBRIDGE_WEAK void cxxbridge1$str$ref(rust::Str *self, const rust::String *) noexcept
+{
+    std::memset(self, 0, sizeof(*self));
+}
+
+OHOS_PORTING_CXXBRIDGE_WEAK bool cxxbridge1$str$from(rust::Str *self, const char *ptr, std::size_t len) noexcept
+{
+    auto repr = reinterpret_cast<std::uintptr_t *>(self);
+    repr[0] = reinterpret_cast<std::uintptr_t>(ptr);
+    repr[1] = len;
+    return true;
+}
+
+OHOS_PORTING_CXXBRIDGE_WEAK const char *cxxbridge1$str$ptr(const rust::Str *self) noexcept
+{
+    auto repr = reinterpret_cast<const std::uintptr_t *>(self);
+    return reinterpret_cast<const char *>(repr[0]);
+}
+
+OHOS_PORTING_CXXBRIDGE_WEAK std::size_t cxxbridge1$str$len(const rust::Str *self) noexcept
+{
+    auto repr = reinterpret_cast<const std::uintptr_t *>(self);
+    return repr[1];
+}
+
+OHOS_PORTING_CXXBRIDGE_WEAK void cxxbridge1$slice$new(void *self, const void *ptr, std::size_t len) noexcept
+{
+    auto repr = reinterpret_cast<std::uintptr_t *>(self);
+    repr[0] = reinterpret_cast<std::uintptr_t>(ptr);
+    repr[1] = len;
+}
+
+OHOS_PORTING_CXXBRIDGE_WEAK void *cxxbridge1$slice$ptr(const void *self) noexcept
+{
+    auto repr = reinterpret_cast<const std::uintptr_t *>(self);
+    return reinterpret_cast<void *>(repr[0]);
+}
+
+OHOS_PORTING_CXXBRIDGE_WEAK std::size_t cxxbridge1$slice$len(const void *self) noexcept
+{
+    auto repr = reinterpret_cast<const std::uintptr_t *>(self);
+    return repr[1];
+}
+
+#undef OHOS_PORTING_CXXBRIDGE_WEAK
+} // extern "C"
+"""
+
+
+def _fake_bridge_cc(source_text, source_path):
+    if _fake_bridge_header(source_text) is None:
+        return None
+    header_name = os.path.basename(source_path) + ".h"
+    lines = [
+        "/* Compile-only fake cxxbridge cc generated because cxxbridge produced empty output. */",
+        "#include <cstddef>",
+        "#include <cstdint>",
+        "#include <cstring>",
+        f"#include \"{header_name}\"",
+        "",
+        _fake_bridge_cc_runtime_stubs().strip(),
+        "",
+    ]
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
 def _fake_bridge_empty_output(args, is_header_file):
     source_path = _fake_bridge_source_path(args)
     if source_path is None:
@@ -6081,7 +6382,7 @@ def _fake_bridge_empty_output(args, is_header_file):
         return None
     if is_header_file:
         return _fake_bridge_header(source_text)
-    return b"/* Compile-only fake cxxbridge cc generated because cxxbridge produced empty output. */\n"
+    return _fake_bridge_cc(source_text, source_path)
 '''
 
     if "\ndef run(cxx_exe, args, output, is_header_file):\n" not in text:
@@ -6765,6 +7066,12 @@ def materialize_action(
             and target.get("architecture") == "riscv64"
         ):
             data, transforms = apply_ark_jsruntime_riscv64_trampoline_source(data)
+        elif (
+            rel_path == ARK_ETS_DEOPTIMIZER_CPP_REL
+            and action.get("source_role") == "ark_jsruntime_riscv64_lazy_deopt_cpp_guard"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_ark_jsruntime_riscv64_lazy_deopt_cpp_guard(data)
         elif (
             rel_path == SKIA_RASTER_PIPELINE_OPTS_REL
             and action.get("source_role") == "skia_raster_pipeline_riscv64_scalar_sqrt_fallback"
@@ -9184,6 +9491,39 @@ def parse_build_diagnostics(
                         "arkcompiler/ets_runtime/libark_jsruntime.so",
                         "undefined symbol: LazyDeoptEntry",
                         "runtime_stubs.o",
+                    ],
+                    18,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "arkcompiler/ets_runtime/libark_jsruntime.so" in plain_text
+        and "duplicate symbol: LazyDeoptEntry" in plain_text
+        and "raw_asm_stub" in plain_text
+        and "deoptimizer.cpp" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "ark_jsruntime_riscv64_lazy_deopt_cpp_guard",
+                "source_build_compatibility",
+                "Ark JS runtime now imports the RISC-V raw_asm_stub.S LazyDeoptEntry, but the OpenHarmony 6.0 C++ fallback still emits the same symbol for riscv64.",
+                (
+                    "Guard the C++ LazyDeoptEntry fallback in ecmascript/deoptimizer/deoptimizer.cpp "
+                    "so riscv64 uses the target-evidenced assembly trampoline without a duplicate symbol."
+                ),
+                [
+                    str(log_path),
+                    str(target_root / ARK_ETS_DEOPTIMIZER_CPP_REL),
+                    str(target_root / ARK_ETS_RUNTIME_RISCV64_TRAMPOLINE_REL),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "duplicate symbol: LazyDeoptEntry",
+                        "raw_asm_stub",
+                        "deoptimizer.cpp",
                     ],
                     18,
                 ),
