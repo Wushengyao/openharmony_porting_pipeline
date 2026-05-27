@@ -83,6 +83,33 @@ PROFILER_NATIVE_DAEMON_RISCV64_SOURCE_RELS = [
         "Import target-evidenced DfxRegsRiscv64 unwind register selection for native daemon call stacks.",
     ),
 ]
+HIPERF_RISCV64_SOURCE_RELS = [
+    (
+        "developtools/hiperf/include/register.h",
+        "hiperf_riscv64_register_header",
+        "Import target-evidenced RISC-V perf register enum and BUILD_ARCH_TYPE support.",
+    ),
+    (
+        "developtools/hiperf/src/register.cpp",
+        "hiperf_riscv64_register_cpp",
+        "Import target-evidenced RISC-V register mask, name, uname, ABI, and libunwind mapping support.",
+    ),
+    (
+        "developtools/hiperf/src/callstack.cpp",
+        "hiperf_riscv64_callstack",
+        "Import target-evidenced DfxRegsRiscv64 call-stack register selection.",
+    ),
+    (
+        "developtools/hiperf/src/hiperf_libreport.cpp",
+        "hiperf_riscv64_libreport",
+        "Import target-evidenced RISC-V machine-name support for hiperf reports.",
+    ),
+    (
+        "developtools/hiperf/include/nonlinux/linux/perf_event_host.h",
+        "hiperf_host_perf_event_text_header",
+        "Import the target-evidenced host perf_event fallback header referenced by the updated hiperf register header.",
+    ),
+]
 ARKUI_NAPI_RISCV64_CJ_SUPPORT_REL = "foundation/arkui/napi/native_engine/impl/ark/cj_support.cpp"
 GRAPHIC_2D_VSYNC_LOG_REL = "foundation/graphic/graphic_2d/rosen/modules/composer/vsync/include/vsync_log.h"
 LUME_STATIC_PLUGIN_DECL_REL = "foundation/graphic/graphic_3d/lume/LumeEngine/src/static_plugin_decl.h"
@@ -1583,6 +1610,34 @@ def target_has_profiler_native_daemon_riscv64_evidence(target_root: Path) -> boo
         and "PERF_REG_RISCV64_PC" in register_text
         and "target_cpu_riscv64" in call_stack_text
         and "DfxRegsRiscv64" in call_stack_text
+    )
+
+
+def target_has_hiperf_riscv64_evidence(target_root: Path) -> bool:
+    header = target_root / "developtools/hiperf/include/register.h"
+    register_cpp = target_root / "developtools/hiperf/src/register.cpp"
+    callstack_cpp = target_root / "developtools/hiperf/src/callstack.cpp"
+    libreport_cpp = target_root / "developtools/hiperf/src/hiperf_libreport.cpp"
+    host_perf_header = target_root / "developtools/hiperf/include/nonlinux/linux/perf_event_host.h"
+    if not all(path.is_file() for path in [header, register_cpp, callstack_cpp, libreport_cpp, host_perf_header]):
+        return False
+    header_text = header.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    register_text = register_cpp.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    callstack_text = callstack_cpp.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    libreport_text = libreport_cpp.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    host_perf_text = host_perf_header.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "target_cpu_riscv64" in header_text
+        and "ArchType::ARCH_RISCV64" in header_text
+        and "PERF_REG_RISCV64_PC" in header_text
+        and "PERF_REG_RISCV64_MAX" in header_text
+        and "UNW_RISCV_PC" in register_text
+        and "PERF_REG_RISCV64_PC" in register_text
+        and 'machine == "riscv64"' in register_text
+        and "target_cpu_riscv64" in callstack_text
+        and "DfxRegsRiscv64" in callstack_text
+        and 'machineName = "riscv64"' in libreport_text
+        and "PERF_TYPE_HARDWARE" in host_perf_text
     )
 
 
@@ -3496,6 +3551,20 @@ def planned_actions(
                 )
             )
 
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_hiperf_riscv64_evidence(target_root):
+        for rel_path, role, reason in HIPERF_RISCV64_SOURCE_RELS:
+            actions.append(
+                copy_action(
+                    rel_path,
+                    role,
+                    "L1_build_compatibility",
+                    (
+                        reason
+                        + " This keeps hiperf selected while closing the riscv64 arch support gap with text evidence."
+                    ),
+                )
+            )
+
     if clean_str(seed.get("architecture")) == "riscv64" and target_has_riscv64_webview_stub_evidence(target_root):
         prebuilt_rel = "base/web/webview/ohos_nweb/prebuilts/riscv64/ArkWebCore.hap"
         target_prebuilt = target_root / prebuilt_rel
@@ -3682,6 +3751,7 @@ def planned_actions(
         "WebView app_fwk_update test closures are migrated with target evidence when test deps would otherwise keep the old flat sa service in the GN graph.",
         "Hidumper RawParam is added to hidumpermemory only with the target-evidenced standalone guard, avoiding a broader DumpManagerService/plugin source import during compile triage.",
         "MMI Rust fake shared libraries are cleaned and regenerated when target-evidenced #[no_mangle] motion symbols are missing from stale fake-driver outputs.",
+        "Hiperf RISC-V support is imported as a target-evidenced text closure for register/callstack/report handling, keeping the hiperf feature selected rather than filtering it out.",
     ]
     return actions, notes
 
@@ -6506,6 +6576,11 @@ def check_build_log_old_errors_absent(build_result: dict[str, Any] | None) -> di
             "NOT SUPPORT ARCH",
             "buildArchType",
         ],
+        "old_hiperf_riscv64_arch_missing": [
+            "developtools/hiperf/include/register.h",
+            "NOT SUPPORT ARCH",
+            "BUILD_ARCH_TYPE",
+        ],
         "old_arkui_napi_cj_support_riscv64_platform_missing": [
             "foundation/arkui/napi/native_engine/impl/ark/cj_support.cpp",
             "current platform not supported",
@@ -7875,6 +7950,45 @@ def parse_build_diagnostics(
                         "NOT SUPPORT ARCH",
                         "buildArchType",
                         "hook_client.cpp",
+                    ],
+                    16,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "developtools/hiperf/include/register.h" in plain_text
+        and "NOT SUPPORT ARCH" in plain_text
+        and ("BUILD_ARCH_TYPE" in plain_text or "target_cpu_riscv64" in plain_text)
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "hiperf_riscv64_arch_missing",
+                "source_build_compatibility",
+                (
+                    "Hiperf is compiling for riscv64, but its register.h lacks the "
+                    "target-evidenced RISC-V BUILD_ARCH_TYPE and perf register branches."
+                ),
+                (
+                    "Import the target-evidenced hiperf register.h/register.cpp/callstack.cpp/"
+                    "hiperf_libreport.cpp text closure; keep hiperf selected and track only "
+                    "non-text payloads as dependency debt."
+                ),
+                [
+                    str(log_path),
+                    str(target_root / "developtools/hiperf/include/register.h"),
+                    str(target_root / "developtools/hiperf/src/register.cpp"),
+                    str(target_root / "developtools/hiperf/src/callstack.cpp"),
+                    str(target_root / "developtools/hiperf/src/hiperf_libreport.cpp"),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "developtools/hiperf/include/register.h",
+                        "NOT SUPPORT ARCH",
+                        "BUILD_ARCH_TYPE",
+                        "perf_events.cpp",
                     ],
                     16,
                 ),
