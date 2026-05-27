@@ -129,6 +129,16 @@ ARK_ETS_RISCV64_BRIDGE_SOURCE_RELS = [
 ]
 SKIA_RASTER_PIPELINE_OPTS_REL = "third_party/skia/m133/src/opts/SkRasterPipeline_opts.h"
 RUN_OBJCOPY_REL = "build/scripts/run_objcopy.py"
+WEBVIEW_OHOS_ADAPTER_BUILD_REL = "base/web/webview/ohos_adapter/BUILD.gn"
+WEBVIEW_AAFWK_APP_MGR_CLIENT_ADAPTER_REL = (
+    "base/web/webview/ohos_adapter/aafwk_adapter/src/aafwk_app_mgr_client_adapter_impl.cpp"
+)
+WEBVIEW_REGISTER_JSFUNCTION_SOURCE_RELS = [
+    "base/web/webview/interfaces/kits/napi/webviewcontroller/webview_controller.cpp",
+    "base/web/webview/interfaces/kits/ani/webview/native/webviewcontroller/webview_controller.cpp",
+    "base/web/webview/interfaces/kits/cj/src/webview_controller_impl.cpp",
+]
+APPSPAWN_INNERKITS_HEADER_REL = "base/startup/appspawn/interfaces/innerkits/include/appspawn.h"
 CXX_STDLIB_HEADER_NAMES = {
     "algorithm",
     "array",
@@ -1296,6 +1306,46 @@ def target_has_riscv64_webview_stub_evidence(target_root: Path) -> bool:
         'target_cpu == "riscv64"' in text
         and "prebuilts/riscv64/ArkWebCore.hap" in text
         and is_git_lfs_pointer(webview_prebuilt)
+    )
+
+
+def target_has_webview_riscv64_ohos_adapter_sdk_evidence(target_root: Path) -> bool:
+    build_gn = target_root / WEBVIEW_OHOS_ADAPTER_BUILD_REL
+    if not build_gn.is_file():
+        return False
+    text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        'target_cpu == "riscv64"' in text
+        and "riscv64-linux-ohos/libnative_drawing.so" in text
+        and "${current_sdk_home}/native/sysroot/usr/include/native_drawing" in text
+    )
+
+
+def target_has_webview_register_ark_jsfunction_v2_evidence(target_root: Path) -> bool:
+    return all(
+        (target_root / rel_path).is_file()
+        and "RegisterArkJSfunctionV2" in (target_root / rel_path).read_text(encoding=TEXT_ENCODING, errors="ignore")
+        for rel_path in WEBVIEW_REGISTER_JSFUNCTION_SOURCE_RELS
+    )
+
+
+def target_has_webview_active_engine_version_evidence(target_root: Path) -> bool:
+    source = target_root / WEBVIEW_AAFWK_APP_MGR_CLIENT_ADAPTER_REL
+    if not source.is_file():
+        return False
+    text = source.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return "getActiveWebEngineVersion()" in text and "getAppWebEngineVersion()" not in text
+
+
+def target_has_appspawn_unload_weblib_msg_evidence(target_root: Path) -> bool:
+    header = target_root / APPSPAWN_INNERKITS_HEADER_REL
+    if not header.is_file():
+        return False
+    text = header.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "MSG_UNLOAD_WEBLIB_IN_APPSPAWN" in text
+        and "MSG_LOAD_WEBLIB_IN_APPSPAWN" in text
+        and text.find("MSG_UNLOAD_WEBLIB_IN_APPSPAWN") < text.find("MSG_LOAD_WEBLIB_IN_APPSPAWN")
     )
 
 
@@ -3641,6 +3691,57 @@ def planned_actions(
         prebuilt_rel = "base/web/webview/ohos_nweb/prebuilts/riscv64/ArkWebCore.hap"
         target_prebuilt = target_root / prebuilt_rel
         webview_module_dirs = collect_webview_dependency_dirs(target_root)
+        if target_has_webview_riscv64_ohos_adapter_sdk_evidence(target_root):
+            actions.append(
+                workspace_transform_action(
+                    WEBVIEW_OHOS_ADAPTER_BUILD_REL,
+                    "webview_ohos_adapter_riscv64_sdk_paths",
+                    "L1_build_compatibility",
+                    (
+                        "Add target-evidenced riscv64 OpenHarmony SDK library and include paths "
+                        "to the WebView ohos_adapter build so native_drawing headers and stubs "
+                        "remain visible without removing WebView."
+                    ),
+                )
+            )
+        if target_has_webview_register_ark_jsfunction_v2_evidence(target_root):
+            for rel_path in WEBVIEW_REGISTER_JSFUNCTION_SOURCE_RELS:
+                actions.append(
+                    workspace_transform_action(
+                        rel_path,
+                        "webview_register_ark_jsfunction_v2_call",
+                        "L1_build_compatibility",
+                        (
+                            "Migrate WebView JS proxy calls carrying permission to the "
+                            "target-evidenced RegisterArkJSfunctionV2 API while preserving "
+                            "older three-argument RegisterArkJSfunction calls."
+                        ),
+                    )
+                )
+        if target_has_webview_active_engine_version_evidence(target_root):
+            actions.append(
+                workspace_transform_action(
+                    WEBVIEW_AAFWK_APP_MGR_CLIENT_ADAPTER_REL,
+                    "webview_aafwk_active_engine_version_api",
+                    "L1_build_compatibility",
+                    (
+                        "Use the target-evidenced getActiveWebEngineVersion API name in the "
+                        "WebView AAFwk adapter instead of the stale getAppWebEngineVersion call."
+                    ),
+                )
+            )
+        if target_has_appspawn_unload_weblib_msg_evidence(target_root):
+            actions.append(
+                workspace_transform_action(
+                    APPSPAWN_INNERKITS_HEADER_REL,
+                    "appspawn_unload_weblib_msg_type",
+                    "L1_build_compatibility",
+                    (
+                        "Add the target-evidenced WebView unload message type to appspawn.h so "
+                        "the migrated app_fwk_update service can compile without hiding WebView."
+                    ),
+                )
+            )
         actions.append(
             copy_action(
                 "base/web/webview/ohos_nweb/BUILD.gn",
@@ -5770,8 +5871,9 @@ def apply_compile_app_root_ohpm_path_resolution(data: bytes) -> tuple[bytes, lis
 
 def apply_rust_cxxbridge_empty_output_fake_header_fallback(data: bytes) -> tuple[bytes, list[str]]:
     text = data.decode(TEXT_ENCODING, errors="ignore")
-    marker = "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V8"
+    marker = "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V9"
     legacy_markers = [
+        "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V8",
         "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V7",
         "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V6",
         "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V5",
@@ -5793,7 +5895,7 @@ def apply_rust_cxxbridge_empty_output_fake_header_fallback(data: bytes) -> tuple
 
     helper = r'''
 
-# OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V8
+# OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V9
 def _fake_bridge_source_path(args):
     for arg in args:
         if arg == "--" or not arg.endswith(".rs"):
@@ -5812,11 +5914,16 @@ def _fake_bridge_namespace(source_text):
 
 
 def _fake_bridge_body(source_text):
-    bridge_match = re.search(r"#\s*\[\s*cxx::bridge[^\]]*\]\s*mod\s+[A-Za-z_][A-Za-z0-9_]*\s*\{", source_text)
-    if not bridge_match:
-        bridge_pos = source_text.find("#[cxx::bridge")
-        return source_text[bridge_pos:] if bridge_pos != -1 else source_text
-    start = bridge_match.end()
+    attr_match = re.search(r"#\s*\[\s*cxx::bridge[^\]]*\]", source_text)
+    if not attr_match:
+        return source_text
+    mod_match = re.search(
+        r"\b(?:pub\s+)?mod\s+[A-Za-z_][A-Za-z0-9_]*\s*\{",
+        source_text[attr_match.end():],
+    )
+    if not mod_match:
+        return source_text[attr_match.end():]
+    start = attr_match.end() + mod_match.end()
     depth = 1
     index = start
     while index < len(source_text):
@@ -6570,6 +6677,93 @@ def apply_webview_bundle_app_fwk_update_migration(data: bytes) -> tuple[bytes, l
     return text.encode(TEXT_ENCODING), notes
 
 
+def apply_webview_ohos_adapter_riscv64_sdk_paths(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    notes: list[str] = []
+    if "riscv64-linux-ohos/libnative_drawing.so" not in text:
+        old = (
+            '  } else if (target_cpu == "x86_64") {\n'
+            "    libs = [\n"
+            '      "${current_sdk_home}/native/sysroot/usr/lib/x86_64-linux-ohos/libbundle_ndk.z.so",\n'
+            '      "${current_sdk_home}/native/sysroot/usr/lib/x86_64-linux-ohos/libasset_ndk.z.so",\n'
+            '      "${current_sdk_home}/native/sysroot/usr/lib/x86_64-linux-ohos/libnative_drawing.so",\n'
+            "    ]\n"
+            "  }\n"
+        )
+        new = (
+            old[:-4]
+            + '  } else if (target_cpu == "riscv64") {\n'
+            + "    libs = [\n"
+            + '      "${current_sdk_home}/native/sysroot/usr/lib/riscv64-linux-ohos/libbundle_ndk.z.so",\n'
+            + '      "${current_sdk_home}/native/sysroot/usr/lib/riscv64-linux-ohos/libasset_ndk.z.so",\n'
+            + '      "${current_sdk_home}/native/sysroot/usr/lib/riscv64-linux-ohos/libnative_drawing.so",\n'
+            + "    ]\n"
+            + "  }\n"
+        )
+        if old in text:
+            text = text.replace(old, new, 1)
+            notes.append("added WebView ohos_adapter riscv64 SDK library paths")
+        else:
+            notes.append("WebView ohos_adapter riscv64 SDK library insertion point not found")
+    else:
+        notes.append("WebView ohos_adapter riscv64 SDK library paths already present")
+
+    include_old = '  if (target_cpu == "arm" || target_cpu == "arm64" || target_cpu == "x86_64") {\n'
+    include_new = (
+        '  if (target_cpu == "arm" || target_cpu == "arm64" || target_cpu == "x86_64" || '
+        'target_cpu == "riscv64") {\n'
+    )
+    if include_new in text:
+        notes.append("WebView ohos_adapter riscv64 SDK include paths already enabled")
+    elif include_old in text:
+        text = text.replace(include_old, include_new, 1)
+        notes.append("enabled WebView ohos_adapter SDK include paths for riscv64")
+    else:
+        notes.append("WebView ohos_adapter SDK include condition not found")
+    return text.encode(TEXT_ENCODING), notes
+
+
+def apply_webview_register_ark_jsfunction_v2_call(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    pattern = re.compile(
+        r"(->)RegisterArkJSfunction\(((?:(?!;).)*?\bpermission\b(?:(?!;).)*?)\);",
+        flags=re.S,
+    )
+    text, count = pattern.subn(r"\1RegisterArkJSfunctionV2(\2);", text)
+    if count:
+        return text.encode(TEXT_ENCODING), [f"migrated {count} permission-aware RegisterArkJSfunction call(s) to V2"]
+    if "RegisterArkJSfunctionV2" in text:
+        return data, ["permission-aware RegisterArkJSfunction calls already use V2"]
+    return data, ["permission-aware RegisterArkJSfunction call not found"]
+
+
+def apply_webview_aafwk_active_engine_version_api(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    count = text.count("getAppWebEngineVersion()")
+    if count:
+        text = text.replace("getAppWebEngineVersion()", "getActiveWebEngineVersion()")
+        return text.encode(TEXT_ENCODING), [f"rewrote {count} WebView AAFwk engine-version API call(s)"]
+    if "getActiveWebEngineVersion()" in text:
+        return data, ["WebView AAFwk adapter already uses getActiveWebEngineVersion"]
+    return data, ["WebView AAFwk engine-version API call not found"]
+
+
+def apply_appspawn_unload_weblib_msg_type(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if "MSG_UNLOAD_WEBLIB_IN_APPSPAWN" in text:
+        return data, ["appspawn WebView unload message type already present"]
+    old = "    MSG_OBSERVE_PROCESS_SIGNAL_STATUS,\n    MSG_LOAD_WEBLIB_IN_APPSPAWN,\n"
+    new = (
+        "    MSG_OBSERVE_PROCESS_SIGNAL_STATUS,\n"
+        "    MSG_UNLOAD_WEBLIB_IN_APPSPAWN,\n"
+        "    MSG_LOAD_WEBLIB_IN_APPSPAWN,\n"
+    )
+    if old in text:
+        text = text.replace(old, new, 1)
+        return text.encode(TEXT_ENCODING), ["added appspawn WebView unload message type before load message"]
+    return data, ["appspawn WebView unload message insertion point not found"]
+
+
 def item_mentions_profiler_smartperf_host(item: Any) -> bool:
     if isinstance(item, str):
         return "//developtools/profiler/host/smartperf/" in item
@@ -6925,6 +7119,27 @@ def materialize_action(
             and action.get("source_role") == "webview_bundle_app_fwk_update_sa_migration"
         ):
             data, transforms = apply_webview_bundle_app_fwk_update_migration(data)
+        elif (
+            rel_path == WEBVIEW_OHOS_ADAPTER_BUILD_REL
+            and action.get("source_role") == "webview_ohos_adapter_riscv64_sdk_paths"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_webview_ohos_adapter_riscv64_sdk_paths(data)
+        elif (
+            rel_path in WEBVIEW_REGISTER_JSFUNCTION_SOURCE_RELS
+            and action.get("source_role") == "webview_register_ark_jsfunction_v2_call"
+        ):
+            data, transforms = apply_webview_register_ark_jsfunction_v2_call(data)
+        elif (
+            rel_path == WEBVIEW_AAFWK_APP_MGR_CLIENT_ADAPTER_REL
+            and action.get("source_role") == "webview_aafwk_active_engine_version_api"
+        ):
+            data, transforms = apply_webview_aafwk_active_engine_version_api(data)
+        elif (
+            rel_path == APPSPAWN_INNERKITS_HEADER_REL
+            and action.get("source_role") == "appspawn_unload_weblib_msg_type"
+        ):
+            data, transforms = apply_appspawn_unload_weblib_msg_type(data)
         elif (
             rel_path == "developtools/profiler/bundle.json"
             and action.get("source_role") == "profiler_smartperf_split_bundle_migration"
@@ -10074,6 +10289,58 @@ def parse_build_diagnostics(
                         "NINJA",
                     ],
                     16,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "redefinition of 'Ashmem'" in plain_text
+        and "ashmem.rs.h" in plain_text
+        and "rust_cxxbridge.py" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "rust_cxxbridge_bridge_body_scope_misparsed",
+                "source_build_compatibility",
+                "The compile-only cxxbridge fallback parsed Rust items outside the #[cxx::bridge] module and emitted a fake Ashmem type that conflicts with the real C++ Ashmem class.",
+                "Upgrade the cxxbridge empty-output fallback so it locates the module body after #[cxx::bridge] even when doc comments or pub mod appear between the attribute and the opening brace.",
+                [
+                    str(path)
+                    for path, text in texts
+                    if "redefinition of 'Ashmem'" in strip_ansi(text) and "ashmem.rs.h" in strip_ansi(text)
+                ]
+                or [str(log_path)],
+                matching_lines(
+                    all_text,
+                    ["redefinition of 'Ashmem'", "ashmem.rs.h", "commonlibrary/c_utils/base/include/ashmem.h"],
+                    12,
+                ),
+            )
+        )
+
+    if (
+        "MSG_UNLOAD_WEBLIB_IN_APPSPAWN" in plain_text
+        and "undeclared identifier" in plain_text
+        and "app_fwk_update_service.cpp" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "appspawn_unload_weblib_msg_type_missing",
+                "source_build_compatibility",
+                "The migrated WebView app_fwk_update service uses MSG_UNLOAD_WEBLIB_IN_APPSPAWN, but the appspawn innerkits header still exposes only the older load message.",
+                "Apply the target-evidenced appspawn.h enum addition for MSG_UNLOAD_WEBLIB_IN_APPSPAWN; keep broader appspawn runtime hook migration as separate runtime debt unless later compile logs require it.",
+                [
+                    str(path)
+                    for path, text in texts
+                    if "MSG_UNLOAD_WEBLIB_IN_APPSPAWN" in strip_ansi(text)
+                    and "app_fwk_update_service.cpp" in strip_ansi(text)
+                ]
+                or [str(log_path), str(target_root / APPSPAWN_INNERKITS_HEADER_REL)],
+                matching_lines(
+                    all_text,
+                    ["MSG_UNLOAD_WEBLIB_IN_APPSPAWN", "undeclared identifier", "app_fwk_update_service.cpp"],
+                    10,
                 ),
             )
         )
