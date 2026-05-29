@@ -122,6 +122,9 @@ AUDIO_PROCESS_STREAM_HEADER_REL = (
 )
 CAST_SESSION_IMPL_HEADER_REL = "foundation/CastEngine/castengine_cast_framework/service/src/session/include/cast_session_impl.h"
 CAST_SESSION_STATE_CPP_REL = "foundation/CastEngine/castengine_cast_framework/service/src/session/src/cast_session_state.cpp"
+PLAYER_SYSTEMSOUND_MANAGER_JS_BUILD_REL = (
+    "foundation/multimedia/player_framework/frameworks/js/system_sound_manager/BUILD.gn"
+)
 REQUEST_NAPI_BUILD_REL = "base/request/request/frameworks/js/napi/request/BUILD.gn"
 BGTASK_KITS_BUILD_REL = "foundation/resourceschedule/background_task_mgr/interfaces/kits/BUILD.gn"
 LOCATION_LOCATOR_SDK_BUILD_REL = "base/location/frameworks/native/locator_sdk/BUILD.gn"
@@ -129,6 +132,7 @@ LOCATION_LOCATOR_SDK_TARGET_BUILD_CANDIDATES = [
     "base/location/location/frameworks/native/locator_sdk/BUILD.gn",
     LOCATION_LOCATOR_SDK_BUILD_REL,
 ]
+ARKUI_ACE_BUILD_REL = "foundation/arkui/ace_engine/build/BUILD.gn"
 ARKUI_ACE_NDK_BUILD_REL = "foundation/arkui/ace_engine/interfaces/native/BUILD.gn"
 ARKUI_ACE_COLOR_REL = "foundation/arkui/ace_engine/frameworks/core/components/common/properties/color.cpp"
 NETSTACK_HTTP_CLIENT_BUILD_REL = "foundation/communication/netstack/interfaces/innerkits/http_client/BUILD.gn"
@@ -1918,6 +1922,44 @@ def workspace_needs_cast_session_mirror_to_stream_state_key_functions(workspace:
     )
 
 
+def workspace_needs_player_systemsoundmanager_audio_foundation_dep(workspace: Path, target_root: Path) -> bool:
+    build_gn = workspace / PLAYER_SYSTEMSOUND_MANAGER_JS_BUILD_REL
+    common_napi = workspace / "foundation/multimedia/player_framework/frameworks/js/common/common_napi.cpp"
+    audio_policy_build = workspace / "foundation/multimedia/audio_framework/services/audio_policy/BUILD.gn"
+    target_audio_policy_build = target_root / "foundation/multimedia/audio_framework/services/audio_policy/BUILD.gn"
+    if not build_gn.is_file() or not common_napi.is_file() or not audio_policy_build.is_file():
+        return False
+    build_text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    common_text = common_napi.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    audio_policy_text = audio_policy_build.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    target_audio_policy_text = (
+        target_audio_policy_build.read_text(encoding=TEXT_ENCODING, errors="ignore")
+        if target_audio_policy_build.is_file()
+        else ""
+    )
+    audio_foundation_evidence = (
+        'ohos_shared_library("audio_foundation")' in audio_policy_text
+        and "server/domain/device/src/audio_device_descriptor.cpp" in audio_policy_text
+    )
+    target_evidence = (
+        not target_audio_policy_text
+        or (
+            'ohos_shared_library("audio_foundation")' in target_audio_policy_text
+            and "server/domain/device/src/audio_device_descriptor.cpp" in target_audio_policy_text
+        )
+    )
+    return (
+        'ohos_shared_library("systemsoundmanager")' in build_text
+        and '"audio_framework:audio_client"' in build_text
+        and '"audio_framework:audio_foundation"' not in build_text
+        and "AudioDeviceDescriptor" in common_text
+        and "GetDeviceStreamInfo()" in common_text
+        and "std::make_shared<AudioStandard::AudioDeviceDescriptor>()" in common_text
+        and audio_foundation_evidence
+        and target_evidence
+    )
+
+
 def workspace_needs_request_napi_openssl_crypto_dep(workspace: Path) -> bool:
     build_gn = workspace / REQUEST_NAPI_BUILD_REL
     napi_utils = workspace / "base/request/request/frameworks/js/napi/request/src/napi_utils.cpp"
@@ -1974,6 +2016,35 @@ def workspace_needs_location_locator_sdk_explicit_thin_lto_guard(workspace: Path
         'ohos_shared_library("locator_sdk")' in text
         and '"-flto=thin"' in text
         and 'current_cpu != "riscv64"' not in text
+    )
+
+
+def target_has_arkui_libace_old_core_bridge_closure_evidence(target_root: Path) -> bool:
+    build_gn = target_root / ARKUI_ACE_BUILD_REL
+    if not build_gn.is_file():
+        return False
+    text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        'ohos_shared_library("libace")' in text
+        and '"$ace_root/frameworks/bridge/declarative_frontend:declarative_js_engine_ark_ohos"' in text
+        and '"$ace_root/frameworks/bridge:framework_bridge_ohos"' in text
+        and '"$ace_root/frameworks/bridge/js_frontend/engine/jsi:js_engine_bridge_ark_ohos"' in text
+        and '"$ace_root/frameworks/core:ace_core_ohos"' in text
+        and '"$ace_root/build:libace_static_ohos_ng"' in text
+        and 'ldflags = [ "-Wl,--allow-multiple-definition" ]' in text
+    )
+
+
+def workspace_needs_arkui_libace_old_core_bridge_closure(workspace: Path, target_root: Path) -> bool:
+    build_gn = workspace / ARKUI_ACE_BUILD_REL
+    if not build_gn.is_file() or not target_has_arkui_libace_old_core_bridge_closure_evidence(target_root):
+        return False
+    text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        'ohos_shared_library("libace")' in text
+        and '"$ace_root/build:libace_static_ohos_ng"' in text
+        and '"$ace_root/frameworks/core:ace_core_ohos"' not in text
+        and 'ldflags = [ "-Wl,--allow-multiple-definition" ]' not in text
     )
 
 
@@ -4002,6 +4073,20 @@ def planned_actions(
             )
         )
 
+    if workspace_needs_player_systemsoundmanager_audio_foundation_dep(workspace, target_root):
+        actions.append(
+            workspace_transform_action(
+                PLAYER_SYSTEMSOUND_MANAGER_JS_BUILD_REL,
+                "player_systemsoundmanager_audio_foundation_dep",
+                "L1_build_compatibility",
+                (
+                    "Add audio_framework:audio_foundation as a direct systemsoundmanager link dependency "
+                    "because common_napi.cpp constructs AudioDeviceDescriptor and calls GetDeviceStreamInfo, "
+                    "whose exported implementation lives in audio_foundation rather than audio_client itself."
+                ),
+            )
+        )
+
     if workspace_needs_request_napi_openssl_crypto_dep(workspace):
         actions.append(
             workspace_transform_action(
@@ -4041,6 +4126,21 @@ def planned_actions(
                     "Guard locator_sdk's target-local -flto=thin cflag off for riscv64 because "
                     "it bypasses the global ThinLTO off-ramp and lld emits mixed floating-point "
                     "ABI lto.tmp objects during liblocator_sdk linking."
+                ),
+            )
+        )
+
+    if workspace_needs_arkui_libace_old_core_bridge_closure(workspace, target_root):
+        actions.append(
+            workspace_transform_action(
+                ARKUI_ACE_BUILD_REL,
+                "arkui_libace_old_core_bridge_closure",
+                "L1_build_compatibility",
+                (
+                    "Add the target-evidenced old pipeline core/bridge source-set closure to libace "
+                    "beside libace_static_ohos_ng, plus the target allow-multiple-definition linker flag, "
+                    "so NG sources that still reference RenderNode/RenderBox/TextOverlay/Transform symbols "
+                    "can link without disabling ArkUI."
                 ),
             )
         )
@@ -5380,6 +5480,18 @@ def apply_cast_session_mirror_to_stream_state_key_functions(data: bytes) -> tupl
     return text.encode(TEXT_ENCODING), ["defined CastEngine MirrorToStreamState key functions"]
 
 
+def apply_player_systemsoundmanager_audio_foundation_dep(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if '"audio_framework:audio_foundation"' in text:
+        return data, ["audio_framework:audio_foundation already present in systemsoundmanager"]
+    anchor = '    "audio_framework:audio_client",\n'
+    line = '    "audio_framework:audio_foundation",\n'
+    text, changed = add_gn_line_after(text, anchor, line)
+    if changed:
+        return text.encode(TEXT_ENCODING), ["added audio_framework:audio_foundation to systemsoundmanager external_deps"]
+    return data, ["systemsoundmanager audio_foundation insertion point not found"]
+
+
 def apply_request_napi_openssl_crypto_dep(data: bytes) -> tuple[bytes, list[str]]:
     text = data.decode(TEXT_ENCODING, errors="ignore")
     lines = text.splitlines(keepends=True)
@@ -5471,6 +5583,31 @@ def apply_location_locator_sdk_riscv64_explicit_thin_lto_guard(data: bytes) -> t
         text = text.replace(old, new, 1)
         return text.encode(TEXT_ENCODING), ["guarded location locator_sdk explicit ThinLTO for riscv64"]
     return data, ["location locator_sdk explicit ThinLTO insertion point not found"]
+
+
+def apply_arkui_libace_old_core_bridge_closure(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if '"$ace_root/frameworks/core:ace_core_ohos"' in text and 'ldflags = [ "-Wl,--allow-multiple-definition" ]' in text:
+        return data, ["ArkUI libace old core/bridge closure already present"]
+    old = (
+        '      deps += [ "$ace_root/build:libace_static_ohos_ng" ]\n'
+        '      version_script = "libace.map"\n'
+    )
+    new = (
+        "      deps += [\n"
+        '        "$ace_root/frameworks/bridge/declarative_frontend:declarative_js_engine_ark_ohos",\n'
+        '        "$ace_root/frameworks/bridge:framework_bridge_ohos",\n'
+        '        "$ace_root/frameworks/bridge/js_frontend/engine/jsi:js_engine_bridge_ark_ohos",\n'
+        '        "$ace_root/frameworks/core:ace_core_ohos",\n'
+        '        "$ace_root/build:libace_static_ohos_ng",\n'
+        "      ]\n"
+        '      ldflags = [ "-Wl,--allow-multiple-definition" ]\n'
+        '      version_script = "libace.map"\n'
+    )
+    if old in text:
+        text = text.replace(old, new, 1)
+        return text.encode(TEXT_ENCODING), ["added ArkUI libace old core/bridge closure and allow-multiple-definition"]
+    return data, ["ArkUI libace old core/bridge insertion point not found"]
 
 
 def apply_arkui_ace_color_no_resource_manager_guard(data: bytes) -> tuple[bytes, list[str]]:
@@ -8707,6 +8844,11 @@ def materialize_action(
         ):
             data, transforms = apply_cast_session_mirror_to_stream_state_key_functions(data)
         elif (
+            rel_path == PLAYER_SYSTEMSOUND_MANAGER_JS_BUILD_REL
+            and action.get("source_role") == "player_systemsoundmanager_audio_foundation_dep"
+        ):
+            data, transforms = apply_player_systemsoundmanager_audio_foundation_dep(data)
+        elif (
             rel_path == REQUEST_NAPI_BUILD_REL
             and action.get("source_role") == "request_napi_openssl_crypto_dep"
         ):
@@ -8721,6 +8863,11 @@ def materialize_action(
             and action.get("source_role") == "location_locator_sdk_riscv64_explicit_thin_lto_guard"
         ):
             data, transforms = apply_location_locator_sdk_riscv64_explicit_thin_lto_guard(data)
+        elif (
+            rel_path == ARKUI_ACE_BUILD_REL
+            and action.get("source_role") == "arkui_libace_old_core_bridge_closure"
+        ):
+            data, transforms = apply_arkui_libace_old_core_bridge_closure(data)
         elif (
             rel_path == ARKUI_ACE_COLOR_REL
             and action.get("source_role") == "arkui_ace_color_no_resource_manager_guard"
@@ -9226,6 +9373,11 @@ def check_build_log_old_errors_absent(build_result: dict[str, Any] | None) -> di
             "undefined symbol: vtable for OHOS::CastEngine::CastEngineService::CastSessionImpl::MirrorToStreamState",
             "the vtable symbol may be undefined because the class is missing its key function",
         ],
+        "old_player_systemsoundmanager_missing_audio_foundation_dep": [
+            "multimedia/player_framework/libsystemsoundmanager.z.so",
+            "undefined symbol: OHOS::AudioStandard::AudioDeviceDescriptor::GetDeviceStreamInfo()",
+            "common_napi.cpp",
+        ],
         "old_request_napi_missing_openssl_crypto_dep": [
             "request/request/librequest.z.so",
             "undefined symbol: SHA256_Init",
@@ -9246,6 +9398,11 @@ def check_build_log_old_errors_absent(build_result: dict[str, Any] | None) -> di
             "ResourceManager::GetInstance()",
             "Container::CurrentIdSafely()",
             "color.cpp",
+        ],
+        "old_arkui_libace_missing_old_core_bridge_closure": [
+            "arkui/ace_engine/libace.z.so",
+            "undefined symbol: OHOS::Ace::RenderNode::GetOpacity()",
+            "undefined symbol: OHOS::Ace::TransformConvertor::ClearAnimations()",
         ],
         "old_webview_ohos_adapter_riscv64_avcodec_sdk_libs_missing": [
             "web/webview/libnweb_ohos_adapter.z.so",
@@ -11416,6 +11573,47 @@ def parse_build_diagnostics(
         )
 
     if (
+        "arkui/ace_engine/libace.z.so" in plain_text
+        and "undefined symbol: OHOS::Ace::RenderNode::GetOpacity() const" in plain_text
+        and "undefined symbol: OHOS::Ace::TransformConvertor::ClearAnimations()" in plain_text
+        and "undefined symbol: OHOS::Ace::TextOverlayManager::GetTargetNode() const" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "arkui_libace_missing_old_core_bridge_closure",
+                "source_build_compatibility",
+                (
+                    "libace links NG animation/common sources that still call old pipeline "
+                    "RenderNode, RenderBox, TransformConvertor, TextOverlay, and focus animation "
+                    "implementations, but the OHOS libace rule only pulls libace_static_ohos_ng."
+                ),
+                (
+                    "Apply the target-evidenced libace OHOS closure from the reference target: "
+                    "link the old declarative/js bridge and ace_core_ohos source sets beside "
+                    "libace_static_ohos_ng, and add the matching allow-multiple-definition linker flag."
+                ),
+                [
+                    str(log_path),
+                    str(workspace / ARKUI_ACE_BUILD_REL),
+                    str(target_root / ARKUI_ACE_BUILD_REL),
+                    str(workspace / "foundation/arkui/ace_engine/frameworks/core/pipeline/base/render_node.cpp"),
+                    str(workspace / "foundation/arkui/ace_engine/frameworks/core/components/box/render_box.cpp"),
+                    str(workspace / "foundation/arkui/ace_engine/frameworks/bridge/common/utils/transform_convertor.cpp"),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "arkui/ace_engine/libace.z.so",
+                        "RenderNode::GetOpacity()",
+                        "TransformConvertor::ClearAnimations()",
+                        "TextOverlayManager::GetTargetNode()",
+                    ],
+                    30,
+                ),
+            )
+        )
+
+    if (
         "web/webview/libnweb_ohos_adapter.z.so" in plain_text
         and "undefined symbol: OH_AVCODEC_MIMETYPE_AUDIO_AAC" in plain_text
         and "undefined symbol: OH_VideoDecoder_CreateByMime" in plain_text
@@ -12075,6 +12273,44 @@ def parse_build_diagnostics(
                         "castplus/cast_engine/libcast_engine_service.z.so",
                         "MirrorToStreamState",
                         "missing its key function",
+                    ],
+                    24,
+                ),
+            )
+        )
+
+    if (
+        "multimedia/player_framework/libsystemsoundmanager.z.so" in plain_text
+        and "undefined symbol: OHOS::AudioStandard::AudioDeviceDescriptor::GetDeviceStreamInfo() const" in plain_text
+        and "common_napi.cpp" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "player_systemsoundmanager_missing_audio_foundation_dep",
+                "source_build_compatibility",
+                (
+                    "systemsoundmanager compiles player_framework common_napi.cpp, which directly "
+                    "constructs AudioDeviceDescriptor and calls GetDeviceStreamInfo. The link command "
+                    "only carries audio_client directly, while the exported AudioDeviceDescriptor "
+                    "implementations are in audio_framework:audio_foundation."
+                ),
+                (
+                    "Add audio_framework:audio_foundation beside audio_framework:audio_client in "
+                    "frameworks/js/system_sound_manager/BUILD.gn; keep system sound manager enabled."
+                ),
+                [
+                    str(log_path),
+                    str(workspace / PLAYER_SYSTEMSOUND_MANAGER_JS_BUILD_REL),
+                    str(workspace / "foundation/multimedia/player_framework/frameworks/js/common/common_napi.cpp"),
+                    str(workspace / "foundation/multimedia/audio_framework/services/audio_policy/BUILD.gn"),
+                    str(target_root / "foundation/multimedia/audio_framework/services/audio_policy/BUILD.gn"),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "multimedia/player_framework/libsystemsoundmanager.z.so",
+                        "AudioDeviceDescriptor::GetDeviceStreamInfo()",
+                        "common_napi.cpp",
                     ],
                     24,
                 ),

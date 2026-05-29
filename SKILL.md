@@ -215,6 +215,18 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   missing its key function, add the missing `MirrorToStreamState`
   `Enter`/`Exit`/`HandleMessage` definitions next to the adjacent
   `StreamToMirrorState` definitions instead of disabling CastEngine.
+- When `multimedia/player_framework/libsystemsoundmanager.z.so` reports
+  missing `AudioDeviceDescriptor` constructors, destructor, or
+  `GetDeviceStreamInfo()` from `common_napi.cpp`, add
+  `audio_framework:audio_foundation` beside `audio_framework:audio_client`
+  in the system sound manager JS build rule because `audio_foundation`
+  exports the descriptor implementation; do not remove system sound features.
+- When `arkui/ace_engine/libace.z.so` reports old pipeline/render undefined
+  symbols such as `RenderNode::GetOpacity()`, `RenderBox::*`,
+  `TransformConvertor::*`, `TextOverlayManager::*`, or
+  `RenderFocusAnimation::*`, apply the target-evidenced OHOS `libace`
+  old core/bridge closure and matching allow-multiple-definition linker flag
+  instead of disabling ArkUI or faking those C++ symbols.
 - When `request/request/librequest.z.so` reports missing `SHA256_Init`,
   `SHA256_Update`, or `SHA256_Final`, add `openssl:libcrypto_shared` beside
   `openssl:libssl_shared` in the request JS NAPI build rule; do not fake
