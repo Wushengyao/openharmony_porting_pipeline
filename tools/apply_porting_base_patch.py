@@ -120,6 +120,8 @@ DEVICE_STANDBY_LOG_REL = "foundation/resourceschedule/device_standby/utils/commo
 AUDIO_PROCESS_STREAM_HEADER_REL = (
     "foundation/multimedia/audio_framework/services/audio_service/common/include/i_audio_process_stream.h"
 )
+REQUEST_NAPI_BUILD_REL = "base/request/request/frameworks/js/napi/request/BUILD.gn"
+BGTASK_KITS_BUILD_REL = "foundation/resourceschedule/background_task_mgr/interfaces/kits/BUILD.gn"
 NETSTACK_HTTP_CLIENT_BUILD_REL = "foundation/communication/netstack/interfaces/innerkits/http_client/BUILD.gn"
 NETSTACK_BUNDLE_REL = "foundation/communication/netstack/bundle.json"
 NETSTACK_HTTP_CLIENT_RESPONSE_HEADER_REL = (
@@ -1887,6 +1889,42 @@ def workspace_needs_audio_process_stream_inline_enable_standby(workspace: Path, 
         and "virtual void EnableStandby() {}" not in text
         and "class IAudioProcessStream" in target_text
         and "virtual void EnableStandby();" in target_text
+    )
+
+
+def workspace_needs_request_napi_openssl_crypto_dep(workspace: Path) -> bool:
+    build_gn = workspace / REQUEST_NAPI_BUILD_REL
+    napi_utils = workspace / "base/request/request/frameworks/js/napi/request/src/napi_utils.cpp"
+    if not build_gn.is_file() or not napi_utils.is_file():
+        return False
+    build_text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    source_text = napi_utils.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        'ohos_shared_library("request")' in build_text
+        and '"openssl:libssl_shared"' in build_text
+        and '"openssl:libcrypto_shared"' not in build_text
+        and "SHA256_Init" in source_text
+        and "SHA256_Update" in source_text
+        and "SHA256_Final" in source_text
+    )
+
+
+def workspace_needs_backgroundtaskmanager_js_subscriber_source(workspace: Path, target_root: Path) -> bool:
+    build_gn = workspace / BGTASK_KITS_BUILD_REL
+    source = workspace / "foundation/resourceschedule/background_task_mgr/interfaces/kits/napi/src/js_backgroundtask_subscriber.cpp"
+    header = workspace / "foundation/resourceschedule/background_task_mgr/interfaces/kits/napi/include/js_backgroundtask_subscriber.h"
+    target_source = target_root / "foundation/resourceschedule/background_task_mgr/interfaces/kits/napi/src/js_backgroundtask_subscriber.cpp"
+    if not build_gn.is_file() or not source.is_file() or not header.is_file() or not target_source.is_file():
+        return False
+    text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    first_target = text.split('ohos_shared_library("backgroundtaskmanager_napi")', 1)[0]
+    napi_target = text.split('ohos_shared_library("backgroundtaskmanager_napi")', 1)[-1]
+    return (
+        'ohos_shared_library("backgroundtaskmanager")' in first_target
+        and '"napi/src/bg_continuous_task_napi_module.cpp"' in first_target
+        and '"napi/src/js_backgroundtask_subscriber.cpp"' not in first_target
+        and '"napi/src/js_backgroundtask_subscriber.cpp"' in napi_target
+        and "JsBackgroundTaskSubscriber::SetFlag" in source.read_text(encoding=TEXT_ENCODING, errors="ignore")
     )
 
 
@@ -3831,6 +3869,35 @@ def planned_actions(
             )
         )
 
+    if workspace_needs_request_napi_openssl_crypto_dep(workspace):
+        actions.append(
+            workspace_transform_action(
+                REQUEST_NAPI_BUILD_REL,
+                "request_napi_openssl_crypto_dep",
+                "L1_build_compatibility",
+                (
+                    "Link the request JS NAPI library against openssl:libcrypto_shared because "
+                    "napi_utils.cpp directly calls SHA256_Init/Update/Final; keep the request "
+                    "feature enabled and avoid faking OpenSSL symbols."
+                ),
+            )
+        )
+
+    if workspace_needs_backgroundtaskmanager_js_subscriber_source(workspace, target_root):
+        actions.append(
+            workspace_transform_action(
+                BGTASK_KITS_BUILD_REL,
+                "backgroundtaskmanager_js_subscriber_source_closure",
+                "L1_build_compatibility",
+                (
+                    "Add the existing JsBackgroundTaskSubscriber source to the "
+                    "backgroundtaskmanager NAPI library that already links "
+                    "bg_continuous_task_napi_module.cpp; reuse the runtime dependency already "
+                    "used by the sibling backgroundtaskmanager_napi target."
+                ),
+            )
+        )
+
     if target_has_netstack_http_client_native_source_closure_evidence(target_root):
         actions.append(
             workspace_transform_action(
@@ -5069,6 +5136,70 @@ def apply_audio_process_stream_inline_enable_standby(data: bytes) -> tuple[bytes
             text = text.replace(old, new, 1)
             return text.encode(TEXT_ENCODING), ["inlined IAudioProcessStream::EnableStandby default no-op"]
     return data, ["IAudioProcessStream::EnableStandby declaration insertion point not found"]
+
+
+def apply_request_napi_openssl_crypto_dep(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    lines = text.splitlines(keepends=True)
+    output: list[str] = []
+    added = 0
+    for line in lines:
+        stripped = line.strip()
+        if stripped == '"openssl:libssl_shared",' and (
+            not output or output[-1].strip() != '"openssl:libcrypto_shared",'
+        ):
+            indent = line[: len(line) - len(line.lstrip())]
+            newline = "\r\n" if line.endswith("\r\n") else "\n" if line.endswith("\n") else ""
+            output.append(f'{indent}"openssl:libcrypto_shared",{newline}')
+            added += 1
+        output.append(line)
+    if added:
+        return "".join(output).encode(TEXT_ENCODING), [f"added openssl:libcrypto_shared before {added} libssl dep(s)"]
+    return data, ["request NAPI openssl:libcrypto_shared dependency already present"]
+
+
+def apply_backgroundtaskmanager_js_subscriber_source_closure(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    notes: list[str] = []
+
+    first_target, separator, rest = text.partition('ohos_shared_library("backgroundtaskmanager_napi")')
+    if not separator:
+        return data, ["backgroundtaskmanager_napi target separator not found"]
+
+    if '"napi/src/js_backgroundtask_subscriber.cpp"' not in first_target:
+        old = '    "napi/src/init.cpp",\n    "napi/src/request_suspend_delay.cpp",\n'
+        new = (
+            '    "napi/src/init.cpp",\n'
+            '    "napi/src/js_backgroundtask_subscriber.cpp",\n'
+            '    "napi/src/request_suspend_delay.cpp",\n'
+        )
+        if old in first_target:
+            first_target = first_target.replace(old, new, 1)
+            notes.append("added js_backgroundtask_subscriber.cpp to backgroundtaskmanager sources")
+        else:
+            notes.append("backgroundtaskmanager source insertion point not found")
+    else:
+        notes.append("js_backgroundtask_subscriber.cpp already present in backgroundtaskmanager sources")
+
+    if '"ability_runtime:runtime"' not in first_target:
+        old = '    "ability_runtime:napi_base_context",\n    "ability_runtime:wantagent_innerkits",\n'
+        new = (
+            '    "ability_runtime:napi_base_context",\n'
+            '    "ability_runtime:runtime",\n'
+            '    "ability_runtime:wantagent_innerkits",\n'
+        )
+        if old in first_target:
+            first_target = first_target.replace(old, new, 1)
+            notes.append("added ability_runtime:runtime to backgroundtaskmanager external_deps")
+        else:
+            notes.append("backgroundtaskmanager runtime dependency insertion point not found")
+    else:
+        notes.append("ability_runtime:runtime already present in backgroundtaskmanager external_deps")
+
+    new_text = first_target + separator + rest
+    if new_text != text:
+        return new_text.encode(TEXT_ENCODING), notes
+    return data, notes or ["backgroundtaskmanager JsBackgroundTaskSubscriber closure already aligned"]
 
 
 def add_gn_line_after(text: str, anchor: str, line: str) -> tuple[str, bool]:
@@ -8186,6 +8317,16 @@ def materialize_action(
         ):
             data, transforms = apply_audio_process_stream_inline_enable_standby(data)
         elif (
+            rel_path == REQUEST_NAPI_BUILD_REL
+            and action.get("source_role") == "request_napi_openssl_crypto_dep"
+        ):
+            data, transforms = apply_request_napi_openssl_crypto_dep(data)
+        elif (
+            rel_path == BGTASK_KITS_BUILD_REL
+            and action.get("source_role") == "backgroundtaskmanager_js_subscriber_source_closure"
+        ):
+            data, transforms = apply_backgroundtaskmanager_js_subscriber_source_closure(data)
+        elif (
             rel_path == NETSTACK_HTTP_CLIENT_BUILD_REL
             and action.get("source_role") == "netstack_http_client_native_source_closure"
         ):
@@ -8669,6 +8810,16 @@ def check_build_log_old_errors_absent(build_result: dict[str, Any] | None) -> di
             "multimedia/audio_framework/libaudio_process_service.z.so",
             "undefined symbol: vtable for OHOS::AudioStandard::IAudioProcessStream",
             "the vtable symbol may be undefined because the class is missing its key function",
+        ],
+        "old_request_napi_missing_openssl_crypto_dep": [
+            "request/request/librequest.z.so",
+            "undefined symbol: SHA256_Init",
+            "undefined symbol: SHA256_Final",
+        ],
+        "old_backgroundtaskmanager_missing_js_subscriber_source": [
+            "resourceschedule/background_task_mgr/libbackgroundtaskmanager.z.so",
+            "undefined symbol: OHOS::BackgroundTaskMgr::JsBackgroundTaskSubscriber::SetFlag",
+            "undefined symbol: OHOS::BackgroundTaskMgr::JsBackgroundTaskSubscriber::IsEmpty",
         ],
         "old_netstack_http_client_js_source_mixed_into_native_innerkit": [
             "communication/netstack/libhttp_client.z.so",
@@ -11333,6 +11484,85 @@ def parse_build_diagnostics(
                         "audio_process_in_server.o",
                     ],
                     24,
+                ),
+            )
+        )
+
+    if (
+        "request/request/librequest.z.so" in plain_text
+        and "undefined symbol: SHA256_Init" in plain_text
+        and "undefined symbol: SHA256_Update" in plain_text
+        and "undefined symbol: SHA256_Final" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "request_napi_missing_openssl_crypto_dep",
+                "source_build_compatibility",
+                (
+                    "request NAPI napi_utils.cpp directly calls OpenSSL SHA256_Init/Update/Final, "
+                    "but the request JS NAPI BUILD.gn links libssl without libcrypto, where those "
+                    "digest symbols are provided."
+                ),
+                (
+                    "Add openssl:libcrypto_shared beside openssl:libssl_shared in "
+                    "base/request/request/frameworks/js/napi/request/BUILD.gn; do not fake "
+                    "OpenSSL SHA symbols or remove request."
+                ),
+                [
+                    str(log_path),
+                    str(workspace / REQUEST_NAPI_BUILD_REL),
+                    str(workspace / "base/request/request/frameworks/js/napi/request/src/napi_utils.cpp"),
+                    str(target_root / REQUEST_NAPI_BUILD_REL),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "request/request/librequest.z.so",
+                        "undefined symbol: SHA256_Init",
+                        "undefined symbol: SHA256_Update",
+                        "undefined symbol: SHA256_Final",
+                        "napi_utils.cpp",
+                    ],
+                    24,
+                ),
+            )
+        )
+
+    if (
+        "resourceschedule/background_task_mgr/libbackgroundtaskmanager.z.so" in plain_text
+        and "JsBackgroundTaskSubscriber::SetFlag" in plain_text
+        and "JsBackgroundTaskSubscriber::IsEmpty" in plain_text
+        and "bg_continuous_task_napi_module.cpp" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "backgroundtaskmanager_missing_js_subscriber_source",
+                "source_build_compatibility",
+                (
+                    "backgroundtaskmanager links bg_continuous_task_napi_module.cpp, which uses "
+                    "JsBackgroundTaskSubscriber, but that implementation source is only present in "
+                    "the sibling backgroundtaskmanager_napi target's source list."
+                ),
+                (
+                    "Add the existing napi/src/js_backgroundtask_subscriber.cpp source and its "
+                    "ability_runtime:runtime dependency to the backgroundtaskmanager target; keep "
+                    "background_task_mgr enabled and avoid fake subscriber symbols."
+                ),
+                [
+                    str(log_path),
+                    str(workspace / BGTASK_KITS_BUILD_REL),
+                    str(workspace / "foundation/resourceschedule/background_task_mgr/interfaces/kits/napi/src/js_backgroundtask_subscriber.cpp"),
+                    str(target_root / BGTASK_KITS_BUILD_REL),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "resourceschedule/background_task_mgr/libbackgroundtaskmanager.z.so",
+                        "JsBackgroundTaskSubscriber::SetFlag",
+                        "JsBackgroundTaskSubscriber::IsEmpty",
+                        "bg_continuous_task_napi_module.cpp",
+                    ],
+                    28,
                 ),
             )
         )

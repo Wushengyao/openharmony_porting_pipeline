@@ -198,6 +198,15 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   declared without an implementation. For the existing `EnableStandby()` default
   hook, inline a no-op default in the header so the abstract base vtable can be
   emitted, while keeping low-latency audio and `audio_process_in_server` enabled.
+- When `request/request/librequest.z.so` reports missing `SHA256_Init`,
+  `SHA256_Update`, or `SHA256_Final`, add `openssl:libcrypto_shared` beside
+  `openssl:libssl_shared` in the request JS NAPI build rule; do not fake
+  OpenSSL symbols or remove the request component.
+- When `resourceschedule/background_task_mgr/libbackgroundtaskmanager.z.so`
+  reports missing `JsBackgroundTaskSubscriber` methods from
+  `bg_continuous_task_napi_module.cpp`, add the existing
+  `napi/src/js_backgroundtask_subscriber.cpp` source and its runtime dependency
+  to the same target rather than disabling background task manager NAPI.
 - When `communication/netstack/libhttp_client.z.so` links JS NAPI
   `request_context.cpp`/`http_request_options.cpp` into the native
   `http_client` innerkit and reports unresolved `OHOS::NetStack::Http::*`
