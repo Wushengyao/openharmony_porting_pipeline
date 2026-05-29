@@ -23,7 +23,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Any
+from typing import Any, Sequence
 
 import yaml
 
@@ -142,6 +142,7 @@ LOCATION_LOCATOR_SERVICE_TARGET_BUILD_CANDIDATES = [
     LOCATION_LOCATOR_SERVICE_BUILD_REL,
 ]
 ARKUI_ACE_BUILD_REL = "foundation/arkui/ace_engine/build/BUILD.gn"
+ARKUI_ACE_MAP_REL = "foundation/arkui/ace_engine/build/libace.map"
 ARKUI_ACE_NDK_BUILD_REL = "foundation/arkui/ace_engine/interfaces/native/BUILD.gn"
 ARKUI_ACE_COLOR_REL = "foundation/arkui/ace_engine/frameworks/core/components/common/properties/color.cpp"
 ARKUI_CJ_FRONTEND_BUILD_REL = "foundation/arkui/ace_engine/frameworks/bridge/cj_frontend/BUILD.gn"
@@ -153,6 +154,41 @@ ARKUI_VIEW_STACK_PROCESSOR_HEADER_REL = (
     "foundation/arkui/ace_engine/frameworks/bridge/declarative_frontend/view_stack_processor.h"
 )
 ARKUI_COMPONENT_HEADER_REL = "foundation/arkui/ace_engine/frameworks/core/pipeline/base/component.h"
+ARKUI_CLICK_RECOGNIZER_HEADER_REL = "foundation/arkui/ace_engine/frameworks/core/gestures/click_recognizer.h"
+ARKUI_SEQUENCED_RECOGNIZER_HEADER_REL = (
+    "foundation/arkui/ace_engine/frameworks/core/gestures/sequenced_recognizer.h"
+)
+ARKUI_GESTURE_RECOGNIZER_HEADER_REL = (
+    "foundation/arkui/ace_engine/frameworks/core/gestures/gesture_recognizer.h"
+)
+ARKUI_SOLE_CHILD_ELEMENT_HEADER_REL = (
+    "foundation/arkui/ace_engine/frameworks/core/pipeline/base/sole_child_element.h"
+)
+ARKUI_ELEMENT_HEADER_REL = "foundation/arkui/ace_engine/frameworks/core/pipeline/base/element.h"
+ARKUI_COMPOSED_ELEMENT_HEADER_REL = (
+    "foundation/arkui/ace_engine/frameworks/core/pipeline/base/composed_element.h"
+)
+ARKUI_RESSCHED_REPORT_HEADER_REL = "foundation/arkui/ace_engine/frameworks/base/ressched/ressched_report.h"
+ARKUI_CJ_FRONTEND_LOW_LEVEL_EXPORT_MAP_ENTRIES = [
+    "      OHOS::Ace::TouchEventTarget::*;",
+    "      OHOS::Ace::GestureRecognizer::HandleEvent*;",
+    "      OHOS::Ace::GestureRecognizer::AddToReferee*;",
+    "      OHOS::Ace::GestureRecognizer::DelFromReferee*;",
+    "      OHOS::Ace::GestureRecognizer::BatchAdjudicate*;",
+    "      OHOS::Ace::ResSchedReport::GetInstance*;",
+    "      OHOS::Ace::ResSchedReport::ResSchedDataReport*;",
+    "      VTT?for?OHOS::Ace::LongPressRecognizer;",
+    "      vtable?for?OHOS::Ace::LongPressRecognizer;",
+    "      VTT?for?OHOS::Ace::SequencedRecognizer;",
+    "      vtable?for?OHOS::Ace::SequencedRecognizer;",
+    "      VTT?for?OHOS::Ace::ClickRecognizer;",
+    "      vtable?for?OHOS::Ace::ClickRecognizer;",
+    "      OHOS::Ace::SoleChildElement::*;",
+    "      OHOS::Ace::Element::*;",
+    "      OHOS::Ace::ComposedElement::*;",
+    "      VTT?for?OHOS::Ace::SoleChildElement;",
+    "      vtable?for?OHOS::Ace::SoleChildElement;",
+]
 NETSTACK_HTTP_CLIENT_BUILD_REL = "foundation/communication/netstack/interfaces/innerkits/http_client/BUILD.gn"
 NETSTACK_BUNDLE_REL = "foundation/communication/netstack/bundle.json"
 NETSTACK_HTTP_CLIENT_RESPONSE_HEADER_REL = (
@@ -2211,6 +2247,64 @@ def workspace_needs_arkui_cj_frontend_old_pipeline_compat(workspace: Path, targe
             or any(not (workspace / rel_path).is_file() for rel_path in ARKUI_CJ_FRONTEND_COMPAT_SOURCE_RELS)
         )
     )
+
+
+def target_has_arkui_cj_frontend_low_level_export_evidence(target_root: Path) -> bool:
+    if not target_has_arkui_cj_frontend_old_pipeline_evidence(target_root):
+        return False
+    required_texts = {
+        ARKUI_ACE_MAP_REL: ARKUI_CJ_FRONTEND_LOW_LEVEL_EXPORT_MAP_ENTRIES,
+        ARKUI_CLICK_RECOGNIZER_HEADER_REL: [
+            '#include "base/utils/macros.h"',
+            "class ACE_FORCE_EXPORT ClickRecognizer",
+        ],
+        ARKUI_SEQUENCED_RECOGNIZER_HEADER_REL: ["class ACE_FORCE_EXPORT SequencedRecognizer"],
+        ARKUI_GESTURE_RECOGNIZER_HEADER_REL: ["class ACE_FORCE_EXPORT GestureRecognizer"],
+        ARKUI_SOLE_CHILD_ELEMENT_HEADER_REL: ["class ACE_FORCE_EXPORT SoleChildElement"],
+        ARKUI_ELEMENT_HEADER_REL: ["class ACE_FORCE_EXPORT Element"],
+        ARKUI_COMPOSED_ELEMENT_HEADER_REL: ["class ACE_FORCE_EXPORT ComposedElement"],
+        ARKUI_RESSCHED_REPORT_HEADER_REL: [
+            "ACE_FORCE_EXPORT static ResSchedReport& GetInstance();",
+            "ACE_FORCE_EXPORT void ResSchedDataReport(const char* name",
+        ],
+    }
+    for rel_path, needles in required_texts.items():
+        path = target_root / rel_path
+        if not path.is_file():
+            return False
+        text = path.read_text(encoding=TEXT_ENCODING, errors="ignore")
+        if any(needle not in text for needle in needles):
+            return False
+    return True
+
+
+def workspace_needs_arkui_cj_frontend_low_level_export_compat(workspace: Path, target_root: Path) -> bool:
+    if not target_has_arkui_cj_frontend_low_level_export_evidence(target_root):
+        return False
+    required_texts = {
+        ARKUI_ACE_MAP_REL: ARKUI_CJ_FRONTEND_LOW_LEVEL_EXPORT_MAP_ENTRIES,
+        ARKUI_CLICK_RECOGNIZER_HEADER_REL: [
+            '#include "base/utils/macros.h"',
+            "class ACE_FORCE_EXPORT ClickRecognizer",
+        ],
+        ARKUI_SEQUENCED_RECOGNIZER_HEADER_REL: ["class ACE_FORCE_EXPORT SequencedRecognizer"],
+        ARKUI_GESTURE_RECOGNIZER_HEADER_REL: ["class ACE_FORCE_EXPORT GestureRecognizer"],
+        ARKUI_SOLE_CHILD_ELEMENT_HEADER_REL: ["class ACE_FORCE_EXPORT SoleChildElement"],
+        ARKUI_ELEMENT_HEADER_REL: ["class ACE_FORCE_EXPORT Element"],
+        ARKUI_COMPOSED_ELEMENT_HEADER_REL: ["class ACE_FORCE_EXPORT ComposedElement"],
+        ARKUI_RESSCHED_REPORT_HEADER_REL: [
+            "ACE_FORCE_EXPORT static ResSchedReport& GetInstance();",
+            "ACE_FORCE_EXPORT void ResSchedDataReport(const char* name",
+        ],
+    }
+    for rel_path, needles in required_texts.items():
+        path = workspace / rel_path
+        if not path.is_file():
+            return False
+        text = path.read_text(encoding=TEXT_ENCODING, errors="ignore")
+        if any(needle not in text for needle in needles):
+            return True
+    return False
 
 
 def target_has_arkui_ace_ndk_no_resource_manager_evidence(target_root: Path) -> bool:
@@ -4399,6 +4493,58 @@ def planned_actions(
             )
         )
 
+    if workspace_needs_arkui_cj_frontend_low_level_export_compat(workspace, target_root):
+        actions.append(
+            workspace_transform_action(
+                ARKUI_ACE_MAP_REL,
+                "arkui_cj_frontend_low_level_export_map",
+                "L1_build_compatibility",
+                (
+                    "Add target-evidenced libace_compatible version-script exports for the "
+                    "classic CJ old-pipeline recognizer, touch-event, ResSchedReport, and "
+                    "SoleChildElement symbols required by libcj_frontend_ohos."
+                ),
+            )
+        )
+        for rel_path, role, reason in [
+            (
+                ARKUI_CLICK_RECOGNIZER_HEADER_REL,
+                "arkui_click_recognizer_force_export_compat",
+                "Use the target-evidenced ACE_FORCE_EXPORT ClickRecognizer annotation.",
+            ),
+            (
+                ARKUI_SEQUENCED_RECOGNIZER_HEADER_REL,
+                "arkui_sequenced_recognizer_force_export_compat",
+                "Use the target-evidenced ACE_FORCE_EXPORT SequencedRecognizer annotation.",
+            ),
+            (
+                ARKUI_GESTURE_RECOGNIZER_HEADER_REL,
+                "arkui_gesture_recognizer_force_export_compat",
+                "Use the target-evidenced ACE_FORCE_EXPORT GestureRecognizer annotation.",
+            ),
+            (
+                ARKUI_SOLE_CHILD_ELEMENT_HEADER_REL,
+                "arkui_sole_child_element_force_export_compat",
+                "Use the target-evidenced ACE_FORCE_EXPORT SoleChildElement annotation.",
+            ),
+            (
+                ARKUI_ELEMENT_HEADER_REL,
+                "arkui_element_force_export_compat",
+                "Use the target-evidenced ACE_FORCE_EXPORT Element annotation.",
+            ),
+            (
+                ARKUI_COMPOSED_ELEMENT_HEADER_REL,
+                "arkui_composed_element_force_export_compat",
+                "Use the target-evidenced ACE_FORCE_EXPORT ComposedElement annotation.",
+            ),
+            (
+                ARKUI_RESSCHED_REPORT_HEADER_REL,
+                "arkui_ressched_report_method_force_export_compat",
+                "Use the target-evidenced ACE_FORCE_EXPORT ResSchedReport method annotations.",
+            ),
+        ]:
+            actions.append(workspace_transform_action(rel_path, role, "L1_build_compatibility", reason))
+
     if workspace_needs_arkui_ace_color_no_resource_manager_guard(workspace, target_root):
         actions.append(
             workspace_transform_action(
@@ -6018,6 +6164,141 @@ def apply_arkui_component_force_export_compat(data: bytes) -> tuple[bytes, list[
         text = text.replace("class ACE_EXPORT Component", "class ACE_FORCE_EXPORT Component", 1)
         return text.encode(TEXT_ENCODING), ["changed Component export annotation from ACE_EXPORT to ACE_FORCE_EXPORT"]
     return data, ["Component export annotation insertion point not found"]
+
+
+def add_include_once(
+    text: str,
+    include_line: str,
+    anchors: Sequence[str],
+    label: str,
+) -> tuple[str, list[str]]:
+    if include_line in text:
+        return text, [f"{label} include already present"]
+    for anchor in anchors:
+        if anchor in text:
+            return text.replace(anchor, anchor + include_line + "\n", 1), [f"included {include_line}"]
+    return text, [f"{label} include insertion point not found"]
+
+
+def force_export_class_text(text: str, class_name: str) -> tuple[str, list[str]]:
+    target = f"class ACE_FORCE_EXPORT {class_name}"
+    if target in text:
+        return text, [f"{class_name} already uses ACE_FORCE_EXPORT"]
+    replacements = [
+        (f"class ACE_EXPORT {class_name}", target, f"changed {class_name} export annotation from ACE_EXPORT"),
+        (f"class {class_name}", target, f"added ACE_FORCE_EXPORT to {class_name}"),
+    ]
+    for old, new, note in replacements:
+        if old in text:
+            return text.replace(old, new, 1), [note]
+    return text, [f"{class_name} export annotation insertion point not found"]
+
+
+def apply_arkui_cj_frontend_low_level_export_map(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    missing = [entry for entry in ARKUI_CJ_FRONTEND_LOW_LEVEL_EXPORT_MAP_ENTRIES if entry not in text]
+    if not missing:
+        return data, ["ArkUI CJ low-level export map entries already present"]
+    anchor = "    };\n  local:\n"
+    if anchor not in text:
+        return data, ["ArkUI libace.map export insertion point not found"]
+    block = "\n      # Target-evidenced classic CJ old-pipeline exports.\n" + "\n".join(missing) + "\n"
+    text = text.replace(anchor, block + anchor, 1)
+    return text.encode(TEXT_ENCODING), [f"added {len(missing)} ArkUI CJ low-level export map entries"]
+
+
+def apply_arkui_click_recognizer_force_export_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    notes: list[str] = []
+    text, include_notes = add_include_once(
+        text,
+        '#include "base/utils/macros.h"',
+        ['#include "base/thread/cancelable_callback.h"\n', "#include <functional>\n\n"],
+        "ClickRecognizer",
+    )
+    notes.extend(include_notes)
+    text, export_notes = force_export_class_text(text, "ClickRecognizer")
+    notes.extend(export_notes)
+    if any(note.startswith("included ") or note.startswith("added ") or note.startswith("changed ") for note in notes):
+        return text.encode(TEXT_ENCODING), notes
+    return data, notes
+
+
+def apply_arkui_sequenced_recognizer_force_export_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    text, notes = force_export_class_text(text, "SequencedRecognizer")
+    if any(note.startswith("added ") or note.startswith("changed ") for note in notes):
+        return text.encode(TEXT_ENCODING), notes
+    return data, notes
+
+
+def apply_arkui_gesture_recognizer_force_export_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    text, notes = force_export_class_text(text, "GestureRecognizer")
+    if any(note.startswith("added ") or note.startswith("changed ") for note in notes):
+        return text.encode(TEXT_ENCODING), notes
+    return data, notes
+
+
+def apply_arkui_sole_child_element_force_export_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    text, notes = force_export_class_text(text, "SoleChildElement")
+    if any(note.startswith("added ") or note.startswith("changed ") for note in notes):
+        return text.encode(TEXT_ENCODING), notes
+    return data, notes
+
+
+def apply_arkui_element_force_export_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    text, notes = force_export_class_text(text, "Element")
+    if any(note.startswith("added ") or note.startswith("changed ") for note in notes):
+        return text.encode(TEXT_ENCODING), notes
+    return data, notes
+
+
+def apply_arkui_composed_element_force_export_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    text, notes = force_export_class_text(text, "ComposedElement")
+    if any(note.startswith("added ") or note.startswith("changed ") for note in notes):
+        return text.encode(TEXT_ENCODING), notes
+    return data, notes
+
+
+def apply_arkui_ressched_report_method_force_export_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    notes: list[str] = []
+    if "ACE_FORCE_EXPORT static ResSchedReport& GetInstance();" in text:
+        notes.append("ResSchedReport::GetInstance already uses ACE_FORCE_EXPORT")
+    elif "    static ResSchedReport& GetInstance();\n" in text:
+        text = text.replace(
+            "    static ResSchedReport& GetInstance();\n",
+            "    ACE_FORCE_EXPORT static ResSchedReport& GetInstance();\n",
+            1,
+        )
+        notes.append("exported ResSchedReport::GetInstance")
+    else:
+        notes.append("ResSchedReport::GetInstance insertion point not found")
+
+    target = (
+        "    ACE_FORCE_EXPORT void ResSchedDataReport(const char* name,\n"
+        "        const std::unordered_map<std::string, std::string>& param = {}, "
+        "int64_t tid = ResDefine::INVALID_DATA);\n"
+    )
+    old = (
+        "    void ResSchedDataReport(const char* name, "
+        "const std::unordered_map<std::string, std::string>& param = {},\n"
+        "        int64_t tid = ResDefine::INVALID_DATA);\n"
+    )
+    if target in text:
+        notes.append("ResSchedReport::ResSchedDataReport already uses ACE_FORCE_EXPORT")
+    elif old in text:
+        text = text.replace(old, target, 1)
+        notes.append("exported ResSchedReport::ResSchedDataReport")
+    else:
+        notes.append("ResSchedReport::ResSchedDataReport insertion point not found")
+    if any(note.startswith("exported ") for note in notes):
+        return text.encode(TEXT_ENCODING), notes
+    return data, notes
 
 
 def apply_arkui_ace_color_no_resource_manager_guard(data: bytes) -> tuple[bytes, list[str]]:
@@ -9309,6 +9590,46 @@ def materialize_action(
         ):
             data, transforms = apply_arkui_component_force_export_compat(data)
         elif (
+            rel_path == ARKUI_ACE_MAP_REL
+            and action.get("source_role") == "arkui_cj_frontend_low_level_export_map"
+        ):
+            data, transforms = apply_arkui_cj_frontend_low_level_export_map(data)
+        elif (
+            rel_path == ARKUI_CLICK_RECOGNIZER_HEADER_REL
+            and action.get("source_role") == "arkui_click_recognizer_force_export_compat"
+        ):
+            data, transforms = apply_arkui_click_recognizer_force_export_compat(data)
+        elif (
+            rel_path == ARKUI_SEQUENCED_RECOGNIZER_HEADER_REL
+            and action.get("source_role") == "arkui_sequenced_recognizer_force_export_compat"
+        ):
+            data, transforms = apply_arkui_sequenced_recognizer_force_export_compat(data)
+        elif (
+            rel_path == ARKUI_GESTURE_RECOGNIZER_HEADER_REL
+            and action.get("source_role") == "arkui_gesture_recognizer_force_export_compat"
+        ):
+            data, transforms = apply_arkui_gesture_recognizer_force_export_compat(data)
+        elif (
+            rel_path == ARKUI_SOLE_CHILD_ELEMENT_HEADER_REL
+            and action.get("source_role") == "arkui_sole_child_element_force_export_compat"
+        ):
+            data, transforms = apply_arkui_sole_child_element_force_export_compat(data)
+        elif (
+            rel_path == ARKUI_ELEMENT_HEADER_REL
+            and action.get("source_role") == "arkui_element_force_export_compat"
+        ):
+            data, transforms = apply_arkui_element_force_export_compat(data)
+        elif (
+            rel_path == ARKUI_COMPOSED_ELEMENT_HEADER_REL
+            and action.get("source_role") == "arkui_composed_element_force_export_compat"
+        ):
+            data, transforms = apply_arkui_composed_element_force_export_compat(data)
+        elif (
+            rel_path == ARKUI_RESSCHED_REPORT_HEADER_REL
+            and action.get("source_role") == "arkui_ressched_report_method_force_export_compat"
+        ):
+            data, transforms = apply_arkui_ressched_report_method_force_export_compat(data)
+        elif (
             rel_path == ARKUI_ACE_COLOR_REL
             and action.get("source_role") == "arkui_ace_color_no_resource_manager_guard"
         ):
@@ -9864,6 +10185,13 @@ def check_build_log_old_errors_absent(build_result: dict[str, Any] | None) -> di
             "undefined symbol: OHOS::Ace::Framework::ViewStackProcessor::GetPageTransitionComponent()",
             "undefined symbol: OHOS::Ace::SingleChildGesture::SetChild",
             "undefined symbol: vtable for OHOS::Ace::TapGesture",
+        ],
+        "old_arkui_cj_frontend_missing_low_level_export_closure": [
+            "arkui/ace_engine/libcj_frontend_ohos.z.so",
+            "undefined symbol: VTT for OHOS::Ace::SequencedRecognizer",
+            "undefined symbol: OHOS::Ace::TouchEventTarget::SetCoordinateOffset",
+            "undefined symbol: OHOS::Ace::ResSchedReport::GetInstance",
+            "undefined symbol: VTT for OHOS::Ace::SoleChildElement",
         ],
         "old_webview_ohos_adapter_riscv64_avcodec_sdk_libs_missing": [
             "web/webview/libnweb_ohos_adapter.z.so",
@@ -12152,6 +12480,53 @@ def parse_build_diagnostics(
                         "ViewStackProcessor::GetPageTransitionComponent()",
                         "SingleChildGesture::SetChild",
                         "vtable for OHOS::Ace::TapGesture",
+                    ],
+                    30,
+                ),
+            )
+        )
+
+    if (
+        "arkui/ace_engine/libcj_frontend_ohos.z.so" in plain_text
+        and "VTT for OHOS::Ace::SequencedRecognizer" in plain_text
+        and "OHOS::Ace::TouchEventTarget::SetCoordinateOffset" in plain_text
+        and "OHOS::Ace::ResSchedReport::GetInstance" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "arkui_cj_frontend_missing_low_level_export_closure",
+                "source_build_compatibility",
+                (
+                    "libcj_frontend_ohos has reached the classic CJ old-pipeline low-level "
+                    "gesture/element link boundary. The required implementations are already "
+                    "built into libace_compatible, but the 6.0 version script and several headers "
+                    "do not export the target-evidenced recognizer, TouchEventTarget, "
+                    "ResSchedReport, and SoleChildElement symbols."
+                ),
+                (
+                    "Apply the target-evidenced low-level export closure: add the minimal "
+                    "libace.map symbol patterns and the matching ACE_FORCE_EXPORT annotations for "
+                    "ClickRecognizer, SequencedRecognizer, GestureRecognizer, SoleChildElement, "
+                    "Element, ComposedElement, and ResSchedReport methods."
+                ),
+                [
+                    str(log_path),
+                    str(workspace / ARKUI_ACE_MAP_REL),
+                    str(workspace / ARKUI_CLICK_RECOGNIZER_HEADER_REL),
+                    str(workspace / ARKUI_SEQUENCED_RECOGNIZER_HEADER_REL),
+                    str(workspace / ARKUI_GESTURE_RECOGNIZER_HEADER_REL),
+                    str(workspace / ARKUI_SOLE_CHILD_ELEMENT_HEADER_REL),
+                    str(workspace / ARKUI_RESSCHED_REPORT_HEADER_REL),
+                    str(target_root / ARKUI_ACE_MAP_REL),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "arkui/ace_engine/libcj_frontend_ohos.z.so",
+                        "VTT for OHOS::Ace::SequencedRecognizer",
+                        "TouchEventTarget::SetCoordinateOffset",
+                        "ResSchedReport::GetInstance",
+                        "VTT for OHOS::Ace::SoleChildElement",
                     ],
                     30,
                 ),

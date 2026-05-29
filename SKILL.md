@@ -234,6 +234,12 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   add the geometry/gesture sources to the non-`ohos_ng` branch, import
   `cj_touch_event_compat.cpp` and `cj_view_stack_processor_compat.cpp`, and
   add only the needed `ACE_FORCE_EXPORT` annotations rather than disabling CJ.
+- When that CJ old-pipeline closure reaches lower-level undefined symbols such
+  as `SequencedRecognizer`, `ClickRecognizer`, `TouchEventTarget::*`,
+  `ResSchedReport::*`, or `SoleChildElement` from `libcj_frontend_ohos.z.so`,
+  export the target-evidenced symbols through `build/libace.map` and matching
+  `ACE_FORCE_EXPORT` header annotations; do not fake ArkUI core classes or
+  remove CJ/product features.
 - When `request/request/librequest.z.so` reports missing `SHA256_Init`,
   `SHA256_Update`, or `SHA256_Final`, add `openssl:libcrypto_shared` beside
   `openssl:libssl_shared` in the request JS NAPI build rule; do not fake
