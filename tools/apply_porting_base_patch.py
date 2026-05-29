@@ -113,6 +113,8 @@ HIPERF_RISCV64_SOURCE_RELS = [
 ARKUI_NAPI_RISCV64_CJ_SUPPORT_REL = "foundation/arkui/napi/native_engine/impl/ark/cj_support.cpp"
 GRAPHIC_2D_VSYNC_LOG_REL = "foundation/graphic/graphic_2d/rosen/modules/composer/vsync/include/vsync_log.h"
 GRAPHIC_2D_BOOTANIMATION_LOG_REL = "foundation/graphic/graphic_2d/frameworks/bootanimation/include/log.h"
+GRAPHIC_2D_HGM_LOG_REL = "foundation/graphic/graphic_2d/rosen/modules/hyper_graphic_manager/core/config/hgm_log.h"
+GRAPHIC_2D_RS_MACROS_REL = "foundation/graphic/graphic_2d/rosen/modules/render_service_base/include/common/rs_macros.h"
 LUME_STATIC_PLUGIN_DECL_REL = "foundation/graphic/graphic_3d/lume/LumeEngine/src/static_plugin_decl.h"
 ARK_ETS_RUNTIME_BUILD_REL = "arkcompiler/ets_runtime/BUILD.gn"
 ARK_ETS_RUNTIME_RISCV64_TRAMPOLINE_REL = "arkcompiler/ets_runtime/ecmascript/trampoline/riscv64/raw_asm_stub.S"
@@ -1775,6 +1777,31 @@ def target_has_graphic_2d_bootanimation_riscv64_log_evidence(target_root: Path) 
         "(defined(__riscv) && __riscv_xlen == 64)" in text
         and '#define BPUBI64  "%{public}ld"' in text
         and '#define BPUBU64  "%{public}lu"' in text
+    )
+
+
+def target_has_graphic_2d_hgm_riscv64_log_evidence(target_root: Path) -> bool:
+    hgm_log = target_root / GRAPHIC_2D_HGM_LOG_REL
+    if not hgm_log.is_file():
+        return False
+    text = hgm_log.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "(defined(__riscv) && __riscv_xlen == 64)" in text
+        and '#define PUBI64 "%{public}ld"' in text
+        and '#define PUBU64 "%{public}lu"' in text
+    )
+
+
+def target_has_graphic_2d_rs_macros_riscv64_log_evidence(target_root: Path) -> bool:
+    rs_macros = target_root / GRAPHIC_2D_RS_MACROS_REL
+    if not rs_macros.is_file():
+        return False
+    text = rs_macros.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "(defined(__riscv) && __riscv_xlen == 64)" in text
+        and '#define RSPUBI64  "%{public}ld"' in text
+        and '#define RSPUB_SIZE "%{public}lu"' in text
+        and '#define RSPUBU64  "%{public}lu"' in text
     )
 
 
@@ -3612,6 +3639,38 @@ def planned_actions(
             )
         )
 
+    if (
+        clean_str(seed.get("architecture")) == "riscv64"
+        and target_has_graphic_2d_hgm_riscv64_log_evidence(target_root)
+    ):
+        actions.append(
+            workspace_transform_action(
+                GRAPHIC_2D_HGM_LOG_REL,
+                "graphic_2d_hgm_riscv64_log_format_macros",
+                "L1_build_compatibility",
+                (
+                    "Add the target-evidenced riscv64 LP64 condition to Hyper Graphic Manager "
+                    "logging macros so ScreenId arguments compile with -Werror=format."
+                ),
+            )
+        )
+
+    if (
+        clean_str(seed.get("architecture")) == "riscv64"
+        and target_has_graphic_2d_rs_macros_riscv64_log_evidence(target_root)
+    ):
+        actions.append(
+            workspace_transform_action(
+                GRAPHIC_2D_RS_MACROS_REL,
+                "graphic_2d_rs_macros_riscv64_log_format_macros",
+                "L1_build_compatibility",
+                (
+                    "Add the target-evidenced riscv64 LP64 condition to Render Service logging "
+                    "macros so uint64_t/ScreenId arguments compile with -Werror=format."
+                ),
+            )
+        )
+
     if clean_str(seed.get("architecture")) == "riscv64" and target_has_lume_static_plugin_riscv64_section_evidence(target_root):
         actions.append(
             workspace_transform_action(
@@ -4704,6 +4763,33 @@ def apply_graphic_2d_bootanimation_riscv64_log_format_macros(data: bytes) -> tup
         text = text.replace(old, new, 1)
         return text.encode(TEXT_ENCODING), ["added graphic_2d bootanimation RISC-V LP64 log-format branch"]
     return data, ["graphic_2d bootanimation RISC-V log-format insertion point not found"]
+
+
+def apply_graphic_2d_hgm_riscv64_log_format_macros(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    riscv_condition = "(defined(__riscv) && __riscv_xlen == 64)"
+    if riscv_condition in text:
+        return data, ["graphic_2d HGM RISC-V LP64 log-format branch already present"]
+    for newline in ("\r\n", "\n"):
+        old = f"#if (defined(__aarch64__) || defined(__x86_64__)){newline}"
+        new = f"#if (defined(__aarch64__) || defined(__x86_64__) || {riscv_condition}){newline}"
+        if old in text:
+            text = text.replace(old, new, 1)
+            return text.encode(TEXT_ENCODING), ["added graphic_2d HGM RISC-V LP64 log-format branch"]
+    return data, ["graphic_2d HGM RISC-V log-format insertion point not found"]
+
+
+def apply_graphic_2d_rs_macros_riscv64_log_format_macros(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    riscv_condition = "(defined(__riscv) && __riscv_xlen == 64)"
+    if riscv_condition in text:
+        return data, ["graphic_2d Render Service RISC-V LP64 log-format branch already present"]
+    old = "#if (defined(__aarch64__) || defined(__x86_64__))\n"
+    new = f"#if (defined(__aarch64__) || defined(__x86_64__) || {riscv_condition})\n"
+    if old in text:
+        text = text.replace(old, new, 1)
+        return text.encode(TEXT_ENCODING), ["added graphic_2d Render Service RISC-V LP64 log-format branch"]
+    return data, ["graphic_2d Render Service RISC-V log-format insertion point not found"]
 
 
 def apply_lume_static_plugin_riscv64_section_alignment(data: bytes) -> tuple[bytes, list[str]]:
@@ -7551,6 +7637,18 @@ def materialize_action(
         ):
             data, transforms = apply_graphic_2d_bootanimation_riscv64_log_format_macros(data)
         elif (
+            rel_path == GRAPHIC_2D_HGM_LOG_REL
+            and action.get("source_role") == "graphic_2d_hgm_riscv64_log_format_macros"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_graphic_2d_hgm_riscv64_log_format_macros(data)
+        elif (
+            rel_path == GRAPHIC_2D_RS_MACROS_REL
+            and action.get("source_role") == "graphic_2d_rs_macros_riscv64_log_format_macros"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_graphic_2d_rs_macros_riscv64_log_format_macros(data)
+        elif (
             rel_path == LUME_STATIC_PLUGIN_DECL_REL
             and action.get("source_role") == "graphic_3d_lume_riscv64_static_plugin_section"
             and target.get("architecture") == "riscv64"
@@ -7989,6 +8087,11 @@ def check_build_log_old_errors_absent(build_result: dict[str, Any] | None) -> di
             "foundation/graphic/graphic_2d/frameworks/bootanimation",
             "format specifies type",
             "BPUB",
+        ],
+        "old_graphic_2d_rosen_riscv64_log_format_mismatch": [
+            "foundation/graphic/graphic_2d/rosen/modules",
+            "format specifies type",
+            "PUB",
         ],
         "old_graphic_3d_lume_riscv64_static_plugin_section_missing": [
             "foundation/graphic/graphic_3d/lume",
@@ -8866,6 +8969,52 @@ def parse_build_diagnostics(
                         "BPUBU64",
                     ],
                     18,
+                ),
+            )
+        )
+
+    rosen_hgm_log_format_mismatch = (
+        "foundation/graphic/graphic_2d/rosen/modules/hyper_graphic_manager" in plain_text
+        and "format specifies type" in plain_text
+        and ("PUBU64" in plain_text or "PUBI64" in plain_text)
+        and "ScreenId" in plain_text
+    )
+    rosen_rs_log_format_mismatch = (
+        "foundation/graphic/graphic_2d/rosen/modules/render_service" in plain_text
+        and "format specifies type" in plain_text
+        and ("RSPUBU64" in plain_text or "RSPUBI64" in plain_text or "RSPUB_SIZE" in plain_text)
+        and ("ScreenId" in plain_text or "uint64_t" in plain_text or "int64_t" in plain_text)
+    )
+    if clean_str(target.get("architecture")) == "riscv64" and (
+        rosen_hgm_log_format_mismatch or rosen_rs_log_format_mismatch
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "graphic_2d_rosen_riscv64_log_format_macros",
+                "source_build_compatibility",
+                "graphic_2d Rosen logging macros still treat riscv64 as non-LP64, so ScreenId/uint64_t arguments fail -Werror=format.",
+                (
+                    "Apply the target-evidenced HGM hgm_log.h and Render Service rs_macros.h "
+                    "conditions that group (__riscv && __riscv_xlen == 64) with aarch64/x86_64."
+                ),
+                [
+                    str(log_path),
+                    str(target_root / GRAPHIC_2D_HGM_LOG_REL),
+                    str(target_root / GRAPHIC_2D_RS_MACROS_REL),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "foundation/graphic/graphic_2d/rosen/modules/hyper_graphic_manager",
+                        "foundation/graphic/graphic_2d/rosen/modules/render_service",
+                        "format specifies type",
+                        "ScreenId",
+                        "uint64_t",
+                        "PUBU64",
+                        "PUBI64",
+                        "RSPUBU64",
+                    ],
+                    22,
                 ),
             )
         )
