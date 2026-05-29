@@ -192,6 +192,12 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   target-evidenced `vsync_log.h` branch that treats
   `(__riscv && __riscv_xlen == 64)` like the existing 64-bit `%ld`/`%lu`
   platforms.
+- When `multimedia/audio_framework/libaudio_process_service.z.so` reports a
+  missing `IAudioProcessStream` vtable and lld says the class is missing its
+  key function, check `i_audio_process_stream.h` for non-pure default virtuals
+  declared without an implementation. For the existing `EnableStandby()` default
+  hook, inline a no-op default in the header so the abstract base vtable can be
+  emitted, while keeping low-latency audio and `audio_process_in_server` enabled.
 - When `communication/netstack/libhttp_client.z.so` links JS NAPI
   `request_context.cpp`/`http_request_options.cpp` into the native
   `http_client` innerkit and reports unresolved `OHOS::NetStack::Http::*`

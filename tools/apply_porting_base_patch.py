@@ -117,6 +117,9 @@ GRAPHIC_2D_HGM_LOG_REL = "foundation/graphic/graphic_2d/rosen/modules/hyper_grap
 GRAPHIC_2D_RS_MACROS_REL = "foundation/graphic/graphic_2d/rosen/modules/render_service_base/include/common/rs_macros.h"
 PASTEBOARD_FRAMEWORK_BUILD_REL = "foundation/distributeddatamgr/pasteboard/framework/framework/BUILD.gn"
 DEVICE_STANDBY_LOG_REL = "foundation/resourceschedule/device_standby/utils/common/include/standby_service_log.h"
+AUDIO_PROCESS_STREAM_HEADER_REL = (
+    "foundation/multimedia/audio_framework/services/audio_service/common/include/i_audio_process_stream.h"
+)
 NETSTACK_HTTP_CLIENT_BUILD_REL = "foundation/communication/netstack/interfaces/innerkits/http_client/BUILD.gn"
 NETSTACK_BUNDLE_REL = "foundation/communication/netstack/bundle.json"
 NETSTACK_HTTP_CLIENT_RESPONSE_HEADER_REL = (
@@ -1868,6 +1871,22 @@ def target_has_device_standby_riscv64_log_evidence(target_root: Path) -> bool:
         and '#define SPUBI64  "%{public}ld"' in text
         and '#define SPUB_SIZE "%{public}lu"' in text
         and '#define SPUBU64  "%{public}lu"' in text
+    )
+
+
+def workspace_needs_audio_process_stream_inline_enable_standby(workspace: Path, target_root: Path) -> bool:
+    header = workspace / AUDIO_PROCESS_STREAM_HEADER_REL
+    target_header = target_root / AUDIO_PROCESS_STREAM_HEADER_REL
+    if not header.is_file() or not target_header.is_file():
+        return False
+    text = header.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    target_text = target_header.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "class IAudioProcessStream" in text
+        and "virtual void EnableStandby();" in text
+        and "virtual void EnableStandby() {}" not in text
+        and "class IAudioProcessStream" in target_text
+        and "virtual void EnableStandby();" in target_text
     )
 
 
@@ -3798,6 +3817,20 @@ def planned_actions(
             )
         )
 
+    if workspace_needs_audio_process_stream_inline_enable_standby(workspace, target_root):
+        actions.append(
+            workspace_transform_action(
+                AUDIO_PROCESS_STREAM_HEADER_REL,
+                "audio_process_stream_inline_enable_standby_key_function",
+                "L1_build_compatibility",
+                (
+                    "Inline the existing IAudioProcessStream::EnableStandby default no-op so "
+                    "Clang/lld can emit the abstract base vtable during audio_process_service "
+                    "linking; keep low-latency audio enabled and do not remove audio sources."
+                ),
+            )
+        )
+
     if target_has_netstack_http_client_native_source_closure_evidence(target_root):
         actions.append(
             workspace_transform_action(
@@ -5023,6 +5056,19 @@ def apply_device_standby_riscv64_log_format_macros(data: bytes) -> tuple[bytes, 
             text = text.replace(old, new, 1)
             return text.encode(TEXT_ENCODING), ["added device_standby RISC-V LP64 log-format branch"]
     return data, ["device_standby RISC-V log-format insertion point not found"]
+
+
+def apply_audio_process_stream_inline_enable_standby(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if "virtual void EnableStandby() {}" in text:
+        return data, ["IAudioProcessStream::EnableStandby inline default already present"]
+    for newline in ("\r\n", "\n"):
+        old = f"    virtual void EnableStandby();{newline}"
+        new = f"    virtual void EnableStandby() {{}}{newline}"
+        if old in text:
+            text = text.replace(old, new, 1)
+            return text.encode(TEXT_ENCODING), ["inlined IAudioProcessStream::EnableStandby default no-op"]
+    return data, ["IAudioProcessStream::EnableStandby declaration insertion point not found"]
 
 
 def add_gn_line_after(text: str, anchor: str, line: str) -> tuple[str, bool]:
@@ -8135,6 +8181,11 @@ def materialize_action(
         ):
             data, transforms = apply_device_standby_riscv64_log_format_macros(data)
         elif (
+            rel_path == AUDIO_PROCESS_STREAM_HEADER_REL
+            and action.get("source_role") == "audio_process_stream_inline_enable_standby_key_function"
+        ):
+            data, transforms = apply_audio_process_stream_inline_enable_standby(data)
+        elif (
             rel_path == NETSTACK_HTTP_CLIENT_BUILD_REL
             and action.get("source_role") == "netstack_http_client_native_source_closure"
         ):
@@ -8613,6 +8664,11 @@ def check_build_log_old_errors_absent(build_result: dict[str, Any] | None) -> di
             "distributeddatamgr/pasteboard/libpasteboard_framework.z.so",
             "undefined symbol: VTT for OHOS::AppExecFwk::BundleInfo",
             "undefined symbol: vtable for OHOS::AppExecFwk::ApplicationInfo",
+        ],
+        "old_audio_process_stream_missing_enable_standby_key_function": [
+            "multimedia/audio_framework/libaudio_process_service.z.so",
+            "undefined symbol: vtable for OHOS::AudioStandard::IAudioProcessStream",
+            "the vtable symbol may be undefined because the class is missing its key function",
         ],
         "old_netstack_http_client_js_source_mixed_into_native_innerkit": [
             "communication/netstack/libhttp_client.z.so",
@@ -11236,6 +11292,47 @@ def parse_build_diagnostics(
                         "timed_task.cpp",
                     ],
                     28,
+                ),
+            )
+        )
+
+    if (
+        "multimedia/audio_framework/libaudio_process_service.z.so" in plain_text
+        and "undefined symbol: vtable for OHOS::AudioStandard::IAudioProcessStream" in plain_text
+        and "missing its key function" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "audio_process_stream_missing_enable_standby_key_function",
+                "source_build_compatibility",
+                (
+                    "IAudioProcessStream declares a non-pure, non-inline EnableStandby() default "
+                    "method but neither the workspace nor the reference target audio_service text "
+                    "closure provides an out-of-line IAudioProcessStream::EnableStandby definition; "
+                    "Clang/lld therefore cannot find the abstract base vtable key function while "
+                    "linking audio_process_service."
+                ),
+                (
+                    "Inline the existing EnableStandby default no-op in i_audio_process_stream.h "
+                    "so the vtable can be emitted by users of the header; keep low-latency audio "
+                    "and audio_process_in_server enabled."
+                ),
+                [
+                    str(log_path),
+                    str(workspace / AUDIO_PROCESS_STREAM_HEADER_REL),
+                    str(target_root / AUDIO_PROCESS_STREAM_HEADER_REL),
+                    str(workspace / "foundation/multimedia/audio_framework/services/audio_service/server/src/audio_process_in_server.cpp"),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "multimedia/audio_framework/libaudio_process_service.z.so",
+                        "undefined symbol: vtable for OHOS::AudioStandard::IAudioProcessStream",
+                        "missing its key function",
+                        "audio_process_stub.h",
+                        "audio_process_in_server.o",
+                    ],
+                    24,
                 ),
             )
         )
