@@ -236,6 +236,22 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   `bg_continuous_task_napi_module.cpp`, add the existing
   `napi/src/js_backgroundtask_subscriber.cpp` source and its runtime dependency
   to the same target rather than disabling background task manager NAPI.
+- When notification reminder modules report missing
+  `AbilityRuntime::Context::GetApplicationContext()` and
+  `ApplicationContext::GetCurrentInstanceKey()` from shared `common.cpp`, add
+  `ability_runtime:app_context` to the reminderagent/reminderagentmanager build
+  rules because `libapp_context` exports those symbols; do not remove reminder
+  or distributed notification features.
+- When `usb/usb_manager/libusbservice.z.so` reports missing
+  `OHOS::HDI::Usb::V1_0::IUsbInterface::Get(bool)` from
+  `usb_port_manager.cpp`, add the generated
+  `drivers_interface_usb:libusb_proxy_1.0` dependency because the port manager
+  still uses the V1_0 HDI namespace; do not fake this symbol while the real HDI
+  proxy library exists.
+- When `location/location/liblbsservice_locator.z.so` reports mixed
+  floating-point ABI `lto.tmp` objects on riscv64, guard the service-local
+  `-flto=thin` cflag with `current_cpu != "riscv64"` just like other explicit
+  target-local ThinLTO bypasses; keep location service features selected.
 - When `communication/netstack/libhttp_client.z.so` links JS NAPI
   `request_context.cpp`/`http_request_options.cpp` into the native
   `http_client` innerkit and reports unresolved `OHOS::NetStack::Http::*`

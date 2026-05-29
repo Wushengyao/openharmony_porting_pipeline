@@ -127,10 +127,19 @@ PLAYER_SYSTEMSOUND_MANAGER_JS_BUILD_REL = (
 )
 REQUEST_NAPI_BUILD_REL = "base/request/request/frameworks/js/napi/request/BUILD.gn"
 BGTASK_KITS_BUILD_REL = "foundation/resourceschedule/background_task_mgr/interfaces/kits/BUILD.gn"
+NOTIFICATION_REMINDER_BUILD_REL = (
+    "base/notification/distributed_notification_service/frameworks/js/napi/src/reminder/BUILD.gn"
+)
+USB_MANAGER_SERVICES_BUILD_REL = "base/usb/usb_manager/services/BUILD.gn"
 LOCATION_LOCATOR_SDK_BUILD_REL = "base/location/frameworks/native/locator_sdk/BUILD.gn"
 LOCATION_LOCATOR_SDK_TARGET_BUILD_CANDIDATES = [
     "base/location/location/frameworks/native/locator_sdk/BUILD.gn",
     LOCATION_LOCATOR_SDK_BUILD_REL,
+]
+LOCATION_LOCATOR_SERVICE_BUILD_REL = "base/location/services/location_locator/locator/BUILD.gn"
+LOCATION_LOCATOR_SERVICE_TARGET_BUILD_CANDIDATES = [
+    "base/location/location/services/location_locator/locator/BUILD.gn",
+    LOCATION_LOCATOR_SERVICE_BUILD_REL,
 ]
 ARKUI_ACE_BUILD_REL = "foundation/arkui/ace_engine/build/BUILD.gn"
 ARKUI_ACE_NDK_BUILD_REL = "foundation/arkui/ace_engine/interfaces/native/BUILD.gn"
@@ -1996,6 +2005,86 @@ def workspace_needs_backgroundtaskmanager_js_subscriber_source(workspace: Path, 
     )
 
 
+def workspace_needs_notification_reminder_app_context_dep(workspace: Path, target_root: Path) -> bool:
+    build_gn = workspace / NOTIFICATION_REMINDER_BUILD_REL
+    common_cpp = workspace / "base/notification/distributed_notification_service/frameworks/js/napi/src/common.cpp"
+    appkit_build = workspace / "foundation/ability/ability_runtime/frameworks/native/appkit/BUILD.gn"
+    target_appkit_build = target_root / "foundation/ability/ability_runtime/frameworks/native/appkit/BUILD.gn"
+    app_context_cpp = workspace / "foundation/ability/ability_runtime/frameworks/native/appkit/ability_runtime/context/context_impl.cpp"
+    if not build_gn.is_file() or not common_cpp.is_file() or not appkit_build.is_file():
+        return False
+    build_text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    common_text = common_cpp.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    appkit_text = appkit_build.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    target_appkit_text = (
+        target_appkit_build.read_text(encoding=TEXT_ENCODING, errors="ignore")
+        if target_appkit_build.is_file()
+        else ""
+    )
+    app_context_cpp_text = (
+        app_context_cpp.read_text(encoding=TEXT_ENCODING, errors="ignore")
+        if app_context_cpp.is_file()
+        else ""
+    )
+    app_context_evidence = (
+        'ohos_shared_library("app_context")' in appkit_text
+        and (
+            "ability_runtime/context/context_impl.cpp" in appkit_text
+            or "Context::GetApplicationContext()" in app_context_cpp_text
+        )
+    )
+    target_evidence = not target_appkit_text or 'ohos_shared_library("app_context")' in target_appkit_text
+    return (
+        'ohos_shared_library("reminderagent")' in build_text
+        and 'ohos_shared_library("reminderagentmanager")' in build_text
+        and '"ability_runtime:abilitykit_native"' in build_text
+        and '"ability_runtime:app_context"' not in build_text
+        and "Common::GetAppInstanceKey()" in common_text
+        and "Context::GetApplicationContext()" in common_text
+        and "GetCurrentInstanceKey()" in common_text
+        and app_context_evidence
+        and target_evidence
+    )
+
+
+def workspace_needs_usbservice_usb_v10_proxy_dep(workspace: Path, target_root: Path) -> bool:
+    build_gn = workspace / USB_MANAGER_SERVICES_BUILD_REL
+    port_manager = workspace / "base/usb/usb_manager/services/native/src/usb_port_manager.cpp"
+    usb_v10_build = workspace / "drivers/interface/usb/v1_0/BUILD.gn"
+    target_usb_v10_build = target_root / "drivers/interface/usb/v1_0/BUILD.gn"
+    if not build_gn.is_file() or not port_manager.is_file() or not usb_v10_build.is_file():
+        return False
+    build_text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    port_text = port_manager.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    usb_v10_text = usb_v10_build.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    target_usb_v10_text = (
+        target_usb_v10_build.read_text(encoding=TEXT_ENCODING, errors="ignore")
+        if target_usb_v10_build.is_file()
+        else ""
+    )
+    v10_label_evidence = (
+        'hdi("usb")' in usb_v10_text
+        and 'module_name = "usbd"' in usb_v10_text
+        and "IUsbInterface.idl" in usb_v10_text
+    )
+    target_evidence = (
+        not target_usb_v10_text
+        or (
+            'hdi("usb")' in target_usb_v10_text
+            and 'module_name = "usbd"' in target_usb_v10_text
+            and "IUsbInterface.idl" in target_usb_v10_text
+        )
+    )
+    return (
+        'ohos_shared_library("usbservice")' in build_text
+        and '"drivers_interface_usb:libusb_proxy_1.0"' not in build_text
+        and 'using namespace OHOS::HDI::Usb::V1_0;' in port_text
+        and "IUsbInterface::Get()" in port_text
+        and v10_label_evidence
+        and target_evidence
+    )
+
+
 def target_has_location_locator_sdk_explicit_thin_lto_evidence(target_root: Path) -> bool:
     for rel_path in LOCATION_LOCATOR_SDK_TARGET_BUILD_CANDIDATES:
         build_gn = target_root / rel_path
@@ -2014,6 +2103,29 @@ def workspace_needs_location_locator_sdk_explicit_thin_lto_guard(workspace: Path
     text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
     return (
         'ohos_shared_library("locator_sdk")' in text
+        and '"-flto=thin"' in text
+        and 'current_cpu != "riscv64"' not in text
+    )
+
+
+def target_has_location_locator_service_explicit_thin_lto_evidence(target_root: Path) -> bool:
+    for rel_path in LOCATION_LOCATOR_SERVICE_TARGET_BUILD_CANDIDATES:
+        build_gn = target_root / rel_path
+        if not build_gn.is_file():
+            continue
+        text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
+        if 'ohos_shared_library("lbsservice_locator")' in text and '"-flto=thin"' in text:
+            return True
+    return False
+
+
+def workspace_needs_location_locator_service_explicit_thin_lto_guard(workspace: Path, target_root: Path) -> bool:
+    build_gn = workspace / LOCATION_LOCATOR_SERVICE_BUILD_REL
+    if not build_gn.is_file() or not target_has_location_locator_service_explicit_thin_lto_evidence(target_root):
+        return False
+    text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        'ohos_shared_library("lbsservice_locator")' in text
         and '"-flto=thin"' in text
         and 'current_cpu != "riscv64"' not in text
     )
@@ -4116,6 +4228,36 @@ def planned_actions(
             )
         )
 
+    if workspace_needs_notification_reminder_app_context_dep(workspace, target_root):
+        actions.append(
+            workspace_transform_action(
+                NOTIFICATION_REMINDER_BUILD_REL,
+                "notification_reminder_app_context_dep",
+                "L1_build_compatibility",
+                (
+                    "Add ability_runtime:app_context as a direct reminderagent/reminderagentmanager "
+                    "link dependency because shared common.cpp calls Context::GetApplicationContext() "
+                    "and ApplicationContext::GetCurrentInstanceKey(), whose implementations are "
+                    "exported by libapp_context."
+                ),
+            )
+        )
+
+    if workspace_needs_usbservice_usb_v10_proxy_dep(workspace, target_root):
+        actions.append(
+            workspace_transform_action(
+                USB_MANAGER_SERVICES_BUILD_REL,
+                "usbservice_usb_v10_proxy_dep",
+                "L1_build_compatibility",
+                (
+                    "Add drivers_interface_usb:libusb_proxy_1.0 to usbservice because "
+                    "usb_port_manager.cpp uses the V1_0 IUsbInterface namespace and calls "
+                    "IUsbInterface::Get(), while the current link line only carries newer USB "
+                    "proxy libraries."
+                ),
+            )
+        )
+
     if workspace_needs_location_locator_sdk_explicit_thin_lto_guard(workspace, target_root):
         actions.append(
             workspace_transform_action(
@@ -4126,6 +4268,20 @@ def planned_actions(
                     "Guard locator_sdk's target-local -flto=thin cflag off for riscv64 because "
                     "it bypasses the global ThinLTO off-ramp and lld emits mixed floating-point "
                     "ABI lto.tmp objects during liblocator_sdk linking."
+                ),
+            )
+        )
+
+    if workspace_needs_location_locator_service_explicit_thin_lto_guard(workspace, target_root):
+        actions.append(
+            workspace_transform_action(
+                LOCATION_LOCATOR_SERVICE_BUILD_REL,
+                "location_locator_service_riscv64_explicit_thin_lto_guard",
+                "L1_build_compatibility",
+                (
+                    "Guard lbsservice_locator's target-local -flto=thin cflag off for riscv64 because "
+                    "it bypasses the global ThinLTO off-ramp and lld emits mixed floating-point "
+                    "ABI lto.tmp objects during service linking."
                 ),
             )
         )
@@ -5556,6 +5712,40 @@ def apply_backgroundtaskmanager_js_subscriber_source_closure(data: bytes) -> tup
     return data, notes or ["backgroundtaskmanager JsBackgroundTaskSubscriber closure already aligned"]
 
 
+def apply_notification_reminder_app_context_dep(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if '"ability_runtime:app_context"' in text:
+        return data, ["ability_runtime:app_context already present in notification reminder targets"]
+    lines = text.splitlines(keepends=True)
+    output: list[str] = []
+    added = 0
+    for line in lines:
+        output.append(line)
+        if line.strip() == '"ability_runtime:abilitykit_native",':
+            indent = line[: len(line) - len(line.lstrip())]
+            newline = "\r\n" if line.endswith("\r\n") else "\n" if line.endswith("\n") else ""
+            output.append(f'{indent}"ability_runtime:app_context",{newline}')
+            added += 1
+    if added:
+        return "".join(output).encode(TEXT_ENCODING), [
+            f"added ability_runtime:app_context after {added} abilitykit_native dep(s)"
+        ]
+    return data, ["notification reminder app_context insertion point not found"]
+
+
+def apply_usbservice_usb_v10_proxy_dep(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if '"drivers_interface_usb:libusb_proxy_1.0"' in text:
+        return data, ["drivers_interface_usb:libusb_proxy_1.0 already present in usbservice"]
+    line = '    "drivers_interface_usb:libusb_proxy_1.0",\n'
+    text, changed = add_gn_line_after(text, '    "drivers_interface_usb:libserial_stub_1.0",\n', line)
+    if not changed:
+        text, changed = add_gn_line_after(text, '    "drivers_interface_usb:libserial_proxy_1.0",\n', line)
+    if changed:
+        return text.encode(TEXT_ENCODING), ["added drivers_interface_usb:libusb_proxy_1.0 to usbservice external_deps"]
+    return data, ["usbservice libusb_proxy_1.0 insertion point not found"]
+
+
 def apply_location_locator_sdk_riscv64_explicit_thin_lto_guard(data: bytes) -> tuple[bytes, list[str]]:
     text = data.decode(TEXT_ENCODING, errors="ignore")
     if 'current_cpu != "riscv64"' in text and 'cflags_cc += [ "-flto=thin" ]' in text:
@@ -5583,6 +5773,35 @@ def apply_location_locator_sdk_riscv64_explicit_thin_lto_guard(data: bytes) -> t
         text = text.replace(old, new, 1)
         return text.encode(TEXT_ENCODING), ["guarded location locator_sdk explicit ThinLTO for riscv64"]
     return data, ["location locator_sdk explicit ThinLTO insertion point not found"]
+
+
+def apply_location_locator_service_riscv64_explicit_thin_lto_guard(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if 'current_cpu != "riscv64"' in text and 'cflags_cc += [ "-flto=thin" ]' in text:
+        return data, ["location lbsservice_locator explicit ThinLTO is already guarded for riscv64"]
+    old = (
+        '    "-fdata-sections",\n'
+        '    "-flto=thin",\n'
+        '    "-Os",\n'
+        "  ]\n"
+        "\n"
+        "  if (communication_wifi_enable) {\n"
+    )
+    new = (
+        '    "-fdata-sections",\n'
+        '    "-Os",\n'
+        "  ]\n"
+        "\n"
+        '  if (current_cpu != "riscv64") {\n'
+        '    cflags_cc += [ "-flto=thin" ]\n'
+        "  }\n"
+        "\n"
+        "  if (communication_wifi_enable) {\n"
+    )
+    if old in text:
+        text = text.replace(old, new, 1)
+        return text.encode(TEXT_ENCODING), ["guarded location lbsservice_locator explicit ThinLTO for riscv64"]
+    return data, ["location lbsservice_locator explicit ThinLTO insertion point not found"]
 
 
 def apply_arkui_libace_old_core_bridge_closure(data: bytes) -> tuple[bytes, list[str]]:
@@ -8859,10 +9078,25 @@ def materialize_action(
         ):
             data, transforms = apply_backgroundtaskmanager_js_subscriber_source_closure(data)
         elif (
+            rel_path == NOTIFICATION_REMINDER_BUILD_REL
+            and action.get("source_role") == "notification_reminder_app_context_dep"
+        ):
+            data, transforms = apply_notification_reminder_app_context_dep(data)
+        elif (
+            rel_path == USB_MANAGER_SERVICES_BUILD_REL
+            and action.get("source_role") == "usbservice_usb_v10_proxy_dep"
+        ):
+            data, transforms = apply_usbservice_usb_v10_proxy_dep(data)
+        elif (
             rel_path == LOCATION_LOCATOR_SDK_BUILD_REL
             and action.get("source_role") == "location_locator_sdk_riscv64_explicit_thin_lto_guard"
         ):
             data, transforms = apply_location_locator_sdk_riscv64_explicit_thin_lto_guard(data)
+        elif (
+            rel_path == LOCATION_LOCATOR_SERVICE_BUILD_REL
+            and action.get("source_role") == "location_locator_service_riscv64_explicit_thin_lto_guard"
+        ):
+            data, transforms = apply_location_locator_service_riscv64_explicit_thin_lto_guard(data)
         elif (
             rel_path == ARKUI_ACE_BUILD_REL
             and action.get("source_role") == "arkui_libace_old_core_bridge_closure"
@@ -9388,8 +9622,23 @@ def check_build_log_old_errors_absent(build_result: dict[str, Any] | None) -> di
             "undefined symbol: OHOS::BackgroundTaskMgr::JsBackgroundTaskSubscriber::SetFlag",
             "undefined symbol: OHOS::BackgroundTaskMgr::JsBackgroundTaskSubscriber::IsEmpty",
         ],
+        "old_notification_reminder_missing_app_context_dep": [
+            "notification/distributed_notification_service/libreminderagent.z.so",
+            "undefined symbol: OHOS::AbilityRuntime::Context::GetApplicationContext()",
+            "undefined symbol: OHOS::AbilityRuntime::ApplicationContext::GetCurrentInstanceKey()",
+        ],
+        "old_usbservice_missing_usb_v10_proxy_dep": [
+            "usb/usb_manager/libusbservice.z.so",
+            "undefined symbol: OHOS::HDI::Usb::V1_0::IUsbInterface::Get(bool)",
+            "usb_port_manager.cpp",
+        ],
         "old_location_locator_sdk_explicit_thin_lto_float_abi_mismatch": [
             "location/location/liblocator_sdk.z.so",
+            "lto.tmp",
+            "cannot link object files with different floating-point ABI",
+        ],
+        "old_location_lbsservice_locator_explicit_thin_lto_float_abi_mismatch": [
+            "location/location/liblbsservice_locator.z.so",
             "lto.tmp",
             "cannot link object files with different floating-point ABI",
         ],
@@ -11509,8 +11758,50 @@ def parse_build_diagnostics(
 
     if (
         clean_str(target.get("architecture")) == "riscv64"
+        and "location/location/liblbsservice_locator.z.so" in plain_text
+        and "cannot link object files with different floating-point ABI" in plain_text
+        and "lto.tmp" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "location_lbsservice_locator_riscv64_explicit_thin_lto_float_abi",
+                "source_build_compatibility",
+                (
+                    "location lbsservice_locator has a target-local -flto=thin cflag, so it still "
+                    "feeds lld bitcode/LTO temporary objects even after the global riscv64 ThinLTO "
+                    "off-ramp is applied; lld then reports mixed floating-point ABI objects."
+                ),
+                (
+                    "Guard lbsservice_locator's explicit -flto=thin cflag with "
+                    "current_cpu != \"riscv64\"; keep the location component enabled."
+                ),
+                [
+                    str(log_path),
+                    str(workspace / LOCATION_LOCATOR_SERVICE_BUILD_REL),
+                    *[
+                        str(target_root / rel_path)
+                        for rel_path in LOCATION_LOCATOR_SERVICE_TARGET_BUILD_CANDIDATES
+                        if (target_root / rel_path).is_file()
+                    ],
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "location/location/liblbsservice_locator.z.so",
+                        "Hard-float 'd' ABI",
+                        "cannot link object files with different floating-point ABI",
+                        "lto.tmp",
+                    ],
+                    20,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
         and "cannot link object files with different floating-point ABI" in plain_text
         and "location/location/liblocator_sdk.z.so" not in plain_text
+        and "location/location/liblbsservice_locator.z.so" not in plain_text
         and ("-flto=thin" in plain_text or "thinlto-cache" in plain_text or "lto.tmp" in plain_text)
     ):
         diagnostics.append(
@@ -12392,6 +12683,88 @@ def parse_build_diagnostics(
                         "bg_continuous_task_napi_module.cpp",
                     ],
                     28,
+                ),
+            )
+        )
+
+    if (
+        (
+            "notification/distributed_notification_service/libreminderagent.z.so" in plain_text
+            or "notification/distributed_notification_service/libreminderagentmanager.z.so" in plain_text
+        )
+        and "OHOS::AbilityRuntime::Context::GetApplicationContext()" in plain_text
+        and "OHOS::AbilityRuntime::ApplicationContext::GetCurrentInstanceKey()" in plain_text
+        and "common.cpp" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "notification_reminder_missing_app_context_dep",
+                "source_build_compatibility",
+                (
+                    "notification reminderagent targets compile shared common.cpp, whose "
+                    "GetAppInstanceKey path calls Context::GetApplicationContext() and "
+                    "ApplicationContext::GetCurrentInstanceKey(), but the reminder link lines "
+                    "do not carry libapp_context."
+                ),
+                (
+                    "Add ability_runtime:app_context beside ability_runtime:abilitykit_native in "
+                    "frameworks/js/napi/src/reminder/BUILD.gn for both reminderagent targets; "
+                    "keep distributed notification/reminder features enabled."
+                ),
+                [
+                    str(log_path),
+                    str(workspace / NOTIFICATION_REMINDER_BUILD_REL),
+                    str(workspace / "base/notification/distributed_notification_service/frameworks/js/napi/src/common.cpp"),
+                    str(workspace / "foundation/ability/ability_runtime/frameworks/native/appkit/BUILD.gn"),
+                    str(target_root / "foundation/ability/ability_runtime/frameworks/native/appkit/BUILD.gn"),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "notification/distributed_notification_service/libreminderagent",
+                        "Context::GetApplicationContext()",
+                        "ApplicationContext::GetCurrentInstanceKey()",
+                        "common.cpp",
+                    ],
+                    28,
+                ),
+            )
+        )
+
+    if (
+        "usb/usb_manager/libusbservice.z.so" in plain_text
+        and "OHOS::HDI::Usb::V1_0::IUsbInterface::Get(bool)" in plain_text
+        and "usb_port_manager.cpp" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "usbservice_missing_usb_v10_proxy_dep",
+                "source_build_compatibility",
+                (
+                    "usbservice links usb_port_manager.cpp, which is compiled against the USB "
+                    "HDI V1_0 namespace and calls IUsbInterface::Get(), but the service link "
+                    "line lacks the generated libusb_proxy_1.0 library that exports that symbol."
+                ),
+                (
+                    "Add drivers_interface_usb:libusb_proxy_1.0 to base/usb/usb_manager/services/BUILD.gn; "
+                    "keep USB port support selected and do not fake the HDI proxy symbol while the "
+                    "real generated library exists."
+                ),
+                [
+                    str(log_path),
+                    str(workspace / USB_MANAGER_SERVICES_BUILD_REL),
+                    str(workspace / "base/usb/usb_manager/services/native/src/usb_port_manager.cpp"),
+                    str(workspace / "drivers/interface/usb/v1_0/BUILD.gn"),
+                    str(target_root / "drivers/interface/usb/v1_0/BUILD.gn"),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "usb/usb_manager/libusbservice.z.so",
+                        "OHOS::HDI::Usb::V1_0::IUsbInterface::Get(bool)",
+                        "usb_port_manager.cpp",
+                    ],
+                    24,
                 ),
             )
         )
