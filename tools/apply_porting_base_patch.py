@@ -112,6 +112,7 @@ HIPERF_RISCV64_SOURCE_RELS = [
 ]
 ARKUI_NAPI_RISCV64_CJ_SUPPORT_REL = "foundation/arkui/napi/native_engine/impl/ark/cj_support.cpp"
 GRAPHIC_2D_VSYNC_LOG_REL = "foundation/graphic/graphic_2d/rosen/modules/composer/vsync/include/vsync_log.h"
+GRAPHIC_2D_BOOTANIMATION_LOG_REL = "foundation/graphic/graphic_2d/frameworks/bootanimation/include/log.h"
 LUME_STATIC_PLUGIN_DECL_REL = "foundation/graphic/graphic_3d/lume/LumeEngine/src/static_plugin_decl.h"
 ARK_ETS_RUNTIME_BUILD_REL = "arkcompiler/ets_runtime/BUILD.gn"
 ARK_ETS_RUNTIME_RISCV64_TRAMPOLINE_REL = "arkcompiler/ets_runtime/ecmascript/trampoline/riscv64/raw_asm_stub.S"
@@ -1762,6 +1763,18 @@ def target_has_graphic_2d_vsync_riscv64_log_evidence(target_root: Path) -> bool:
         "(defined(__riscv) && __riscv_xlen == 64)" in text
         and '#define VPUBI64  "%{public}ld"' in text
         and '#define VPUBU64  "%{public}lu"' in text
+    )
+
+
+def target_has_graphic_2d_bootanimation_riscv64_log_evidence(target_root: Path) -> bool:
+    bootanimation_log = target_root / GRAPHIC_2D_BOOTANIMATION_LOG_REL
+    if not bootanimation_log.is_file():
+        return False
+    text = bootanimation_log.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "(defined(__riscv) && __riscv_xlen == 64)" in text
+        and '#define BPUBI64  "%{public}ld"' in text
+        and '#define BPUBU64  "%{public}lu"' in text
     )
 
 
@@ -3583,6 +3596,22 @@ def planned_actions(
             )
         )
 
+    if (
+        clean_str(seed.get("architecture")) == "riscv64"
+        and target_has_graphic_2d_bootanimation_riscv64_log_evidence(target_root)
+    ):
+        actions.append(
+            workspace_transform_action(
+                GRAPHIC_2D_BOOTANIMATION_LOG_REL,
+                "graphic_2d_bootanimation_riscv64_log_format_macros",
+                "L1_build_compatibility",
+                (
+                    "Add the target-evidenced riscv64 LP64 condition to BootAnimation logging "
+                    "format macros so ScreenId/uint64_t arguments compile with -Werror=format."
+                ),
+            )
+        )
+
     if clean_str(seed.get("architecture")) == "riscv64" and target_has_lume_static_plugin_riscv64_section_evidence(target_root):
         actions.append(
             workspace_transform_action(
@@ -4662,6 +4691,19 @@ def apply_graphic_2d_vsync_riscv64_log_format_macros(data: bytes) -> tuple[bytes
         text = text.replace(old, new, 1)
         return text.encode(TEXT_ENCODING), ["added graphic_2d vsync RISC-V LP64 log-format branch"]
     return data, ["graphic_2d vsync RISC-V log-format insertion point not found"]
+
+
+def apply_graphic_2d_bootanimation_riscv64_log_format_macros(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    riscv_condition = "(defined(__riscv) && __riscv_xlen == 64)"
+    if riscv_condition in text:
+        return data, ["graphic_2d bootanimation RISC-V LP64 log-format branch already present"]
+    old = "#if (defined(__aarch64__) || defined(__x86_64__))\n"
+    new = f"#if (defined(__aarch64__) || defined(__x86_64__) || {riscv_condition})\n"
+    if old in text:
+        text = text.replace(old, new, 1)
+        return text.encode(TEXT_ENCODING), ["added graphic_2d bootanimation RISC-V LP64 log-format branch"]
+    return data, ["graphic_2d bootanimation RISC-V log-format insertion point not found"]
 
 
 def apply_lume_static_plugin_riscv64_section_alignment(data: bytes) -> tuple[bytes, list[str]]:
@@ -7503,6 +7545,12 @@ def materialize_action(
         ):
             data, transforms = apply_graphic_2d_vsync_riscv64_log_format_macros(data)
         elif (
+            rel_path == GRAPHIC_2D_BOOTANIMATION_LOG_REL
+            and action.get("source_role") == "graphic_2d_bootanimation_riscv64_log_format_macros"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_graphic_2d_bootanimation_riscv64_log_format_macros(data)
+        elif (
             rel_path == LUME_STATIC_PLUGIN_DECL_REL
             and action.get("source_role") == "graphic_3d_lume_riscv64_static_plugin_section"
             and target.get("architecture") == "riscv64"
@@ -7936,6 +7984,11 @@ def check_build_log_old_errors_absent(build_result: dict[str, Any] | None) -> di
             "foundation/graphic/graphic_2d/rosen/modules/composer/vsync",
             "format specifies type",
             "VPUB",
+        ],
+        "old_graphic_2d_bootanimation_riscv64_log_format_mismatch": [
+            "foundation/graphic/graphic_2d/frameworks/bootanimation",
+            "format specifies type",
+            "BPUB",
         ],
         "old_graphic_3d_lume_riscv64_static_plugin_section_missing": [
             "foundation/graphic/graphic_3d/lume",
@@ -8778,6 +8831,39 @@ def parse_build_diagnostics(
                         "uint64_t",
                         "int64_t",
                         "VPUB",
+                    ],
+                    18,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "foundation/graphic/graphic_2d/frameworks/bootanimation" in plain_text
+        and "format specifies type" in plain_text
+        and "ScreenId" in plain_text
+        and "BPUBU64" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "graphic_2d_bootanimation_riscv64_log_format_macros",
+                "source_build_compatibility",
+                "graphic_2d BootAnimation logging macros still treat riscv64 as non-LP64, so Rosen::ScreenId arguments fail -Werror=format.",
+                (
+                    "Apply the target-evidenced bootanimation log.h condition that groups "
+                    "(__riscv && __riscv_xlen == 64) with aarch64/x86_64 for BPUBI64/BPUBU64."
+                ),
+                [
+                    str(log_path),
+                    str(target_root / GRAPHIC_2D_BOOTANIMATION_LOG_REL),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "foundation/graphic/graphic_2d/frameworks/bootanimation",
+                        "format specifies type",
+                        "ScreenId",
+                        "BPUBU64",
                     ],
                     18,
                 ),
