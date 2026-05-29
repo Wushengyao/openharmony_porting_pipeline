@@ -147,6 +147,10 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   separate host/prebuilt toolchain issues from source/build compatibility,
   missing text closures, product-config version skew, and external dependency
   follow-up.
+- Treat `porting_completion_summary.md` as the compact handoff artifact after
+  each controlled apply/build run. It records build status, patch coverage,
+  fake-interface dependency debt, external prebuilt deferrals, and the next
+  validation work without requiring a reader to scan every planned action.
 - When a compile blocker is backed by a target prebuilt such as WebView
   `ArkWebCore.hap`, keep `web:webview` selected and generate a tracked
   compile-only fake artifact only as a build-progress bridge. Record the

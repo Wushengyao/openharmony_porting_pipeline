@@ -10520,6 +10520,140 @@ def render_markdown(manifest: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def render_porting_completion_summary(manifest: dict[str, Any]) -> str:
+    summary = manifest.get("summary") or {}
+    target = manifest.get("target") or {}
+    build = manifest.get("build_result") or {}
+    build_attempted = bool(manifest.get("attempt_build"))
+    build_return_code = build.get("return_code", "not_attempted")
+    build_timed_out = bool(build.get("timed_out", False))
+    build_ok = build_attempted and build_return_code == 0 and not build_timed_out
+    blocking_count = int(summary.get("blocking_issue_count", 0) or 0)
+    regression_fail_count = int(summary.get("regression_check_fail_count", 0) or 0)
+
+    if build_ok and blocking_count == 0 and regression_fail_count == 0:
+        status = "full_image_build_success"
+        conclusion = (
+            "The source/build closure reached a complete image build. Remaining work is "
+            "dependency replacement plus boot, hardware, and runtime validation."
+        )
+    elif build_attempted and build_timed_out:
+        status = "build_timed_out"
+        conclusion = "The build did not finish before timeout; resume from the latest log blocker or timeout point."
+    elif build_attempted:
+        status = "build_failed"
+        conclusion = "The build still has blockers; use the diagnostics and latest build log to drive the next iteration."
+    elif blocking_count:
+        status = "patch_blocked"
+        conclusion = "Patch materialization is blocked by existing workspace differences or missing evidence."
+    else:
+        status = "patch_planned_or_applied_without_build"
+        conclusion = "Patch materialization completed or was planned, but no build was attempted in this run."
+
+    lines = [
+        "# Porting Completion Summary",
+        "",
+        f"- Generated: `{manifest.get('generated_at', 'unknown')}`",
+        f"- Product: `{target.get('product', 'unknown')}`",
+        f"- Board: `{target.get('board', 'unknown')}`",
+        f"- SoC: `{target.get('soc', 'unknown')}`",
+        f"- Architecture: `{target.get('architecture', 'unknown')}`",
+        f"- Status: `{status}`",
+        f"- Conclusion: {conclusion}",
+        "",
+        "## Build Result",
+        "",
+    ]
+    if build_attempted:
+        lines.extend(
+            [
+                f"- Command: `{build.get('command', 'unknown')}`",
+                f"- Return code: `{build_return_code}`",
+                f"- Timed out: `{build_timed_out}`",
+                f"- Log: `{build.get('log_path', 'unknown')}`",
+            ]
+        )
+        diagnostics = build.get("diagnostics") or []
+        lines.append(f"- Diagnostics: `{len(diagnostics)}`")
+        if diagnostics:
+            for diag in diagnostics[:8]:
+                lines.append(
+                    f"- `{diag.get('id', 'unknown')}`: {diag.get('summary', 'no summary')} "
+                    f"-> {diag.get('suggested_next_action', 'no action recorded')}"
+                )
+    else:
+        lines.append("- Build was not attempted.")
+
+    lines.extend(
+        [
+            "",
+            "## Patch Coverage",
+            "",
+            f"- Planned actions: {summary.get('planned_actions', 0)}",
+            f"- Applied actions: {summary.get('applied_actions', 0)}",
+            f"- Same-content actions: {summary.get('skipped_same_content_actions', 0)}",
+            f"- Blocking issues: {blocking_count}",
+            f"- Regression checks: {summary.get('regression_check_count', 0)}",
+            f"- Regression failures: {regression_fail_count}",
+            "",
+            "## Dependency Debt",
+            "",
+        ]
+    )
+
+    debt_summary = manifest.get("dependency_debt_summary") or {}
+    fake_interfaces = manifest.get("fake_interfaces") or []
+    debt_categories = debt_summary.get("categories") or []
+    lines.append(f"- Total compile-only fake interfaces: {debt_summary.get('total_fake_interface_count', len(fake_interfaces))}")
+    lines.append(f"- Categories: {debt_summary.get('category_count', len(debt_categories))}")
+    review = debt_summary.get("fake_component_registry_review") or {}
+    if review:
+        lines.append(f"- Fake component registries: {review.get('count', 0)}")
+        lines.append(f"- Review rule: {review.get('rule', 'replace fake registries with real source evidence when available')}")
+    lines.append("")
+    if debt_categories:
+        for bucket in debt_categories:
+            sample_paths = "; ".join(bucket.get("sample_paths") or [])
+            lines.extend(
+                [
+                    f"### {bucket.get('category', 'unknown')}",
+                    "",
+                    f"- Count: {bucket.get('count', 0)}",
+                    f"- Risk: {bucket.get('risk', 'compile-only dependency debt')}",
+                    f"- Follow-up: {bucket.get('follow_up', 'replace with real dependency evidence')}",
+                    f"- Sample paths: `{sample_paths or 'none'}`",
+                    "",
+                ]
+            )
+    else:
+        lines.extend(["- No compile-only fake interfaces were recorded.", ""])
+
+    deferrals = manifest.get("external_prebuilt_deferrals") or []
+    lines.extend(["## External Prebuilt Deferrals", ""])
+    if deferrals:
+        lines.append(f"- Count: {len(deferrals)}")
+        for item in deferrals[:20]:
+            lines.append(
+                f"- `{item.get('subsystem', 'unknown')}:{item.get('component', 'unknown')}` "
+                f"target=`{item.get('target_prebuilt_path', 'unknown')}` "
+                f"workspace_exists=`{item.get('workspace_prebuilt_exists', 'unknown')}`"
+            )
+    else:
+        lines.append("- No external prebuilt component deferrals were recorded.")
+
+    lines.extend(
+        [
+            "",
+            "## Next Work",
+            "",
+            "- Replace compile-only fake interfaces with provenance-checked board, SoC, kernel, firmware, Rust, WebView, or app dependencies.",
+            "- Keep product features visible while dependency replacement proceeds; avoid removing features just to hide missing binaries.",
+            "- After dependency replacement, rerun full image build and then boot, driver, graphics, media, input, WebView, and application runtime validation.",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
@@ -14541,12 +14675,15 @@ def main() -> int:
         "notes": notes,
         "summary": summary,
         "build_result": build_result,
+        "porting_completion_summary": str(out_dir / "porting_completion_summary.md"),
     }
 
     manifest_yaml = out_dir / "base_patch_manifest.yaml"
     manifest_md = out_dir / "base_patch_manifest.md"
+    completion_md = out_dir / "porting_completion_summary.md"
     manifest_yaml.write_text(yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False), encoding=TEXT_ENCODING)
     manifest_md.write_text(render_markdown(manifest), encoding=TEXT_ENCODING)
+    completion_md.write_text(render_porting_completion_summary(manifest), encoding=TEXT_ENCODING)
 
     if blocking_issues:
         return 2 if args.apply else 0
