@@ -144,6 +144,15 @@ LOCATION_LOCATOR_SERVICE_TARGET_BUILD_CANDIDATES = [
 ARKUI_ACE_BUILD_REL = "foundation/arkui/ace_engine/build/BUILD.gn"
 ARKUI_ACE_NDK_BUILD_REL = "foundation/arkui/ace_engine/interfaces/native/BUILD.gn"
 ARKUI_ACE_COLOR_REL = "foundation/arkui/ace_engine/frameworks/core/components/common/properties/color.cpp"
+ARKUI_CJ_FRONTEND_BUILD_REL = "foundation/arkui/ace_engine/frameworks/bridge/cj_frontend/BUILD.gn"
+ARKUI_CJ_FRONTEND_COMPAT_SOURCE_RELS = [
+    "foundation/arkui/ace_engine/frameworks/bridge/cj_frontend/frontend/cj_touch_event_compat.cpp",
+    "foundation/arkui/ace_engine/frameworks/bridge/cj_frontend/frontend/cj_view_stack_processor_compat.cpp",
+]
+ARKUI_VIEW_STACK_PROCESSOR_HEADER_REL = (
+    "foundation/arkui/ace_engine/frameworks/bridge/declarative_frontend/view_stack_processor.h"
+)
+ARKUI_COMPONENT_HEADER_REL = "foundation/arkui/ace_engine/frameworks/core/pipeline/base/component.h"
 NETSTACK_HTTP_CLIENT_BUILD_REL = "foundation/communication/netstack/interfaces/innerkits/http_client/BUILD.gn"
 NETSTACK_BUNDLE_REL = "foundation/communication/netstack/bundle.json"
 NETSTACK_HTTP_CLIENT_RESPONSE_HEADER_REL = (
@@ -2157,6 +2166,50 @@ def workspace_needs_arkui_libace_old_core_bridge_closure(workspace: Path, target
         and '"$ace_root/build:libace_static_ohos_ng"' in text
         and '"$ace_root/frameworks/core:ace_core_ohos"' not in text
         and 'ldflags = [ "-Wl,--allow-multiple-definition" ]' not in text
+    )
+
+
+def target_has_arkui_cj_frontend_old_pipeline_evidence(target_root: Path) -> bool:
+    build_gn = target_root / ARKUI_CJ_FRONTEND_BUILD_REL
+    if not build_gn.is_file():
+        return False
+    text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        'template("cj_frontend")' in text
+        and 'platform_name = invoker.platform' in text
+        and '"$ace_root/frameworks/core/gestures/tap_gesture.cpp"' in text
+        and '"$ace_root/frameworks/core/gestures/single_child_gesture.cpp"' in text
+        and '"frontend/cj_view_stack_processor_compat.cpp"' in text
+        and '"frontend/cj_touch_event_compat.cpp"' in text
+        and all((target_root / rel_path).is_file() for rel_path in ARKUI_CJ_FRONTEND_COMPAT_SOURCE_RELS)
+    )
+
+
+def workspace_needs_arkui_cj_frontend_old_pipeline_compat(workspace: Path, target_root: Path) -> bool:
+    build_gn = workspace / ARKUI_CJ_FRONTEND_BUILD_REL
+    view_stack_header = workspace / ARKUI_VIEW_STACK_PROCESSOR_HEADER_REL
+    component_header = workspace / ARKUI_COMPONENT_HEADER_REL
+    if (
+        not build_gn.is_file()
+        or not view_stack_header.is_file()
+        or not component_header.is_file()
+        or not target_has_arkui_cj_frontend_old_pipeline_evidence(target_root)
+    ):
+        return False
+    build_text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    view_stack_text = view_stack_header.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    component_text = component_header.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        'ohos_shared_library(target_name)' in build_text
+        and (
+            '"frontend/cj_view_stack_processor_compat.cpp"' not in build_text
+            or '"$ace_root/frameworks/core/gestures/tap_gesture.cpp"' not in build_text
+            or 'ACE_FORCE_EXPORT RefPtr<BoxComponent> GetBoxComponent();' not in view_stack_text
+            or 'ACE_FORCE_EXPORT RefPtr<V2::InspectorComposedComponent> GetInspectorComposedComponent() const;'
+            not in view_stack_text
+            or "class ACE_FORCE_EXPORT Component" not in component_text
+            or any(not (workspace / rel_path).is_file() for rel_path in ARKUI_CJ_FRONTEND_COMPAT_SOURCE_RELS)
+        )
     )
 
 
@@ -4301,6 +4354,51 @@ def planned_actions(
             )
         )
 
+    if workspace_needs_arkui_cj_frontend_old_pipeline_compat(workspace, target_root):
+        actions.append(
+            workspace_transform_action(
+                ARKUI_CJ_FRONTEND_BUILD_REL,
+                "arkui_cj_frontend_old_pipeline_compat_sources",
+                "L1_build_compatibility",
+                (
+                    "Add the target-evidenced old-pipeline geometry/gesture source closure and "
+                    "CJ compat sources to cj_frontend's non-ohos_ng build so libcj_frontend_ohos "
+                    "can resolve ViewStackProcessor, Component, and legacy Gesture symbols."
+                ),
+            )
+        )
+        for rel_path in ARKUI_CJ_FRONTEND_COMPAT_SOURCE_RELS:
+            actions.append(
+                copy_action(
+                    rel_path,
+                    "arkui_cj_frontend_old_pipeline_compat_source",
+                    "L1_build_compatibility",
+                    "Import target-evidenced CJ frontend old-pipeline compatibility source.",
+                )
+            )
+        actions.append(
+            workspace_transform_action(
+                ARKUI_VIEW_STACK_PROCESSOR_HEADER_REL,
+                "arkui_view_stack_processor_force_export_compat",
+                "L1_build_compatibility",
+                (
+                    "Add target-evidenced ACE_FORCE_EXPORT annotations needed by CJ old-pipeline "
+                    "frontend code to resolve ViewStackProcessor symbols from libace_compatible."
+                ),
+            )
+        )
+        actions.append(
+            workspace_transform_action(
+                ARKUI_COMPONENT_HEADER_REL,
+                "arkui_component_force_export_compat",
+                "L1_build_compatibility",
+                (
+                    "Use the target-evidenced ACE_FORCE_EXPORT Component class annotation so "
+                    "Component constructor/destructor symbols are exported for CJ old-pipeline links."
+                ),
+            )
+        )
+
     if workspace_needs_arkui_ace_color_no_resource_manager_guard(workspace, target_root):
         actions.append(
             workspace_transform_action(
@@ -5827,6 +5925,99 @@ def apply_arkui_libace_old_core_bridge_closure(data: bytes) -> tuple[bytes, list
         text = text.replace(old, new, 1)
         return text.encode(TEXT_ENCODING), ["added ArkUI libace old core/bridge closure and allow-multiple-definition"]
     return data, ["ArkUI libace old core/bridge insertion point not found"]
+
+
+def apply_arkui_cj_frontend_old_pipeline_compat_sources(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if '"frontend/cj_view_stack_processor_compat.cpp"' in text and '"$ace_root/frameworks/core/gestures/tap_gesture.cpp"' in text:
+        return data, ["ArkUI CJ frontend old-pipeline compatibility sources already present"]
+    old = (
+        '    if (invoker.platform != "ohos_ng") {\n'
+        "      sources += [\n"
+        '        "frontend/cj_frontend.cpp",\n'
+        '        "frontend/cj_page_router.cpp",\n'
+        "      ]\n"
+        "    }\n"
+    )
+    new = (
+        "    platform_name = invoker.platform\n"
+        '    if (platform_name != "ohos_ng") {\n'
+        "      sources += [\n"
+        '        "$ace_root/frameworks/base/geometry/least_square_impl.cpp",\n'
+        '        "$ace_root/frameworks/base/geometry/matrix3.cpp",\n'
+        '        "$ace_root/frameworks/base/geometry/matrix4.cpp",\n'
+        '        "$ace_root/frameworks/core/gestures/gesture_group.cpp",\n'
+        '        "$ace_root/frameworks/core/gestures/exclusive_recognizer.cpp",\n'
+        '        "$ace_root/frameworks/core/gestures/long_press_gesture.cpp",\n'
+        '        "$ace_root/frameworks/core/gestures/multi_fingers_recognizer.cpp",\n'
+        '        "$ace_root/frameworks/core/gestures/pan_gesture.cpp",\n'
+        '        "$ace_root/frameworks/core/gestures/pan_recognizer.cpp",\n'
+        '        "$ace_root/frameworks/core/gestures/parallel_recognizer.cpp",\n'
+        '        "$ace_root/frameworks/core/gestures/pinch_gesture.cpp",\n'
+        '        "$ace_root/frameworks/core/gestures/pinch_recognizer.cpp",\n'
+        '        "$ace_root/frameworks/core/gestures/rotation_gesture.cpp",\n'
+        '        "$ace_root/frameworks/core/gestures/rotation_recognizer.cpp",\n'
+        '        "$ace_root/frameworks/core/gestures/single_child_gesture.cpp",\n'
+        '        "$ace_root/frameworks/core/gestures/slide_gesture.cpp",\n'
+        '        "$ace_root/frameworks/core/gestures/slide_recognizer.cpp",\n'
+        '        "$ace_root/frameworks/core/gestures/tap_gesture.cpp",\n'
+        '        "$ace_root/frameworks/core/gestures/velocity_tracker.cpp",\n'
+        '        "frontend/cj_touch_event_compat.cpp",\n'
+        '        "frontend/cj_view_stack_processor_compat.cpp",\n'
+        '        "frontend/cj_frontend.cpp",\n'
+        '        "frontend/cj_page_router.cpp",\n'
+        "      ]\n"
+        "    }\n"
+    )
+    if old in text:
+        text = text.replace(old, new, 1)
+        return text.encode(TEXT_ENCODING), ["added ArkUI CJ frontend old-pipeline compatibility source closure"]
+    return data, ["ArkUI CJ frontend old-pipeline source insertion point not found"]
+
+
+def apply_arkui_view_stack_processor_force_export_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    notes: list[str] = []
+    if '#include "base/utils/macros.h"' not in text:
+        anchor = "#include <vector>\n\n"
+        if anchor in text:
+            text = text.replace(anchor, anchor + '#include "base/utils/macros.h"\n', 1)
+            notes.append("included base/utils/macros.h for ACE_FORCE_EXPORT")
+        else:
+            notes.append("ViewStackProcessor macros include insertion point not found")
+    else:
+        notes.append("ViewStackProcessor macros include already present")
+    replacements = {
+        "    RefPtr<BoxComponent> GetBoxComponent();\n": (
+            "    ACE_FORCE_EXPORT RefPtr<BoxComponent> GetBoxComponent();\n",
+            "exported ViewStackProcessor::GetBoxComponent",
+        ),
+        "    RefPtr<V2::InspectorComposedComponent> GetInspectorComposedComponent() const;\n": (
+            "    ACE_FORCE_EXPORT RefPtr<V2::InspectorComposedComponent> GetInspectorComposedComponent() const;\n",
+            "exported ViewStackProcessor::GetInspectorComposedComponent",
+        ),
+    }
+    for old, (new, note) in replacements.items():
+        if new in text:
+            notes.append(f"{note} already present")
+        elif old in text:
+            text = text.replace(old, new, 1)
+            notes.append(note)
+        else:
+            notes.append(f"{note} insertion point not found")
+    if any(note.startswith("exported ") or note.startswith("included ") for note in notes):
+        return text.encode(TEXT_ENCODING), notes
+    return data, notes
+
+
+def apply_arkui_component_force_export_compat(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if "class ACE_FORCE_EXPORT Component" in text:
+        return data, ["Component already uses ACE_FORCE_EXPORT"]
+    if "class ACE_EXPORT Component" in text:
+        text = text.replace("class ACE_EXPORT Component", "class ACE_FORCE_EXPORT Component", 1)
+        return text.encode(TEXT_ENCODING), ["changed Component export annotation from ACE_EXPORT to ACE_FORCE_EXPORT"]
+    return data, ["Component export annotation insertion point not found"]
 
 
 def apply_arkui_ace_color_no_resource_manager_guard(data: bytes) -> tuple[bytes, list[str]]:
@@ -9103,6 +9294,21 @@ def materialize_action(
         ):
             data, transforms = apply_arkui_libace_old_core_bridge_closure(data)
         elif (
+            rel_path == ARKUI_CJ_FRONTEND_BUILD_REL
+            and action.get("source_role") == "arkui_cj_frontend_old_pipeline_compat_sources"
+        ):
+            data, transforms = apply_arkui_cj_frontend_old_pipeline_compat_sources(data)
+        elif (
+            rel_path == ARKUI_VIEW_STACK_PROCESSOR_HEADER_REL
+            and action.get("source_role") == "arkui_view_stack_processor_force_export_compat"
+        ):
+            data, transforms = apply_arkui_view_stack_processor_force_export_compat(data)
+        elif (
+            rel_path == ARKUI_COMPONENT_HEADER_REL
+            and action.get("source_role") == "arkui_component_force_export_compat"
+        ):
+            data, transforms = apply_arkui_component_force_export_compat(data)
+        elif (
             rel_path == ARKUI_ACE_COLOR_REL
             and action.get("source_role") == "arkui_ace_color_no_resource_manager_guard"
         ):
@@ -9652,6 +9858,12 @@ def check_build_log_old_errors_absent(build_result: dict[str, Any] | None) -> di
             "arkui/ace_engine/libace.z.so",
             "undefined symbol: OHOS::Ace::RenderNode::GetOpacity()",
             "undefined symbol: OHOS::Ace::TransformConvertor::ClearAnimations()",
+        ],
+        "old_arkui_cj_frontend_missing_old_pipeline_compat_closure": [
+            "arkui/ace_engine/libcj_frontend_ohos.z.so",
+            "undefined symbol: OHOS::Ace::Framework::ViewStackProcessor::GetPageTransitionComponent()",
+            "undefined symbol: OHOS::Ace::SingleChildGesture::SetChild",
+            "undefined symbol: vtable for OHOS::Ace::TapGesture",
         ],
         "old_webview_ohos_adapter_riscv64_avcodec_sdk_libs_missing": [
             "web/webview/libnweb_ohos_adapter.z.so",
@@ -11898,6 +12110,48 @@ def parse_build_diagnostics(
                         "RenderNode::GetOpacity()",
                         "TransformConvertor::ClearAnimations()",
                         "TextOverlayManager::GetTargetNode()",
+                    ],
+                    30,
+                ),
+            )
+        )
+
+    if (
+        "arkui/ace_engine/libcj_frontend_ohos.z.so" in plain_text
+        and "OHOS::Ace::Framework::ViewStackProcessor::GetPageTransitionComponent()" in plain_text
+        and "OHOS::Ace::SingleChildGesture::SetChild" in plain_text
+        and "vtable for OHOS::Ace::TapGesture" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "arkui_cj_frontend_missing_old_pipeline_compat_closure",
+                "source_build_compatibility",
+                (
+                    "libcj_frontend_ohos compiles the classic CJ frontend/page-router and gesture "
+                    "bridge for the non-ohos_ng platform, but its build rule lacks the target "
+                    "old-pipeline geometry/gesture compatibility sources and the export annotations "
+                    "needed to resolve Component/ViewStackProcessor symbols from libace_compatible."
+                ),
+                (
+                    "Apply the target-evidenced cj_frontend old-pipeline compatibility source list, "
+                    "import cj_touch_event_compat.cpp and cj_view_stack_processor_compat.cpp, and "
+                    "add the minimal ViewStackProcessor/Component ACE_FORCE_EXPORT annotations."
+                ),
+                [
+                    str(log_path),
+                    str(workspace / ARKUI_CJ_FRONTEND_BUILD_REL),
+                    str(workspace / ARKUI_VIEW_STACK_PROCESSOR_HEADER_REL),
+                    str(workspace / ARKUI_COMPONENT_HEADER_REL),
+                    str(target_root / ARKUI_CJ_FRONTEND_BUILD_REL),
+                    *[str(target_root / rel_path) for rel_path in ARKUI_CJ_FRONTEND_COMPAT_SOURCE_RELS],
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "arkui/ace_engine/libcj_frontend_ohos.z.so",
+                        "ViewStackProcessor::GetPageTransitionComponent()",
+                        "SingleChildGesture::SetChild",
+                        "vtable for OHOS::Ace::TapGesture",
                     ],
                     30,
                 ),

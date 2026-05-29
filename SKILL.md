@@ -227,6 +227,13 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   `RenderFocusAnimation::*`, apply the target-evidenced OHOS `libace`
   old core/bridge closure and matching allow-multiple-definition linker flag
   instead of disabling ArkUI or faking those C++ symbols.
+- When `arkui/ace_engine/libcj_frontend_ohos.z.so` reports classic CJ
+  frontend undefined symbols such as `ViewStackProcessor::*`,
+  `SingleChildGesture::SetChild`, or old `TapGesture`/`LongPressGesture`
+  vtables, apply the target-evidenced CJ old-pipeline compatibility closure:
+  add the geometry/gesture sources to the non-`ohos_ng` branch, import
+  `cj_touch_event_compat.cpp` and `cj_view_stack_processor_compat.cpp`, and
+  add only the needed `ACE_FORCE_EXPORT` annotations rather than disabling CJ.
 - When `request/request/librequest.z.so` reports missing `SHA256_Init`,
   `SHA256_Update`, or `SHA256_Final`, add `openssl:libcrypto_shared` beside
   `openssl:libssl_shared` in the request JS NAPI build rule; do not fake
