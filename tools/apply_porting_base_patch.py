@@ -122,6 +122,11 @@ AUDIO_PROCESS_STREAM_HEADER_REL = (
 )
 REQUEST_NAPI_BUILD_REL = "base/request/request/frameworks/js/napi/request/BUILD.gn"
 BGTASK_KITS_BUILD_REL = "foundation/resourceschedule/background_task_mgr/interfaces/kits/BUILD.gn"
+LOCATION_LOCATOR_SDK_BUILD_REL = "base/location/frameworks/native/locator_sdk/BUILD.gn"
+LOCATION_LOCATOR_SDK_TARGET_BUILD_CANDIDATES = [
+    "base/location/location/frameworks/native/locator_sdk/BUILD.gn",
+    LOCATION_LOCATOR_SDK_BUILD_REL,
+]
 NETSTACK_HTTP_CLIENT_BUILD_REL = "foundation/communication/netstack/interfaces/innerkits/http_client/BUILD.gn"
 NETSTACK_BUNDLE_REL = "foundation/communication/netstack/bundle.json"
 NETSTACK_HTTP_CLIENT_RESPONSE_HEADER_REL = (
@@ -1925,6 +1930,29 @@ def workspace_needs_backgroundtaskmanager_js_subscriber_source(workspace: Path, 
         and '"napi/src/js_backgroundtask_subscriber.cpp"' not in first_target
         and '"napi/src/js_backgroundtask_subscriber.cpp"' in napi_target
         and "JsBackgroundTaskSubscriber::SetFlag" in source.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    )
+
+
+def target_has_location_locator_sdk_explicit_thin_lto_evidence(target_root: Path) -> bool:
+    for rel_path in LOCATION_LOCATOR_SDK_TARGET_BUILD_CANDIDATES:
+        build_gn = target_root / rel_path
+        if not build_gn.is_file():
+            continue
+        text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
+        if 'ohos_shared_library("locator_sdk")' in text and '"-flto=thin"' in text:
+            return True
+    return False
+
+
+def workspace_needs_location_locator_sdk_explicit_thin_lto_guard(workspace: Path, target_root: Path) -> bool:
+    build_gn = workspace / LOCATION_LOCATOR_SDK_BUILD_REL
+    if not build_gn.is_file() or not target_has_location_locator_sdk_explicit_thin_lto_evidence(target_root):
+        return False
+    text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        'ohos_shared_library("locator_sdk")' in text
+        and '"-flto=thin"' in text
+        and 'current_cpu != "riscv64"' not in text
     )
 
 
@@ -3898,6 +3926,20 @@ def planned_actions(
             )
         )
 
+    if workspace_needs_location_locator_sdk_explicit_thin_lto_guard(workspace, target_root):
+        actions.append(
+            workspace_transform_action(
+                LOCATION_LOCATOR_SDK_BUILD_REL,
+                "location_locator_sdk_riscv64_explicit_thin_lto_guard",
+                "L1_build_compatibility",
+                (
+                    "Guard locator_sdk's target-local -flto=thin cflag off for riscv64 because "
+                    "it bypasses the global ThinLTO off-ramp and lld emits mixed floating-point "
+                    "ABI lto.tmp objects during liblocator_sdk linking."
+                ),
+            )
+        )
+
     if target_has_netstack_http_client_native_source_closure_evidence(target_root):
         actions.append(
             workspace_transform_action(
@@ -5200,6 +5242,35 @@ def apply_backgroundtaskmanager_js_subscriber_source_closure(data: bytes) -> tup
     if new_text != text:
         return new_text.encode(TEXT_ENCODING), notes
     return data, notes or ["backgroundtaskmanager JsBackgroundTaskSubscriber closure already aligned"]
+
+
+def apply_location_locator_sdk_riscv64_explicit_thin_lto_guard(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if 'current_cpu != "riscv64"' in text and 'cflags_cc += [ "-flto=thin" ]' in text:
+        return data, ["location locator_sdk explicit ThinLTO is already guarded for riscv64"]
+    old = (
+        '    "-fdata-sections",\n'
+        '    "-flto=thin",\n'
+        '    "-Os",\n'
+        "  ]\n"
+        "\n"
+        "  ldflags = [\n"
+    )
+    new = (
+        '    "-fdata-sections",\n'
+        '    "-Os",\n'
+        "  ]\n"
+        "\n"
+        '  if (current_cpu != "riscv64") {\n'
+        '    cflags_cc += [ "-flto=thin" ]\n'
+        "  }\n"
+        "\n"
+        "  ldflags = [\n"
+    )
+    if old in text:
+        text = text.replace(old, new, 1)
+        return text.encode(TEXT_ENCODING), ["guarded location locator_sdk explicit ThinLTO for riscv64"]
+    return data, ["location locator_sdk explicit ThinLTO insertion point not found"]
 
 
 def add_gn_line_after(text: str, anchor: str, line: str) -> tuple[str, bool]:
@@ -8327,6 +8398,11 @@ def materialize_action(
         ):
             data, transforms = apply_backgroundtaskmanager_js_subscriber_source_closure(data)
         elif (
+            rel_path == LOCATION_LOCATOR_SDK_BUILD_REL
+            and action.get("source_role") == "location_locator_sdk_riscv64_explicit_thin_lto_guard"
+        ):
+            data, transforms = apply_location_locator_sdk_riscv64_explicit_thin_lto_guard(data)
+        elif (
             rel_path == NETSTACK_HTTP_CLIENT_BUILD_REL
             and action.get("source_role") == "netstack_http_client_native_source_closure"
         ):
@@ -8820,6 +8896,11 @@ def check_build_log_old_errors_absent(build_result: dict[str, Any] | None) -> di
             "resourceschedule/background_task_mgr/libbackgroundtaskmanager.z.so",
             "undefined symbol: OHOS::BackgroundTaskMgr::JsBackgroundTaskSubscriber::SetFlag",
             "undefined symbol: OHOS::BackgroundTaskMgr::JsBackgroundTaskSubscriber::IsEmpty",
+        ],
+        "old_location_locator_sdk_explicit_thin_lto_float_abi_mismatch": [
+            "location/location/liblocator_sdk.z.so",
+            "lto.tmp",
+            "cannot link object files with different floating-point ABI",
         ],
         "old_netstack_http_client_js_source_mixed_into_native_innerkit": [
             "communication/netstack/libhttp_client.z.so",
@@ -10880,7 +10961,49 @@ def parse_build_diagnostics(
 
     if (
         clean_str(target.get("architecture")) == "riscv64"
+        and "location/location/liblocator_sdk.z.so" in plain_text
         and "cannot link object files with different floating-point ABI" in plain_text
+        and "lto.tmp" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "location_locator_sdk_riscv64_explicit_thin_lto_float_abi",
+                "source_build_compatibility",
+                (
+                    "location locator_sdk has a target-local -flto=thin cflag, so it still feeds "
+                    "lld bitcode/LTO temporary objects even after the global riscv64 ThinLTO "
+                    "off-ramp is applied; lld then reports mixed floating-point ABI objects."
+                ),
+                (
+                    "Guard locator_sdk's explicit -flto=thin cflag with "
+                    "current_cpu != \"riscv64\"; keep the location component enabled."
+                ),
+                [
+                    str(log_path),
+                    str(workspace / LOCATION_LOCATOR_SDK_BUILD_REL),
+                    *[
+                        str(target_root / rel_path)
+                        for rel_path in LOCATION_LOCATOR_SDK_TARGET_BUILD_CANDIDATES
+                        if (target_root / rel_path).is_file()
+                    ],
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "location/location/liblocator_sdk.z.so",
+                        "Hard-float 'd' ABI",
+                        "cannot link object files with different floating-point ABI",
+                        "lto.tmp",
+                    ],
+                    20,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "cannot link object files with different floating-point ABI" in plain_text
+        and "location/location/liblocator_sdk.z.so" not in plain_text
         and ("-flto=thin" in plain_text or "thinlto-cache" in plain_text or "lto.tmp" in plain_text)
     ):
         diagnostics.append(

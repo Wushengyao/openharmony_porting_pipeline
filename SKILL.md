@@ -356,6 +356,11 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   riscv64 ThinLTO path in `build/config/compiler/compiler.gni` for the
   OpenHarmony 6.0 clang/lld stack. This is an optimization off-ramp, not a
   product-feature removal.
+- If `location/location/liblocator_sdk.z.so` still reports mixed ABI `lto.tmp`
+  objects after the global off-ramp, check
+  `base/location/frameworks/native/locator_sdk/BUILD.gn` for a target-local
+  `-flto=thin` cflag and guard that explicit optimization with
+  `current_cpu != "riscv64"` instead of disabling the location component.
 - If `arkcompiler/ets_runtime/libark_jsruntime.so` still links with
   `-flto=thin` after the global off-ramp because `arkcompiler/ets_runtime/BUILD.gn`
   injects ThinLTO directly, guard that explicit block for riscv64 instead of
