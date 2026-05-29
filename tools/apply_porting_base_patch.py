@@ -117,6 +117,45 @@ GRAPHIC_2D_HGM_LOG_REL = "foundation/graphic/graphic_2d/rosen/modules/hyper_grap
 GRAPHIC_2D_RS_MACROS_REL = "foundation/graphic/graphic_2d/rosen/modules/render_service_base/include/common/rs_macros.h"
 PASTEBOARD_FRAMEWORK_BUILD_REL = "foundation/distributeddatamgr/pasteboard/framework/framework/BUILD.gn"
 DEVICE_STANDBY_LOG_REL = "foundation/resourceschedule/device_standby/utils/common/include/standby_service_log.h"
+NETSTACK_HTTP_CLIENT_BUILD_REL = "foundation/communication/netstack/interfaces/innerkits/http_client/BUILD.gn"
+NETSTACK_BUNDLE_REL = "foundation/communication/netstack/bundle.json"
+NETSTACK_HTTP_CLIENT_RESPONSE_HEADER_REL = (
+    "foundation/communication/netstack/interfaces/innerkits/http_client/include/http_client_response.h"
+)
+NETSTACK_HTTP_CLIENT_RESPONSE_CPP_REL = (
+    "foundation/communication/netstack/frameworks/native/http/http_client/http_client_response.cpp"
+)
+NETSTACK_HTTP_CLIENT_REQUEST_HEADER_REL = (
+    "foundation/communication/netstack/interfaces/innerkits/http_client/include/http_client_request.h"
+)
+NETSTACK_HTTP_CLIENT_REQUEST_CPP_REL = (
+    "foundation/communication/netstack/frameworks/native/http/http_client/http_client_request.cpp"
+)
+NETSTACK_HTTP_CLIENT_TEXT_CLOSURE_RELS = [
+    "foundation/communication/netstack/frameworks/native/http/http_client/http_client_secure_data.cpp",
+    "foundation/communication/netstack/frameworks/native/http/http_client/http_client_tls_config.cpp",
+    "foundation/communication/netstack/interfaces/innerkits/http_client/include/common.h",
+    "foundation/communication/netstack/interfaces/innerkits/http_client/include/http_client_secure_data.h",
+    "foundation/communication/netstack/interfaces/innerkits/http_client/include/http_client_tls_config.h",
+    "foundation/communication/netstack/interfaces/innerkits/http_client/cache/base64/include/base64_utils.h",
+    "foundation/communication/netstack/interfaces/innerkits/http_client/cache/base64/src/http_client_base64_utils.cpp",
+    "foundation/communication/netstack/interfaces/innerkits/http_client/cache/cache_constant/include/casche_constant.h",
+    "foundation/communication/netstack/interfaces/innerkits/http_client/cache/cache_proxy/include/cache_proxy.h",
+    "foundation/communication/netstack/interfaces/innerkits/http_client/cache/cache_proxy/src/cache_proxy.cpp",
+    "foundation/communication/netstack/interfaces/innerkits/http_client/cache/cache_strategy/include/http_cache_request.h",
+    "foundation/communication/netstack/interfaces/innerkits/http_client/cache/cache_strategy/include/http_cache_response.h",
+    "foundation/communication/netstack/interfaces/innerkits/http_client/cache/cache_strategy/include/http_cache_strategy.h",
+    "foundation/communication/netstack/interfaces/innerkits/http_client/cache/cache_strategy/src/http_cache_request.cpp",
+    "foundation/communication/netstack/interfaces/innerkits/http_client/cache/cache_strategy/src/http_cache_response.cpp",
+    "foundation/communication/netstack/interfaces/innerkits/http_client/cache/cache_strategy/src/http_cache_strategy.cpp",
+    "foundation/communication/netstack/interfaces/innerkits/http_client/cache/lru_cache/include/disk_handler.h",
+    "foundation/communication/netstack/interfaces/innerkits/http_client/cache/lru_cache/include/lru_cache.h",
+    "foundation/communication/netstack/interfaces/innerkits/http_client/cache/lru_cache/include/lru_cache_disk_handler.h",
+    "foundation/communication/netstack/interfaces/innerkits/http_client/cache/lru_cache/src/disk_handler.cpp",
+    "foundation/communication/netstack/interfaces/innerkits/http_client/cache/lru_cache/src/lru_cache.cpp",
+    "foundation/communication/netstack/interfaces/innerkits/http_client/cache/lru_cache/src/lru_cache_disk_handler.cpp",
+    "foundation/communication/netstack/interfaces/innerkits/http_client/libhttp_client.map",
+]
 LUME_STATIC_PLUGIN_DECL_REL = "foundation/graphic/graphic_3d/lume/LumeEngine/src/static_plugin_decl.h"
 ARK_ETS_RUNTIME_BUILD_REL = "arkcompiler/ets_runtime/BUILD.gn"
 ARK_ETS_RUNTIME_RISCV64_TRAMPOLINE_REL = "arkcompiler/ets_runtime/ecmascript/trampoline/riscv64/raw_asm_stub.S"
@@ -1829,6 +1868,40 @@ def target_has_device_standby_riscv64_log_evidence(target_root: Path) -> bool:
         and '#define SPUBI64  "%{public}ld"' in text
         and '#define SPUB_SIZE "%{public}lu"' in text
         and '#define SPUBU64  "%{public}lu"' in text
+    )
+
+
+def target_has_netstack_http_client_native_source_closure_evidence(target_root: Path) -> bool:
+    build_gn = target_root / NETSTACK_HTTP_CLIENT_BUILD_REL
+    bundle_json = target_root / NETSTACK_BUNDLE_REL
+    request_header = target_root / NETSTACK_HTTP_CLIENT_REQUEST_HEADER_REL
+    request_cpp = target_root / NETSTACK_HTTP_CLIENT_REQUEST_CPP_REL
+    if not build_gn.is_file():
+        return False
+    if not bundle_json.is_file() or not request_header.is_file() or not request_cpp.is_file():
+        return False
+    if not all((target_root / rel_path).is_file() for rel_path in NETSTACK_HTTP_CLIENT_TEXT_CLOSURE_RELS):
+        return False
+    text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    bundle_text = bundle_json.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    request_header_text = request_header.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    request_cpp_text = request_cpp.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        'ohos_shared_library("http_client")' in text
+        and "$NETSTACK_NATIVE_ROOT/http/http_client/http_client_secure_data.cpp" in text
+        and "$NETSTACK_NATIVE_ROOT/http/http_client/http_client_tls_config.cpp" in text
+        and "$NETSTACK_INNERKITS_DIR/http_client/cache/base64/src/http_client_base64_utils.cpp" in text
+        and "$NETSTACK_INNERKITS_DIR/http_client/cache/cache_proxy/src/cache_proxy.cpp" in text
+        and "$NETSTACK_INNERKITS_DIR/http_client/cache/lru_cache/src/lru_cache.cpp" in text
+        and "$NETSTACK_DIR/frameworks/js/napi/http/async_context/src/request_context.cpp" not in text
+        and "$NETSTACK_DIR/frameworks/js/napi/http/options/src/http_request_options.cpp" not in text
+        and '"ability_base:configuration"' in text
+        and '"ipc:ipc_single"' in text
+        and '"cJSON:cjson"' in text
+        and '"ability_base"' in bundle_text
+        and "uint32_t GetHttpVersion();" in request_header_text
+        and "HttpClientRequest::GetHttpVersion()" in request_cpp_text
+        and "CURL_HTTP_VERSION_2_0" in request_cpp_text
     )
 
 
@@ -3725,6 +3798,69 @@ def planned_actions(
             )
         )
 
+    if target_has_netstack_http_client_native_source_closure_evidence(target_root):
+        actions.append(
+            workspace_transform_action(
+                NETSTACK_HTTP_CLIENT_BUILD_REL,
+                "netstack_http_client_native_source_closure",
+                "L1_build_compatibility",
+                (
+                    "Align netstack http_client native innerkit BUILD.gn with target evidence: "
+                    "remove JS NAPI sources from the native library, add native secure/TLS/cache "
+                    "sources and deps, and keep the JS HTTP implementation in its own module."
+                ),
+            )
+        )
+        actions.append(
+            workspace_transform_action(
+                NETSTACK_BUNDLE_REL,
+                "netstack_bundle_ability_base_part_dep",
+                "L1_build_compatibility",
+                (
+                    "Add the target-evidenced ability_base part dependency required by "
+                    "netstack http_client's ability_base:configuration external_dep."
+                ),
+            )
+        )
+        for rel_path in [
+            NETSTACK_HTTP_CLIENT_RESPONSE_HEADER_REL,
+            NETSTACK_HTTP_CLIENT_RESPONSE_CPP_REL,
+            NETSTACK_HTTP_CLIENT_REQUEST_HEADER_REL,
+            NETSTACK_HTTP_CLIENT_REQUEST_CPP_REL,
+        ]:
+            source_role = (
+                "netstack_http_client_response_raw_header_accessor"
+                if rel_path in {NETSTACK_HTTP_CLIENT_RESPONSE_HEADER_REL, NETSTACK_HTTP_CLIENT_RESPONSE_CPP_REL}
+                else "netstack_http_client_request_http_version_accessor"
+            )
+            reason = (
+                "Add the minimal raw-header accessor needed by the target-evidenced "
+                "http_client cache source closure without importing unrelated 6.1 runtime changes."
+                if source_role == "netstack_http_client_response_raw_header_accessor"
+                else "Add the minimal HTTP-version accessor needed by the target-evidenced "
+                "http_client cache source closure without importing unrelated 6.1 request APIs."
+            )
+            actions.append(
+                workspace_transform_action(
+                    rel_path,
+                    source_role,
+                    "L1_build_compatibility",
+                    reason,
+                )
+            )
+        for rel_path in NETSTACK_HTTP_CLIENT_TEXT_CLOSURE_RELS:
+            actions.append(
+                copy_action(
+                    rel_path,
+                    "netstack_http_client_native_cache_text_closure",
+                    "L1_build_compatibility",
+                    (
+                        "Import target-evidenced netstack http_client native secure/TLS/cache text "
+                        "closure used by the corrected native innerkit build rule."
+                    ),
+                )
+            )
+
     if clean_str(seed.get("architecture")) == "riscv64" and target_has_lume_static_plugin_riscv64_section_evidence(target_root):
         actions.append(
             workspace_transform_action(
@@ -4887,6 +5023,248 @@ def apply_device_standby_riscv64_log_format_macros(data: bytes) -> tuple[bytes, 
             text = text.replace(old, new, 1)
             return text.encode(TEXT_ENCODING), ["added device_standby RISC-V LP64 log-format branch"]
     return data, ["device_standby RISC-V log-format insertion point not found"]
+
+
+def add_gn_line_after(text: str, anchor: str, line: str) -> tuple[str, bool]:
+    if line in text:
+        return text, False
+    if anchor not in text:
+        return text, False
+    return text.replace(anchor, anchor + line, 1), True
+
+
+def remove_gn_line(text: str, line: str) -> tuple[str, int]:
+    count = text.count(line)
+    if count:
+        text = text.replace(line, "")
+    return text, count
+
+
+def apply_netstack_http_client_native_source_closure(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    notes: list[str] = []
+
+    for line, label in [
+        (
+            '    "$NETSTACK_DIR/frameworks/js/napi/http/async_context/src/request_context.cpp",\n',
+            "JS RequestContext source",
+        ),
+        (
+            '    "$NETSTACK_DIR/frameworks/js/napi/http/options/src/http_request_options.cpp",\n',
+            "JS HttpRequestOptions source",
+        ),
+    ]:
+        text, count = remove_gn_line(text, line)
+        notes.append(f"removed {count} {label} reference(s) from native http_client" if count else f"{label} already absent")
+
+    include_anchor = '    "$NETSTACK_DIR/utils/netstack_chr_client/include",\n'
+    for line in [
+        '    "$NETSTACK_INNERKITS_DIR/http_client/cache/base64/include",\n',
+        '    "$NETSTACK_INNERKITS_DIR/http_client/cache/cache_constant/include",\n',
+        '    "$NETSTACK_INNERKITS_DIR/http_client/cache/cache_proxy/include",\n',
+        '    "$NETSTACK_INNERKITS_DIR/http_client/cache/cache_strategy/include",\n',
+        '    "$NETSTACK_INNERKITS_DIR/http_client/cache/lru_cache/include",\n',
+    ]:
+        text, changed = add_gn_line_after(text, include_anchor, line)
+        if changed:
+            notes.append(f"added include dir {line.strip()}")
+            include_anchor = line
+
+    text, changed = add_gn_line_after(
+        text,
+        '    "$NETSTACK_NATIVE_ROOT/http/http_client/http_client_request.cpp",\n',
+        '    "$NETSTACK_NATIVE_ROOT/http/http_client/http_client_secure_data.cpp",\n',
+    )
+    if changed:
+        notes.append("added native http_client_secure_data.cpp source")
+
+    source_anchor = '    "$NETSTACK_DIR/utils/http_over_curl/src/http_handover_handler.cpp",\n'
+    for line in [
+        '    "$NETSTACK_NATIVE_ROOT/http/http_client/http_client_tls_config.cpp",\n',
+        '    "$NETSTACK_INNERKITS_DIR/http_client/cache/base64/src/http_client_base64_utils.cpp",\n',
+        '    "$NETSTACK_INNERKITS_DIR/http_client/cache/cache_proxy/src/cache_proxy.cpp",\n',
+        '    "$NETSTACK_INNERKITS_DIR/http_client/cache/cache_strategy/src/http_cache_request.cpp",\n',
+        '    "$NETSTACK_INNERKITS_DIR/http_client/cache/cache_strategy/src/http_cache_response.cpp",\n',
+        '    "$NETSTACK_INNERKITS_DIR/http_client/cache/cache_strategy/src/http_cache_strategy.cpp",\n',
+        '    "$NETSTACK_INNERKITS_DIR/http_client/cache/lru_cache/src/disk_handler.cpp",\n',
+        '    "$NETSTACK_INNERKITS_DIR/http_client/cache/lru_cache/src/lru_cache_disk_handler.cpp",\n',
+        '    "$NETSTACK_INNERKITS_DIR/http_client/cache/lru_cache/src/lru_cache.cpp",\n',
+    ]:
+        text, changed = add_gn_line_after(text, source_anchor, line)
+        if changed:
+            notes.append(f"added source {line.strip()}")
+            source_anchor = line
+
+    for anchor, line, label in [
+        (
+            '      "ability_runtime:wantagent_innerkits",\n',
+            '      "ability_base:configuration",\n',
+            "ability_base:configuration external_dep",
+        ),
+        (
+            '    "openssl:libssl_shared",\n',
+            '    "cJSON:cjson",\n',
+            "cJSON:cjson external_dep",
+        ),
+    ]:
+        text, changed = add_gn_line_after(text, anchor, line)
+        if changed:
+            notes.append(f"added {label}")
+
+    stale_ipc = (
+        '      "netmanager_base:net_conn_manager_if",\n'
+        '      "ipc:ipc_single",\n'
+        '      "netmanager_base:net_security_config_if",\n'
+    )
+    if stale_ipc in text:
+        text = text.replace(
+            stale_ipc,
+            '      "netmanager_base:net_conn_manager_if",\n'
+            '      "netmanager_base:net_security_config_if",\n',
+            1,
+        )
+        notes.append("removed ipc:ipc_single from host is_mingw/is_mac external_deps block")
+
+    standard_ipc = (
+        '      "hitrace:hitrace_meter",\n'
+        '      "ipc:ipc_single",\n'
+        '      "netmanager_base:net_conn_manager_if",\n'
+    )
+    if standard_ipc in text:
+        notes.append("ipc:ipc_single external_dep already present in standard target block")
+    else:
+        old = (
+            '      "hitrace:hitrace_meter",\n'
+            '      "netmanager_base:net_conn_manager_if",\n'
+        )
+        new = (
+            '      "hitrace:hitrace_meter",\n'
+            '      "ipc:ipc_single",\n'
+            '      "netmanager_base:net_conn_manager_if",\n'
+        )
+        if old in text:
+            text = text.replace(old, new, 1)
+            notes.append("added ipc:ipc_single external_dep in standard target block")
+        else:
+            notes.append("ipc:ipc_single standard-block insertion point not found")
+
+    return text.encode(TEXT_ENCODING), notes or ["netstack http_client native source closure already aligned"]
+
+
+def apply_netstack_http_client_response_raw_header_accessor(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if "GetRawHeader() const" in text:
+        return data, ["netstack http_client raw-header accessor already present"]
+
+    header_anchor = "    void SetRawHeader(const std::string &header);\n"
+    if header_anchor in text:
+        new_text = text.replace(
+            header_anchor,
+            header_anchor + "\n    const std::string &GetRawHeader() const;\n",
+            1,
+        )
+        return (
+            new_text.encode(TEXT_ENCODING),
+            ["added HttpClientResponse::GetRawHeader declaration for cache closure"],
+        )
+
+    cpp_pattern = re.compile(
+        r"(void HttpClientResponse::SetRawHeader\(const std::string &header\)\n"
+        r"\{\n"
+        r"    rawHeader_ = header;\n"
+        r"\}\n)"
+    )
+    cpp_match = cpp_pattern.search(text)
+    if cpp_match:
+        accessor = (
+            "\n"
+            "const std::string &HttpClientResponse::GetRawHeader() const\n"
+            "{\n"
+            "    return rawHeader_;\n"
+            "}\n"
+        )
+        new_text = text[: cpp_match.end()] + accessor + text[cpp_match.end() :]
+        return (
+            new_text.encode(TEXT_ENCODING),
+            ["added HttpClientResponse::GetRawHeader implementation for cache closure"],
+        )
+
+    return data, ["netstack http_client raw-header accessor insertion point not found"]
+
+
+def apply_netstack_http_client_request_http_version_accessor(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    notes: list[str] = []
+
+    if "GetHttpVersion()" in text:
+        return data, ["netstack http_client HTTP-version accessor already present"]
+
+    if "#include <curl/curl.h>" not in text:
+        include_anchor = "#include <cctype>\n"
+        if include_anchor in text:
+            text = text.replace(include_anchor, include_anchor + "#include <curl/curl.h>\n", 1)
+            notes.append("added curl/curl.h include for HTTP-version constants")
+
+    header_anchor = "    [[nodiscard]] HttpProtocol GetHttpProtocol();\n"
+    if header_anchor in text:
+        new_text = text.replace(
+            header_anchor,
+            header_anchor + "\n    uint32_t GetHttpVersion();\n",
+            1,
+        )
+        return (
+            new_text.encode(TEXT_ENCODING),
+            notes + ["added HttpClientRequest::GetHttpVersion declaration for cache closure"],
+        )
+
+    cpp_anchor = (
+        "HttpProtocol HttpClientRequest::GetHttpProtocol()\n"
+        "{\n"
+        "    return protocol_;\n"
+        "}\n"
+    )
+    if cpp_anchor in text:
+        accessor = (
+            "\n"
+            "uint32_t HttpClientRequest::GetHttpVersion()\n"
+            "{\n"
+            "    if (protocol_ == HttpProtocol::HTTP3) {\n"
+            '        NETSTACK_LOGD("CURL_HTTP_VERSION_3");\n'
+            "        return CURL_HTTP_VERSION_3;\n"
+            "    }\n"
+            "    if (protocol_ == HttpProtocol::HTTP2) {\n"
+            '        NETSTACK_LOGD("CURL_HTTP_VERSION_2_0");\n'
+            "        return CURL_HTTP_VERSION_2_0;\n"
+            "    }\n"
+            "    if (protocol_ == HttpProtocol::HTTP1_1) {\n"
+            '        NETSTACK_LOGD("CURL_HTTP_VERSION_1_1");\n'
+            "        return CURL_HTTP_VERSION_1_1;\n"
+            "    }\n"
+            "    return CURL_HTTP_VERSION_NONE;\n"
+            "}\n"
+        )
+        new_text = text.replace(cpp_anchor, cpp_anchor + accessor, 1)
+        return (
+            new_text.encode(TEXT_ENCODING),
+            notes + ["added HttpClientRequest::GetHttpVersion implementation for cache closure"],
+        )
+
+    if notes:
+        return text.encode(TEXT_ENCODING), notes + ["netstack http_client HTTP-version accessor insertion point not found"]
+    return data, ["netstack http_client HTTP-version accessor insertion point not found"]
+
+
+def apply_netstack_bundle_ability_base_part_dep(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if '"ability_base"' in text:
+        return data, ["netstack bundle ability_base part dependency already present"]
+    for newline in ("\r\n", "\n"):
+        old = f'                "bounds_checking_function",{newline}'
+        new = f'                "ability_base",{newline}{old}'
+        if old in text:
+            text = text.replace(old, new, 1)
+            return text.encode(TEXT_ENCODING), ["added netstack bundle ability_base part dependency"]
+    return data, ["netstack bundle ability_base insertion point not found"]
 
 
 def apply_lume_static_plugin_riscv64_section_alignment(data: bytes) -> tuple[bytes, list[str]]:
@@ -7757,6 +8135,26 @@ def materialize_action(
         ):
             data, transforms = apply_device_standby_riscv64_log_format_macros(data)
         elif (
+            rel_path == NETSTACK_HTTP_CLIENT_BUILD_REL
+            and action.get("source_role") == "netstack_http_client_native_source_closure"
+        ):
+            data, transforms = apply_netstack_http_client_native_source_closure(data)
+        elif (
+            rel_path == NETSTACK_BUNDLE_REL
+            and action.get("source_role") == "netstack_bundle_ability_base_part_dep"
+        ):
+            data, transforms = apply_netstack_bundle_ability_base_part_dep(data)
+        elif (
+            rel_path in {NETSTACK_HTTP_CLIENT_RESPONSE_HEADER_REL, NETSTACK_HTTP_CLIENT_RESPONSE_CPP_REL}
+            and action.get("source_role") == "netstack_http_client_response_raw_header_accessor"
+        ):
+            data, transforms = apply_netstack_http_client_response_raw_header_accessor(data)
+        elif (
+            rel_path in {NETSTACK_HTTP_CLIENT_REQUEST_HEADER_REL, NETSTACK_HTTP_CLIENT_REQUEST_CPP_REL}
+            and action.get("source_role") == "netstack_http_client_request_http_version_accessor"
+        ):
+            data, transforms = apply_netstack_http_client_request_http_version_accessor(data)
+        elif (
             rel_path == LUME_STATIC_PLUGIN_DECL_REL
             and action.get("source_role") == "graphic_3d_lume_riscv64_static_plugin_section"
             and target.get("architecture") == "riscv64"
@@ -8215,6 +8613,22 @@ def check_build_log_old_errors_absent(build_result: dict[str, Any] | None) -> di
             "distributeddatamgr/pasteboard/libpasteboard_framework.z.so",
             "undefined symbol: VTT for OHOS::AppExecFwk::BundleInfo",
             "undefined symbol: vtable for OHOS::AppExecFwk::ApplicationInfo",
+        ],
+        "old_netstack_http_client_js_source_mixed_into_native_innerkit": [
+            "communication/netstack/libhttp_client.z.so",
+            "request_context.cpp",
+            "undefined symbol: OHOS::NetStack::Http::HttpResponse::HttpResponse()",
+            "undefined symbol: OHOS::NetStack::Http::HttpConstant::PARAM_KEY_METHOD",
+        ],
+        "old_netstack_http_client_missing_ability_base_part_dep": [
+            "foundation/communication/netstack/interfaces/innerkits/http_client:http_client",
+            "depend part ability_base",
+            "foundation/communication/netstack/bundle.json",
+        ],
+        "old_netstack_http_client_cache_missing_request_http_version_accessor": [
+            "cache_proxy.cpp",
+            "no member named 'GetHttpVersion'",
+            "HttpClientRequest",
         ],
         "old_graphic_3d_lume_riscv64_static_plugin_section_missing": [
             "foundation/graphic/graphic_3d/lume",
@@ -10822,6 +11236,126 @@ def parse_build_diagnostics(
                         "timed_task.cpp",
                     ],
                     28,
+                ),
+            )
+        )
+
+    if (
+        "communication/netstack/libhttp_client.z.so" in plain_text
+        and "request_context.cpp" in plain_text
+        and "undefined symbol: OHOS::NetStack::Http::HttpResponse::HttpResponse()" in plain_text
+        and (
+            "undefined symbol: OHOS::NetStack::Http::HttpConstant::PARAM_KEY_METHOD" in plain_text
+            or "undefined symbol: OHOS::NetStack::Http::HttpExec::MethodForPost" in plain_text
+        )
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "netstack_http_client_js_source_mixed_into_native_innerkit",
+                "source_build_compatibility",
+                (
+                    "netstack native http_client innerkit is linking JS NAPI RequestContext sources "
+                    "that use namespace OHOS::NetStack::Http, while the native innerkit provides "
+                    "OHOS::NetStack::HttpClient symbols; the namespace/source-closure mismatch "
+                    "causes unresolved HttpResponse/HttpConstant/HttpExec symbols."
+                ),
+                (
+                    "Apply the target-evidenced http_client BUILD.gn closure: remove JS NAPI "
+                    "request_context/http_request_options sources from the native library, import "
+                    "the text-only native secure/TLS/cache closure, add cJSON/ipc/config deps, "
+                    "and keep JS HTTP sources in their own module."
+                ),
+                [
+                    str(log_path),
+                    str(workspace / NETSTACK_HTTP_CLIENT_BUILD_REL),
+                    str(target_root / NETSTACK_HTTP_CLIENT_BUILD_REL),
+                    str(target_root / "foundation/communication/netstack/frameworks/js/napi/http/BUILD.gn"),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "communication/netstack/libhttp_client.z.so",
+                        "request_context.cpp",
+                        "OHOS::NetStack::Http::HttpResponse",
+                        "OHOS::NetStack::Http::HttpConstant",
+                        "OHOS::NetStack::Http::HttpExec",
+                    ],
+                    28,
+                ),
+            )
+        )
+
+    if (
+        "foundation/communication/netstack/interfaces/innerkits/http_client:http_client" in plain_text
+        and "depend part ability_base" in plain_text
+        and "foundation/communication/netstack/bundle.json" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "netstack_http_client_missing_ability_base_part_dep",
+                "source_build_metadata",
+                (
+                    "netstack http_client now declares ability_base:configuration, but the netstack "
+                    "bundle metadata does not declare the ability_base part dependency, so "
+                    "check_build_target.py rejects the target before compilation."
+                ),
+                (
+                    "Add the target-evidenced ability_base entry to "
+                    "foundation/communication/netstack/bundle.json component deps; keep the "
+                    "http_client BUILD closure unchanged."
+                ),
+                [
+                    str(log_path),
+                    str(workspace / NETSTACK_BUNDLE_REL),
+                    str(target_root / NETSTACK_BUNDLE_REL),
+                    str(target_root / NETSTACK_HTTP_CLIENT_BUILD_REL),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "foundation/communication/netstack/interfaces/innerkits/http_client:http_client",
+                        "depend part ability_base",
+                        "foundation/communication/netstack/bundle.json",
+                    ],
+                    18,
+                ),
+            )
+        )
+
+    if (
+        "foundation/communication/netstack/interfaces/innerkits/http_client/cache/cache_proxy/src/cache_proxy.cpp" in plain_text
+        and "no member named 'GetHttpVersion'" in plain_text
+        and "HttpClientRequest" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "netstack_http_client_cache_missing_request_http_version_accessor",
+                "source_build_compatibility",
+                (
+                    "The target-evidenced http_client cache closure calls "
+                    "HttpClientRequest::GetHttpVersion(), but the 6.0 request header/cpp do not "
+                    "expose that target-side accessor."
+                ),
+                (
+                    "Add the minimal target-evidenced GetHttpVersion declaration and curl-backed "
+                    "implementation to HttpClientRequest; avoid importing the broader 6.1 "
+                    "request API surface."
+                ),
+                [
+                    str(log_path),
+                    str(workspace / NETSTACK_HTTP_CLIENT_REQUEST_HEADER_REL),
+                    str(workspace / NETSTACK_HTTP_CLIENT_REQUEST_CPP_REL),
+                    str(target_root / NETSTACK_HTTP_CLIENT_REQUEST_HEADER_REL),
+                    str(target_root / NETSTACK_HTTP_CLIENT_REQUEST_CPP_REL),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "cache_proxy.cpp",
+                        "no member named 'GetHttpVersion'",
+                        "HttpClientRequest",
+                    ],
+                    18,
                 ),
             )
         )

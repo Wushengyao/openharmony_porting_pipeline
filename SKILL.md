@@ -192,6 +192,15 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   target-evidenced `vsync_log.h` branch that treats
   `(__riscv && __riscv_xlen == 64)` like the existing 64-bit `%ld`/`%lu`
   platforms.
+- When `communication/netstack/libhttp_client.z.so` links JS NAPI
+  `request_context.cpp`/`http_request_options.cpp` into the native
+  `http_client` innerkit and reports unresolved `OHOS::NetStack::Http::*`
+  symbols, remove those JS sources from the native BUILD closure and import
+  only the target-evidenced native secure/TLS/cache text closure plus required
+  deps, including the matching `ability_base` entry in netstack `bundle.json`;
+  add only minimal target-evidenced request/response accessors needed by that
+  cache closure, and do not disable netstack or fake these namespace-mismatched
+  C++ symbols.
 - For graphic_3d Lume static-plugin RISC-V blockers, when
   `static_plugin_decl.h` expands `DEFINE_STATIC_PLUGIN` with an undefined
   `SECTION(...)` branch and reports `expected ')'`, apply only the
