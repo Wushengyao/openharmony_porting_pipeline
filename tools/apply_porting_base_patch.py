@@ -115,6 +115,7 @@ GRAPHIC_2D_VSYNC_LOG_REL = "foundation/graphic/graphic_2d/rosen/modules/composer
 GRAPHIC_2D_BOOTANIMATION_LOG_REL = "foundation/graphic/graphic_2d/frameworks/bootanimation/include/log.h"
 GRAPHIC_2D_HGM_LOG_REL = "foundation/graphic/graphic_2d/rosen/modules/hyper_graphic_manager/core/config/hgm_log.h"
 GRAPHIC_2D_RS_MACROS_REL = "foundation/graphic/graphic_2d/rosen/modules/render_service_base/include/common/rs_macros.h"
+PASTEBOARD_FRAMEWORK_BUILD_REL = "foundation/distributeddatamgr/pasteboard/framework/framework/BUILD.gn"
 LUME_STATIC_PLUGIN_DECL_REL = "foundation/graphic/graphic_3d/lume/LumeEngine/src/static_plugin_decl.h"
 ARK_ETS_RUNTIME_BUILD_REL = "arkcompiler/ets_runtime/BUILD.gn"
 ARK_ETS_RUNTIME_RISCV64_TRAMPOLINE_REL = "arkcompiler/ets_runtime/ecmascript/trampoline/riscv64/raw_asm_stub.S"
@@ -1802,6 +1803,18 @@ def target_has_graphic_2d_rs_macros_riscv64_log_evidence(target_root: Path) -> b
         and '#define RSPUBI64  "%{public}ld"' in text
         and '#define RSPUB_SIZE "%{public}lu"' in text
         and '#define RSPUBU64  "%{public}lu"' in text
+    )
+
+
+def target_has_pasteboard_appexecfwk_base_dep_evidence(target_root: Path) -> bool:
+    build_gn = target_root / PASTEBOARD_FRAMEWORK_BUILD_REL
+    if not build_gn.is_file():
+        return False
+    text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        'ohos_shared_library("pasteboard_framework")' in text
+        and '"bundle_framework:appexecfwk_base"' in text
+        and '"bundle_framework:appexecfwk_core"' in text
     )
 
 
@@ -3671,6 +3684,20 @@ def planned_actions(
             )
         )
 
+    if target_has_pasteboard_appexecfwk_base_dep_evidence(target_root):
+        actions.append(
+            workspace_transform_action(
+                PASTEBOARD_FRAMEWORK_BUILD_REL,
+                "pasteboard_framework_appexecfwk_base_external_dep",
+                "L1_build_compatibility",
+                (
+                    "Add the target-evidenced bundle_framework:appexecfwk_base dependency to "
+                    "pasteboard_framework so AppExecFwk Parcelable implementations provide "
+                    "BundleInfo/ApplicationInfo vtables during linking."
+                ),
+            )
+        )
+
     if clean_str(seed.get("architecture")) == "riscv64" and target_has_lume_static_plugin_riscv64_section_evidence(target_root):
         actions.append(
             workspace_transform_action(
@@ -4790,6 +4817,19 @@ def apply_graphic_2d_rs_macros_riscv64_log_format_macros(data: bytes) -> tuple[b
         text = text.replace(old, new, 1)
         return text.encode(TEXT_ENCODING), ["added graphic_2d Render Service RISC-V LP64 log-format branch"]
     return data, ["graphic_2d Render Service RISC-V log-format insertion point not found"]
+
+
+def apply_pasteboard_appexecfwk_base_external_dep(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if '"bundle_framework:appexecfwk_base"' in text:
+        return data, ["pasteboard_framework appexecfwk_base external_dep already present"]
+    for newline in ("\r\n", "\n"):
+        old = f'    "bundle_framework:appexecfwk_core",{newline}'
+        new = f'    "bundle_framework:appexecfwk_base",{newline}{old}'
+        if old in text:
+            text = text.replace(old, new, 1)
+            return text.encode(TEXT_ENCODING), ["added pasteboard_framework appexecfwk_base external_dep"]
+    return data, ["pasteboard_framework appexecfwk_base external_dep insertion point not found"]
 
 
 def apply_lume_static_plugin_riscv64_section_alignment(data: bytes) -> tuple[bytes, list[str]]:
@@ -7649,6 +7689,11 @@ def materialize_action(
         ):
             data, transforms = apply_graphic_2d_rs_macros_riscv64_log_format_macros(data)
         elif (
+            rel_path == PASTEBOARD_FRAMEWORK_BUILD_REL
+            and action.get("source_role") == "pasteboard_framework_appexecfwk_base_external_dep"
+        ):
+            data, transforms = apply_pasteboard_appexecfwk_base_external_dep(data)
+        elif (
             rel_path == LUME_STATIC_PLUGIN_DECL_REL
             and action.get("source_role") == "graphic_3d_lume_riscv64_static_plugin_section"
             and target.get("architecture") == "riscv64"
@@ -8092,6 +8137,11 @@ def check_build_log_old_errors_absent(build_result: dict[str, Any] | None) -> di
             "foundation/graphic/graphic_2d/rosen/modules",
             "format specifies type",
             "PUB",
+        ],
+        "old_pasteboard_framework_missing_appexecfwk_base_dep": [
+            "distributeddatamgr/pasteboard/libpasteboard_framework.z.so",
+            "undefined symbol: VTT for OHOS::AppExecFwk::BundleInfo",
+            "undefined symbol: vtable for OHOS::AppExecFwk::ApplicationInfo",
         ],
         "old_graphic_3d_lume_riscv64_static_plugin_section_missing": [
             "foundation/graphic/graphic_3d/lume",
@@ -10614,6 +10664,46 @@ def parse_build_diagnostics(
                         "undefined symbol: RemoveKeyInProfileByRust",
                     ],
                     18,
+                ),
+            )
+        )
+
+    if (
+        "distributeddatamgr/pasteboard/libpasteboard_framework.z.so" in plain_text
+        and "undefined symbol: VTT for OHOS::AppExecFwk::BundleInfo" in plain_text
+        and "undefined symbol: vtable for OHOS::AppExecFwk::ApplicationInfo" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "pasteboard_framework_missing_appexecfwk_base_dep",
+                "source_build_compatibility",
+                (
+                    "pasteboard_framework links code that constructs AppExecFwk BundleInfo/ApplicationInfo "
+                    "Parcelable types, but its BUILD.gn does not link appexecfwk_base where their key "
+                    "virtual functions and vtables are implemented."
+                ),
+                (
+                    "Apply the target-evidenced pasteboard_framework external_deps closure by adding "
+                    "bundle_framework:appexecfwk_base alongside appexecfwk_core; do not fake the "
+                    "AppExecFwk vtables or remove pasteboard features."
+                ),
+                [
+                    str(log_path),
+                    str(workspace / PASTEBOARD_FRAMEWORK_BUILD_REL),
+                    str(target_root / PASTEBOARD_FRAMEWORK_BUILD_REL),
+                    str(target_root / "foundation/bundlemanager/bundle_framework/interfaces/inner_api/appexecfwk_base/src/bundle_info.cpp"),
+                    str(target_root / "foundation/bundlemanager/bundle_framework/interfaces/inner_api/appexecfwk_base/src/application_info.cpp"),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "distributeddatamgr/pasteboard/libpasteboard_framework.z.so",
+                        "undefined symbol: VTT for OHOS::AppExecFwk::BundleInfo",
+                        "undefined symbol: vtable for OHOS::AppExecFwk::ApplicationInfo",
+                        "bundle_info.h",
+                        "application_info.h",
+                    ],
+                    24,
                 ),
             )
         )
