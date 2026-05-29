@@ -193,6 +193,12 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   `Color::UpdateColorByResourceId()` and add that define to the `ace_ndk`
   OHOS build block; do not link the full ArkUI container/resource-manager core
   closure into the NDK library.
+- When `web/webview/libnweb_ohos_adapter.z.so` reports missing
+  `OH_AVCODEC_*`, `OH_AVFormat_*`, or `OH_VideoDecoder_*` symbols from WebView
+  media adapter sources on riscv64, add the target-evidenced riscv64
+  `native_media_*` SDK library branches in
+  `base/web/webview/ohos_adapter/BUILD.gn` rather than disabling WebView
+  AVCodec features.
 - For graphic_2d VSync RISC-V format blockers, when `VPUBI64`/`VPUBU64`
   produce `-Werror=format` for LP64 `int64_t`/`uint64_t`, apply the
   target-evidenced `vsync_log.h` branch that treats
@@ -204,6 +210,11 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   declared without an implementation. For the existing `EnableStandby()` default
   hook, inline a no-op default in the header so the abstract base vtable can be
   emitted, while keeping low-latency audio and `audio_process_in_server` enabled.
+- When `castplus/cast_engine/libcast_engine_service.z.so` reports a missing
+  `CastSessionImpl::MirrorToStreamState` vtable and lld says the class is
+  missing its key function, add the missing `MirrorToStreamState`
+  `Enter`/`Exit`/`HandleMessage` definitions next to the adjacent
+  `StreamToMirrorState` definitions instead of disabling CastEngine.
 - When `request/request/librequest.z.so` reports missing `SHA256_Init`,
   `SHA256_Update`, or `SHA256_Final`, add `openssl:libcrypto_shared` beside
   `openssl:libssl_shared` in the request JS NAPI build rule; do not fake

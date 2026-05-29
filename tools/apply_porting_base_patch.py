@@ -120,6 +120,8 @@ DEVICE_STANDBY_LOG_REL = "foundation/resourceschedule/device_standby/utils/commo
 AUDIO_PROCESS_STREAM_HEADER_REL = (
     "foundation/multimedia/audio_framework/services/audio_service/common/include/i_audio_process_stream.h"
 )
+CAST_SESSION_IMPL_HEADER_REL = "foundation/CastEngine/castengine_cast_framework/service/src/session/include/cast_session_impl.h"
+CAST_SESSION_STATE_CPP_REL = "foundation/CastEngine/castengine_cast_framework/service/src/session/src/cast_session_state.cpp"
 REQUEST_NAPI_BUILD_REL = "base/request/request/frameworks/js/napi/request/BUILD.gn"
 BGTASK_KITS_BUILD_REL = "foundation/resourceschedule/background_task_mgr/interfaces/kits/BUILD.gn"
 LOCATION_LOCATOR_SDK_BUILD_REL = "base/location/frameworks/native/locator_sdk/BUILD.gn"
@@ -1899,6 +1901,23 @@ def workspace_needs_audio_process_stream_inline_enable_standby(workspace: Path, 
     )
 
 
+def workspace_needs_cast_session_mirror_to_stream_state_key_functions(workspace: Path) -> bool:
+    header = workspace / CAST_SESSION_IMPL_HEADER_REL
+    source = workspace / CAST_SESSION_STATE_CPP_REL
+    if not header.is_file() or not source.is_file():
+        return False
+    header_text = header.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    source_text = source.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "class CastSessionImpl::MirrorToStreamState" in header_text
+        and "void Enter() override;" in header_text
+        and "void Exit() override;" in header_text
+        and "bool HandleMessage(const Message &msg) override;" in header_text
+        and "CastSessionImpl::StreamToMirrorState::Enter()" in source_text
+        and "CastSessionImpl::MirrorToStreamState::Enter()" not in source_text
+    )
+
+
 def workspace_needs_request_napi_openssl_crypto_dep(workspace: Path) -> bool:
     build_gn = workspace / REQUEST_NAPI_BUILD_REL
     napi_utils = workspace / "base/request/request/frameworks/js/napi/request/src/napi_utils.cpp"
@@ -1998,6 +2017,33 @@ def workspace_needs_arkui_ace_ndk_no_resource_manager_define(workspace: Path, ta
         and 'if (target_os == "ohos")' in text
         and "defines = [" in text
         and '"ACE_NDK_NO_RESOURCE_MANAGER"' not in text
+    )
+
+
+def target_has_webview_ohos_adapter_riscv64_avcodec_sdk_lib_evidence(target_root: Path) -> bool:
+    build_gn = target_root / WEBVIEW_OHOS_ADAPTER_BUILD_REL
+    if not build_gn.is_file():
+        return False
+    text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        'target_cpu == "riscv64"' in text
+        and "riscv64-linux-ohos/libnative_media_vdec.so" in text
+        and "riscv64-linux-ohos/libnative_media_codecbase.so" in text
+        and "riscv64-linux-ohos/libnative_media_acodec.so" in text
+        and "riscv64-linux-ohos/libnative_media_avcencinfo.so" in text
+    )
+
+
+def workspace_needs_webview_ohos_adapter_riscv64_avcodec_sdk_libs(workspace: Path, target_root: Path) -> bool:
+    build_gn = workspace / WEBVIEW_OHOS_ADAPTER_BUILD_REL
+    if not build_gn.is_file() or not target_has_webview_ohos_adapter_riscv64_avcodec_sdk_lib_evidence(target_root):
+        return False
+    text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "webview_avcodec_enable" in text
+        and "media_adapter/src/media_codec_decoder_adapter_impl.cpp" in text
+        and "riscv64-linux-ohos/libnative_media_vdec.so" not in text
+        and "riscv64-linux-ohos/libnative_media_codecbase.so" not in text
     )
 
 
@@ -3942,6 +3988,20 @@ def planned_actions(
             )
         )
 
+    if workspace_needs_cast_session_mirror_to_stream_state_key_functions(workspace):
+        actions.append(
+            workspace_transform_action(
+                CAST_SESSION_STATE_CPP_REL,
+                "cast_session_mirror_to_stream_state_key_functions",
+                "L1_build_compatibility",
+                (
+                    "Define the declared MirrorToStreamState virtual methods in cast_session_state.cpp "
+                    "so libcast_engine_service can emit the state vtable; keep CastEngine enabled "
+                    "and model the transition behavior on the adjacent StreamToMirrorState."
+                ),
+            )
+        )
+
     if workspace_needs_request_napi_openssl_crypto_dep(workspace):
         actions.append(
             workspace_transform_action(
@@ -4009,6 +4069,20 @@ def planned_actions(
                     "Add the target-evidenced ACE_NDK_NO_RESOURCE_MANAGER define to ace_ndk's "
                     "OHOS build so color.cpp excludes ResourceManager/Container runtime lookups "
                     "from the NDK library instead of linking broader ArkUI core internals."
+                ),
+            )
+        )
+
+    if workspace_needs_webview_ohos_adapter_riscv64_avcodec_sdk_libs(workspace, target_root):
+        actions.append(
+            workspace_transform_action(
+                WEBVIEW_OHOS_ADAPTER_BUILD_REL,
+                "webview_ohos_adapter_riscv64_avcodec_sdk_libs",
+                "L1_build_compatibility",
+                (
+                    "Add the target-evidenced riscv64 SDK native_media AVCodec libraries to "
+                    "nweb_ohos_adapter so WebView's media codec adapter links the NDK C API "
+                    "symbols while preserving the AVCodec feature selection."
                 ),
             )
         )
@@ -5253,6 +5327,59 @@ def apply_audio_process_stream_inline_enable_standby(data: bytes) -> tuple[bytes
     return data, ["IAudioProcessStream::EnableStandby declaration insertion point not found"]
 
 
+def apply_cast_session_mirror_to_stream_state_key_functions(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if "CastSessionImpl::MirrorToStreamState::Enter()" in text:
+        return data, ["CastEngine MirrorToStreamState key functions already present"]
+    marker = "void CastSessionImpl::StreamToMirrorState::Enter()\n"
+    if marker not in text:
+        return data, ["CastEngine MirrorToStreamState insertion point not found"]
+    block = (
+        "void CastSessionImpl::MirrorToStreamState::Enter()\n"
+        "{\n"
+        "    BaseState::Enter(SessionState::MIRROR_TO_STREAM);\n"
+        "}\n"
+        "\n"
+        "void CastSessionImpl::MirrorToStreamState::Exit()\n"
+        "{\n"
+        "    BaseState::Exit();\n"
+        "}\n"
+        "\n"
+        "bool CastSessionImpl::MirrorToStreamState::HandleMessage(const Message &msg)\n"
+        "{\n"
+        "    auto session = session_.promote();\n"
+        "    if (!session) {\n"
+        "        CLOGE(\"Session is invalid\");\n"
+        "        return false;\n"
+        "    }\n"
+        "    BaseState::HandleMessage(msg);\n"
+        "    MessageId msgId = static_cast<MessageId>(msg.what_);\n"
+        "    switch (msgId) {\n"
+        "        case MessageId::MSG_PEER_RENDER_READY:\n"
+        "            CLOGI(\"MSG_PEER_RENDER_READY in\");\n"
+        "            session->PlayAfterSwitchToStream();\n"
+        "            session->ChangeDeviceState(DeviceState::STREAM, session->GetCurrentRemoteDeviceId());\n"
+        "            session->TransferTo(session->streamState_);\n"
+        "            session->SetMirrorToStreamState(false);\n"
+        "            break;\n"
+        "        case MessageId::MSG_PEER_RENDER_FAIL:\n"
+        "            CLOGI(\"MSG_PEER_RENDER_FAIL in\");\n"
+        "            session->ChangeDeviceState(DeviceState::PLAYING, session->GetCurrentRemoteDeviceId());\n"
+        "            session->TransferTo(session->playingState_);\n"
+        "            session->SetMirrorToStreamState(false);\n"
+        "            break;\n"
+        "        default:\n"
+        "            CLOGW(\"unsupported msg: %{public}s, in MirrorToStream state\", MESSAGE_ID_STRING[msgId].c_str());\n"
+        "            return false;\n"
+        "    }\n"
+        "    return true;\n"
+        "}\n"
+        "\n"
+    )
+    text = text.replace(marker, block + marker, 1)
+    return text.encode(TEXT_ENCODING), ["defined CastEngine MirrorToStreamState key functions"]
+
+
 def apply_request_napi_openssl_crypto_dep(data: bytes) -> tuple[bytes, list[str]]:
     text = data.decode(TEXT_ENCODING, errors="ignore")
     lines = text.splitlines(keepends=True)
@@ -5377,6 +5504,87 @@ def apply_arkui_ace_ndk_no_resource_manager_define(data: bytes) -> tuple[bytes, 
             text = text.replace(old, new, 1)
             return text.encode(TEXT_ENCODING), ["added ACE_NDK_NO_RESOURCE_MANAGER define to ace_ndk"]
     return data, ["ACE_NDK_NO_RESOURCE_MANAGER define insertion point not found"]
+
+
+def apply_webview_ohos_adapter_riscv64_avcodec_sdk_libs(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    notes: list[str] = []
+    if "riscv64-linux-ohos/libnative_media_vdec.so" not in text:
+        old = (
+            '    } else if (target_cpu == "x86_64") {\n'
+            "      libs += [\n"
+            '        "${current_sdk_home}/native/sysroot/usr/lib/x86_64-linux-ohos/libnative_media_vdec.so",\n'
+            '        "${current_sdk_home}/native/sysroot/usr/lib/x86_64-linux-ohos/libnative_media_codecbase.so",\n'
+            '        "${current_sdk_home}/native/sysroot/usr/lib/x86_64-linux-ohos/libnative_buffer.so",\n'
+            '        "${current_sdk_home}/native/sysroot/usr/lib/x86_64-linux-ohos/libnative_media_core.so",\n'
+            '        "${current_sdk_home}/native/sysroot/usr/lib/x86_64-linux-ohos/libnative_window.so",\n'
+            "      ]\n"
+            "    }\n"
+            "    external_deps += [\n"
+        )
+        new = (
+            '    } else if (target_cpu == "x86_64") {\n'
+            "      libs += [\n"
+            '        "${current_sdk_home}/native/sysroot/usr/lib/x86_64-linux-ohos/libnative_media_vdec.so",\n'
+            '        "${current_sdk_home}/native/sysroot/usr/lib/x86_64-linux-ohos/libnative_media_codecbase.so",\n'
+            '        "${current_sdk_home}/native/sysroot/usr/lib/x86_64-linux-ohos/libnative_buffer.so",\n'
+            '        "${current_sdk_home}/native/sysroot/usr/lib/x86_64-linux-ohos/libnative_media_core.so",\n'
+            '        "${current_sdk_home}/native/sysroot/usr/lib/x86_64-linux-ohos/libnative_window.so",\n'
+            "      ]\n"
+            '    } else if (target_cpu == "riscv64") {\n'
+            "      libs += [\n"
+            '        "${current_sdk_home}/native/sysroot/usr/lib/riscv64-linux-ohos/libnative_media_vdec.so",\n'
+            '        "${current_sdk_home}/native/sysroot/usr/lib/riscv64-linux-ohos/libnative_media_codecbase.so",\n'
+            '        "${current_sdk_home}/native/sysroot/usr/lib/riscv64-linux-ohos/libnative_buffer.so",\n'
+            '        "${current_sdk_home}/native/sysroot/usr/lib/riscv64-linux-ohos/libnative_media_core.so",\n'
+            '        "${current_sdk_home}/native/sysroot/usr/lib/riscv64-linux-ohos/libnative_window.so",\n'
+            "      ]\n"
+            "    }\n"
+            "    external_deps += [\n"
+        )
+        if old in text:
+            text = text.replace(old, new, 1)
+            notes.append("added riscv64 native_media video/codecbase SDK libs to WebView AVCodec block")
+        else:
+            notes.append("WebView AVCodec riscv64 video SDK lib insertion point not found")
+    else:
+        notes.append("WebView AVCodec riscv64 video SDK libs already present")
+
+    if "riscv64-linux-ohos/libnative_media_acodec.so" not in text:
+        old = (
+            '      } else if (target_cpu == "x86_64") {\n'
+            "        libs += [\n"
+            '          "${current_sdk_home}/native/sysroot/usr/lib/x86_64-linux-ohos/libnative_media_acodec.so",\n'
+            '          "${current_sdk_home}/native/sysroot/usr/lib/x86_64-linux-ohos/libnative_media_avcencinfo.so",\n'
+            "        ]\n"
+            "      }\n"
+            '      defines += [ "NWEB_AUDIO_DRM_ENABLE" ]\n'
+        )
+        new = (
+            '      } else if (target_cpu == "x86_64") {\n'
+            "        libs += [\n"
+            '          "${current_sdk_home}/native/sysroot/usr/lib/x86_64-linux-ohos/libnative_media_acodec.so",\n'
+            '          "${current_sdk_home}/native/sysroot/usr/lib/x86_64-linux-ohos/libnative_media_avcencinfo.so",\n'
+            "        ]\n"
+            '      } else if (target_cpu == "riscv64") {\n'
+            "        libs += [\n"
+            '          "${current_sdk_home}/native/sysroot/usr/lib/riscv64-linux-ohos/libnative_media_acodec.so",\n'
+            '          "${current_sdk_home}/native/sysroot/usr/lib/riscv64-linux-ohos/libnative_media_avcencinfo.so",\n'
+            "        ]\n"
+            "      }\n"
+            '      defines += [ "NWEB_AUDIO_DRM_ENABLE" ]\n'
+        )
+        if old in text:
+            text = text.replace(old, new, 1)
+            notes.append("added riscv64 native_media audio DRM SDK libs to WebView AVCodec block")
+        else:
+            notes.append("WebView AVCodec riscv64 audio DRM SDK lib insertion point not found")
+    else:
+        notes.append("WebView AVCodec riscv64 audio DRM SDK libs already present")
+
+    if any("insertion point not found" in note for note in notes):
+        return data, notes
+    return text.encode(TEXT_ENCODING), notes
 
 
 def add_gn_line_after(text: str, anchor: str, line: str) -> tuple[str, bool]:
@@ -8494,6 +8702,11 @@ def materialize_action(
         ):
             data, transforms = apply_audio_process_stream_inline_enable_standby(data)
         elif (
+            rel_path == CAST_SESSION_STATE_CPP_REL
+            and action.get("source_role") == "cast_session_mirror_to_stream_state_key_functions"
+        ):
+            data, transforms = apply_cast_session_mirror_to_stream_state_key_functions(data)
+        elif (
             rel_path == REQUEST_NAPI_BUILD_REL
             and action.get("source_role") == "request_napi_openssl_crypto_dep"
         ):
@@ -8518,6 +8731,11 @@ def materialize_action(
             and action.get("source_role") == "arkui_ace_ndk_no_resource_manager_define"
         ):
             data, transforms = apply_arkui_ace_ndk_no_resource_manager_define(data)
+        elif (
+            rel_path == WEBVIEW_OHOS_ADAPTER_BUILD_REL
+            and action.get("source_role") == "webview_ohos_adapter_riscv64_avcodec_sdk_libs"
+        ):
+            data, transforms = apply_webview_ohos_adapter_riscv64_avcodec_sdk_libs(data)
         elif (
             rel_path == NETSTACK_HTTP_CLIENT_BUILD_REL
             and action.get("source_role") == "netstack_http_client_native_source_closure"
@@ -9003,6 +9221,11 @@ def check_build_log_old_errors_absent(build_result: dict[str, Any] | None) -> di
             "undefined symbol: vtable for OHOS::AudioStandard::IAudioProcessStream",
             "the vtable symbol may be undefined because the class is missing its key function",
         ],
+        "old_cast_session_mirror_to_stream_state_missing_key_function": [
+            "castplus/cast_engine/libcast_engine_service.z.so",
+            "undefined symbol: vtable for OHOS::CastEngine::CastEngineService::CastSessionImpl::MirrorToStreamState",
+            "the vtable symbol may be undefined because the class is missing its key function",
+        ],
         "old_request_napi_missing_openssl_crypto_dep": [
             "request/request/librequest.z.so",
             "undefined symbol: SHA256_Init",
@@ -9023,6 +9246,11 @@ def check_build_log_old_errors_absent(build_result: dict[str, Any] | None) -> di
             "ResourceManager::GetInstance()",
             "Container::CurrentIdSafely()",
             "color.cpp",
+        ],
+        "old_webview_ohos_adapter_riscv64_avcodec_sdk_libs_missing": [
+            "web/webview/libnweb_ohos_adapter.z.so",
+            "undefined symbol: OH_AVCODEC_MIMETYPE_AUDIO_AAC",
+            "undefined symbol: OH_VideoDecoder_CreateByMime",
         ],
         "old_netstack_http_client_js_source_mixed_into_native_innerkit": [
             "communication/netstack/libhttp_client.z.so",
@@ -11188,6 +11416,47 @@ def parse_build_diagnostics(
         )
 
     if (
+        "web/webview/libnweb_ohos_adapter.z.so" in plain_text
+        and "undefined symbol: OH_AVCODEC_MIMETYPE_AUDIO_AAC" in plain_text
+        and "undefined symbol: OH_VideoDecoder_CreateByMime" in plain_text
+        and "media_codec_decoder_adapter_impl.cpp" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "webview_ohos_adapter_riscv64_avcodec_sdk_libs_missing",
+                "source_build_compatibility",
+                (
+                    "nweb_ohos_adapter enables WebView AVCodec sources and links "
+                    "av_codec:av_codec_client, but the NDK C API symbols used by "
+                    "media_codec_decoder_adapter_impl.cpp and audio_codec_decoder_adapter_impl.cpp "
+                    "come from native_media SDK libraries. The 6.0 BUILD.gn has SDK lib branches "
+                    "for arm, arm64, and x86_64, but not riscv64."
+                ),
+                (
+                    "Add the target-evidenced riscv64 native_media SDK library branches in "
+                    "base/web/webview/ohos_adapter/BUILD.gn, including native_media_vdec, "
+                    "native_media_codecbase, native_buffer, native_media_core, native_window, "
+                    "native_media_acodec, and native_media_avcencinfo."
+                ),
+                [
+                    str(log_path),
+                    str(workspace / WEBVIEW_OHOS_ADAPTER_BUILD_REL),
+                    str(target_root / WEBVIEW_OHOS_ADAPTER_BUILD_REL),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "web/webview/libnweb_ohos_adapter.z.so",
+                        "OH_AVCODEC_MIMETYPE_AUDIO_AAC",
+                        "OH_VideoDecoder_CreateByMime",
+                        "media_codec_decoder_adapter_impl.cpp",
+                    ],
+                    28,
+                ),
+            )
+        )
+
+    if (
         clean_str(target.get("architecture")) == "riscv64"
         and "arkcompiler/ets_runtime/libark_jsruntime.so" in plain_text
         and "cannot link object files with different floating-point ABI" in plain_text
@@ -11767,6 +12036,45 @@ def parse_build_diagnostics(
                         "missing its key function",
                         "audio_process_stub.h",
                         "audio_process_in_server.o",
+                    ],
+                    24,
+                ),
+            )
+        )
+
+    if (
+        "castplus/cast_engine/libcast_engine_service.z.so" in plain_text
+        and (
+            "undefined symbol: vtable for OHOS::CastEngine::CastEngineService::CastSessionImpl::MirrorToStreamState"
+            in plain_text
+        )
+        and "missing its key function" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "cast_session_mirror_to_stream_state_missing_key_function",
+                "source_build_compatibility",
+                (
+                    "CastSessionImpl::MirrorToStreamState declares non-inline virtual Enter, "
+                    "Exit, and HandleMessage methods, but cast_session_state.cpp only defines the "
+                    "adjacent StreamToMirrorState methods. lld therefore cannot emit the "
+                    "MirrorToStreamState vtable while linking libcast_engine_service."
+                ),
+                (
+                    "Add MirrorToStreamState Enter/Exit/HandleMessage definitions next to "
+                    "StreamToMirrorState in cast_session_state.cpp, keeping CastEngine enabled."
+                ),
+                [
+                    str(log_path),
+                    str(workspace / CAST_SESSION_IMPL_HEADER_REL),
+                    str(workspace / CAST_SESSION_STATE_CPP_REL),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "castplus/cast_engine/libcast_engine_service.z.so",
+                        "MirrorToStreamState",
+                        "missing its key function",
                     ],
                     24,
                 ),
