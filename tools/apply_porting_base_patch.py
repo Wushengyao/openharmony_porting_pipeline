@@ -116,6 +116,7 @@ GRAPHIC_2D_BOOTANIMATION_LOG_REL = "foundation/graphic/graphic_2d/frameworks/boo
 GRAPHIC_2D_HGM_LOG_REL = "foundation/graphic/graphic_2d/rosen/modules/hyper_graphic_manager/core/config/hgm_log.h"
 GRAPHIC_2D_RS_MACROS_REL = "foundation/graphic/graphic_2d/rosen/modules/render_service_base/include/common/rs_macros.h"
 PASTEBOARD_FRAMEWORK_BUILD_REL = "foundation/distributeddatamgr/pasteboard/framework/framework/BUILD.gn"
+DEVICE_STANDBY_LOG_REL = "foundation/resourceschedule/device_standby/utils/common/include/standby_service_log.h"
 LUME_STATIC_PLUGIN_DECL_REL = "foundation/graphic/graphic_3d/lume/LumeEngine/src/static_plugin_decl.h"
 ARK_ETS_RUNTIME_BUILD_REL = "arkcompiler/ets_runtime/BUILD.gn"
 ARK_ETS_RUNTIME_RISCV64_TRAMPOLINE_REL = "arkcompiler/ets_runtime/ecmascript/trampoline/riscv64/raw_asm_stub.S"
@@ -1815,6 +1816,19 @@ def target_has_pasteboard_appexecfwk_base_dep_evidence(target_root: Path) -> boo
         'ohos_shared_library("pasteboard_framework")' in text
         and '"bundle_framework:appexecfwk_base"' in text
         and '"bundle_framework:appexecfwk_core"' in text
+    )
+
+
+def target_has_device_standby_riscv64_log_evidence(target_root: Path) -> bool:
+    standby_log = target_root / DEVICE_STANDBY_LOG_REL
+    if not standby_log.is_file():
+        return False
+    text = standby_log.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "defined(__riscv) && __riscv_xlen == 64" in text
+        and '#define SPUBI64  "%{public}ld"' in text
+        and '#define SPUB_SIZE "%{public}lu"' in text
+        and '#define SPUBU64  "%{public}lu"' in text
     )
 
 
@@ -3698,6 +3712,19 @@ def planned_actions(
             )
         )
 
+    if clean_str(seed.get("architecture")) == "riscv64" and target_has_device_standby_riscv64_log_evidence(target_root):
+        actions.append(
+            workspace_transform_action(
+                DEVICE_STANDBY_LOG_REL,
+                "device_standby_riscv64_log_format_macros",
+                "L1_build_compatibility",
+                (
+                    "Add the target-evidenced riscv64 LP64 condition to device_standby logging "
+                    "format macros so int64_t/uint64_t timeout values compile with -Werror=format."
+                ),
+            )
+        )
+
     if clean_str(seed.get("architecture")) == "riscv64" and target_has_lume_static_plugin_riscv64_section_evidence(target_root):
         actions.append(
             workspace_transform_action(
@@ -4830,6 +4857,36 @@ def apply_pasteboard_appexecfwk_base_external_dep(data: bytes) -> tuple[bytes, l
             text = text.replace(old, new, 1)
             return text.encode(TEXT_ENCODING), ["added pasteboard_framework appexecfwk_base external_dep"]
     return data, ["pasteboard_framework appexecfwk_base external_dep insertion point not found"]
+
+
+def apply_device_standby_riscv64_log_format_macros(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    riscv_condition = "defined(__riscv) && __riscv_xlen == 64"
+    if riscv_condition in text:
+        return data, ["device_standby RISC-V LP64 log-format branch already present"]
+    for newline in ("\r\n", "\n"):
+        old = (
+            f"#ifdef __aarch64__{newline}"
+            f'#define SPUBI64  "%{{public}}ld"{newline}'
+            f'#define SPUB_SIZE "%{{public}}lu"{newline}'
+            f'#define SPUBU64  "%{{public}}lu"{newline}'
+            f"#elif __x86_64__{newline}"
+        )
+        new = (
+            f"#ifdef __aarch64__{newline}"
+            f'#define SPUBI64  "%{{public}}ld"{newline}'
+            f'#define SPUB_SIZE "%{{public}}lu"{newline}'
+            f'#define SPUBU64  "%{{public}}lu"{newline}'
+            f"#elif {riscv_condition}{newline}"
+            f'#define SPUBI64  "%{{public}}ld"{newline}'
+            f'#define SPUB_SIZE "%{{public}}lu"{newline}'
+            f'#define SPUBU64  "%{{public}}lu"{newline}'
+            f"#elif __x86_64__{newline}"
+        )
+        if old in text:
+            text = text.replace(old, new, 1)
+            return text.encode(TEXT_ENCODING), ["added device_standby RISC-V LP64 log-format branch"]
+    return data, ["device_standby RISC-V log-format insertion point not found"]
 
 
 def apply_lume_static_plugin_riscv64_section_alignment(data: bytes) -> tuple[bytes, list[str]]:
@@ -7694,6 +7751,12 @@ def materialize_action(
         ):
             data, transforms = apply_pasteboard_appexecfwk_base_external_dep(data)
         elif (
+            rel_path == DEVICE_STANDBY_LOG_REL
+            and action.get("source_role") == "device_standby_riscv64_log_format_macros"
+            and target.get("architecture") == "riscv64"
+        ):
+            data, transforms = apply_device_standby_riscv64_log_format_macros(data)
+        elif (
             rel_path == LUME_STATIC_PLUGIN_DECL_REL
             and action.get("source_role") == "graphic_3d_lume_riscv64_static_plugin_section"
             and target.get("architecture") == "riscv64"
@@ -8133,10 +8196,20 @@ def check_build_log_old_errors_absent(build_result: dict[str, Any] | None) -> di
             "format specifies type",
             "BPUB",
         ],
-        "old_graphic_2d_rosen_riscv64_log_format_mismatch": [
-            "foundation/graphic/graphic_2d/rosen/modules",
+        "old_graphic_2d_hgm_riscv64_log_format_mismatch": [
+            "hgm_core.cpp",
             "format specifies type",
-            "PUB",
+            "HgmCore",
+        ],
+        "old_graphic_2d_rs_riscv64_log_format_mismatch": [
+            "rs_screen_manager.cpp",
+            "format specifies type",
+            "RSPUB",
+        ],
+        "old_device_standby_riscv64_log_format_mismatch": [
+            "foundation/resourceschedule/device_standby",
+            "format specifies type",
+            "SPUB",
         ],
         "old_pasteboard_framework_missing_appexecfwk_base_dep": [
             "distributeddatamgr/pasteboard/libpasteboard_framework.z.so",
@@ -10704,6 +10777,51 @@ def parse_build_diagnostics(
                         "application_info.h",
                     ],
                     24,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "foundation/resourceschedule/device_standby" in plain_text
+        and "format specifies type 'long long'" in plain_text
+        and "SPUBI64" in plain_text
+        and (
+            "base_state.cpp" in plain_text
+            or "nap_state.cpp" in plain_text
+            or "sleep_state.cpp" in plain_text
+            or "timed_task.cpp" in plain_text
+        )
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "device_standby_riscv64_log_format_macros",
+                "source_build_compatibility",
+                (
+                    "device_standby logging macros still route riscv64 LP64 int64_t/uint64_t "
+                    "arguments through long long format strings, causing -Werror=format failures."
+                ),
+                (
+                    "Apply the target-evidenced standby_service_log.h SPUBI64/SPUBU64/SPUB_SIZE "
+                    "riscv64 LP64 branch; keep device_standby enabled and avoid per-call casts."
+                ),
+                [
+                    str(log_path),
+                    str(workspace / DEVICE_STANDBY_LOG_REL),
+                    str(target_root / DEVICE_STANDBY_LOG_REL),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "foundation/resourceschedule/device_standby",
+                        "format specifies type 'long long'",
+                        "SPUBI64",
+                        "base_state.cpp",
+                        "nap_state.cpp",
+                        "sleep_state.cpp",
+                        "timed_task.cpp",
+                    ],
+                    28,
                 ),
             )
         )
