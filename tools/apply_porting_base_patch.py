@@ -2241,6 +2241,56 @@ def cleanup_stale_webview_adapter_bridge_helper_generated_source(workspace: Path
     return cleanups
 
 
+def cleanup_stale_fake_cxxbridge_generated_outputs(workspace: Path, product: str) -> list[dict[str, Any]]:
+    cleanups: list[dict[str, Any]] = []
+    rust_cxxbridge = workspace / "build/templates/rust/rust_cxxbridge.py"
+    if not rust_cxxbridge.is_file():
+        return cleanups
+    driver_text = rust_cxxbridge.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    if "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V12" not in driver_text:
+        return cleanups
+    roots = [
+        workspace / "out" / product / "gen/base/request",
+        workspace / "out" / product / "gen/foundation/communication/ipc/interfaces/innerkits/rust",
+    ]
+    workspace_resolved = workspace.resolve()
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for generated in sorted(root.rglob("*.rs.*")):
+            if generated.suffix not in {".h", ".cc"} or not generated.is_file():
+                continue
+            generated_resolved = generated.resolve()
+            if workspace_resolved not in generated_resolved.parents:
+                continue
+            text = generated.read_text(encoding=TEXT_ENCODING, errors="ignore")
+            is_stale_fake = False
+            if generated.suffix == ".cc":
+                is_stale_fake = (
+                    "Compile-only fake cxxbridge cc generated because cxxbridge produced empty output." in text
+                    and "OHOS_PORTING_CXXBRIDGE_VEC_STUBS(string, rust::String)" not in text
+                )
+            elif generated.suffix == ".h":
+                is_stale_fake = (
+                    "Compile-only fake cxxbridge header generated because cxxbridge produced empty output." in text
+                    and (
+                        "template <typename... Args> void new_remote_obj" in text
+                        or "template <> inline void Box<" in text
+                    )
+                )
+            if not is_stale_fake:
+                continue
+            generated.unlink()
+            cleanups.append(
+                {
+                    "path": str(generated),
+                    "status": "removed",
+                    "reason": "stale fake cxxbridge generated output lacked Box<T> return or full rust::Vec runtime support",
+                }
+            )
+    return cleanups
+
+
 def target_has_riscv64_objcopy_evidence(target_root: Path, rel_path: str = "build/scripts/run_objcopy.py") -> bool:
     target_objcopy = target_root / rel_path
     if not target_objcopy.is_file():
@@ -4041,6 +4091,7 @@ def planned_actions(
         "Hidumper RawParam is added to hidumpermemory only with the target-evidenced standalone guard, avoiding a broader DumpManagerService/plugin source import during compile triage.",
         "MMI Rust fake shared libraries are cleaned and regenerated when target-evidenced #[no_mangle] motion symbols are missing from stale fake-driver outputs.",
         "Rust fake-driver no_mangle extraction tolerates doc comments between #[no_mangle] and extern C functions, and stale key_enable fake libraries are regenerated when code_signature exports are missing.",
+        "Cxxbridge fake outputs are invalidated when the fallback gains Box<T> return and full rust::Vec runtime weak-symbol support for IPC/request Rust bridges.",
         "Hiperf RISC-V support is imported as a target-evidenced text closure for register/callstack/report handling, keeping the hiperf feature selected rather than filtering it out.",
     ]
     return actions, notes
@@ -5988,8 +6039,11 @@ def apply_compile_app_root_ohpm_path_resolution(data: bytes) -> tuple[bytes, lis
 
 def apply_rust_cxxbridge_empty_output_fake_header_fallback(data: bytes) -> tuple[bytes, list[str]]:
     text = data.decode(TEXT_ENCODING, errors="ignore")
-    marker = "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V9"
+    marker = "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V12"
     legacy_markers = [
+        "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V11",
+        "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V10",
+        "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V9",
         "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V8",
         "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V7",
         "OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V6",
@@ -6012,7 +6066,7 @@ def apply_rust_cxxbridge_empty_output_fake_header_fallback(data: bytes) -> tuple
 
     helper = r'''
 
-# OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V9
+# OPENHARMONY_PORTING_FAKE_CXXBRIDGE_EMPTY_OUTPUT_V12
 def _fake_bridge_source_path(args):
     for arg in args:
         if arg == "--" or not arg.endswith(".rs"):
@@ -6090,6 +6144,10 @@ def _fake_bridge_cpp_type(rust_type, type_namespaces=None):
     if unique:
         inner = _fake_bridge_cpp_type(unique.group(1), type_namespaces)
         return f"std::unique_ptr<{inner}>"
+    boxed = re.fullmatch(r"Box\s*<\s*([A-Za-z_][A-Za-z0-9_]*)\s*>", rust_type)
+    if boxed:
+        inner = _fake_bridge_cpp_type(boxed.group(1), type_namespaces)
+        return f"rust::Box<{inner}>"
     vec = re.fullmatch(r"Vec\s*<\s*(.*?)\s*>", rust_type)
     if vec:
         item_type = _fake_bridge_cpp_type(vec.group(1), type_namespaces)
@@ -6121,6 +6179,10 @@ def _fake_bridge_return_type(ret, type_namespaces=None):
     }
     if cpp_type == "void":
         return "void", ""
+    box_match = re.fullmatch(r"rust::Box<(.+)>", cpp_type)
+    if box_match:
+        inner = box_match.group(1)
+        return cpp_type, f"return {cpp_type}::from_raw(new {inner}());"
     return cpp_type, mapping.get(cpp_type, "return {};")
 
 
@@ -6455,7 +6517,7 @@ def _fake_bridge_header(source_text):
         ]
     )
     for type_name in rust_types:
-        lines.append(f"template <> inline void Box<{_fake_bridge_qualified(namespace, type_name)}>::drop() noexcept {{}}")
+        lines.append(f"template <> void Box<{_fake_bridge_qualified(namespace, type_name)}>::drop() noexcept;")
     lines.extend(
         [
             "} // namespace cxxbridge1",
@@ -6464,6 +6526,27 @@ def _fake_bridge_header(source_text):
         ]
     )
     return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def _fake_bridge_box_drop_definitions(source_text):
+    rust_types, _free_functions = _fake_bridge_rust_items(source_text)
+    if not rust_types:
+        return ""
+    namespace = _fake_bridge_namespace(source_text)
+    lines = [
+        "namespace rust {",
+        "inline namespace cxxbridge1 {",
+    ]
+    for type_name in rust_types:
+        qualified_type = _fake_bridge_qualified(namespace, type_name)
+        lines.append(f"template <> __attribute__((weak)) void Box<{qualified_type}>::drop() noexcept {{}}")
+    lines.extend(
+        [
+            "} // namespace cxxbridge1",
+            "} // namespace rust",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def _fake_bridge_cc_runtime_stubs():
@@ -6572,6 +6655,61 @@ OHOS_PORTING_CXXBRIDGE_WEAK std::size_t cxxbridge1$slice$len(const void *self) n
     return repr[1];
 }
 
+OHOS_PORTING_CXXBRIDGE_WEAK void cxxbridge1$exception(const char *) noexcept {}
+
+#define OHOS_PORTING_CXXBRIDGE_VEC_STUBS(SUFFIX, TYPE) \
+OHOS_PORTING_CXXBRIDGE_WEAK void cxxbridge1$rust_vec$##SUFFIX##$new(void *self) noexcept \
+{ \
+    std::memset(self, 0, sizeof(std::uintptr_t) * 3); \
+} \
+OHOS_PORTING_CXXBRIDGE_WEAK void cxxbridge1$rust_vec$##SUFFIX##$drop(void *) noexcept {} \
+OHOS_PORTING_CXXBRIDGE_WEAK std::size_t cxxbridge1$rust_vec$##SUFFIX##$len(const void *self) noexcept \
+{ \
+    auto repr = reinterpret_cast<const std::uintptr_t *>(self); \
+    return repr[1]; \
+} \
+OHOS_PORTING_CXXBRIDGE_WEAK std::size_t cxxbridge1$rust_vec$##SUFFIX##$capacity(const void *self) noexcept \
+{ \
+    auto repr = reinterpret_cast<const std::uintptr_t *>(self); \
+    return repr[2]; \
+} \
+OHOS_PORTING_CXXBRIDGE_WEAK const TYPE *cxxbridge1$rust_vec$##SUFFIX##$data(const void *) noexcept \
+{ \
+    return nullptr; \
+} \
+OHOS_PORTING_CXXBRIDGE_WEAK void cxxbridge1$rust_vec$##SUFFIX##$reserve_total(void *, std::size_t) noexcept {} \
+OHOS_PORTING_CXXBRIDGE_WEAK void cxxbridge1$rust_vec$##SUFFIX##$set_len(void *self, std::size_t len) noexcept \
+{ \
+    auto repr = reinterpret_cast<std::uintptr_t *>(self); \
+    repr[1] = len; \
+} \
+OHOS_PORTING_CXXBRIDGE_WEAK void cxxbridge1$rust_vec$##SUFFIX##$truncate(void *self, std::size_t len) noexcept \
+{ \
+    auto repr = reinterpret_cast<std::uintptr_t *>(self); \
+    if (repr[1] > len) { \
+        repr[1] = len; \
+    } \
+}
+
+OHOS_PORTING_CXXBRIDGE_VEC_STUBS(u8, uint8_t)
+OHOS_PORTING_CXXBRIDGE_VEC_STUBS(u16, uint16_t)
+OHOS_PORTING_CXXBRIDGE_VEC_STUBS(u32, uint32_t)
+OHOS_PORTING_CXXBRIDGE_VEC_STUBS(u64, uint64_t)
+OHOS_PORTING_CXXBRIDGE_VEC_STUBS(i8, int8_t)
+OHOS_PORTING_CXXBRIDGE_VEC_STUBS(i16, int16_t)
+OHOS_PORTING_CXXBRIDGE_VEC_STUBS(i32, int32_t)
+OHOS_PORTING_CXXBRIDGE_VEC_STUBS(i64, int64_t)
+OHOS_PORTING_CXXBRIDGE_VEC_STUBS(bool, bool)
+OHOS_PORTING_CXXBRIDGE_VEC_STUBS(f32, float)
+OHOS_PORTING_CXXBRIDGE_VEC_STUBS(f64, double)
+OHOS_PORTING_CXXBRIDGE_VEC_STUBS(String, rust::String)
+OHOS_PORTING_CXXBRIDGE_VEC_STUBS(string, rust::String)
+OHOS_PORTING_CXXBRIDGE_VEC_STUBS(str, rust::Str)
+OHOS_PORTING_CXXBRIDGE_VEC_STUBS(char, char)
+OHOS_PORTING_CXXBRIDGE_VEC_STUBS(usize, std::size_t)
+OHOS_PORTING_CXXBRIDGE_VEC_STUBS(isize, std::intptr_t)
+
+#undef OHOS_PORTING_CXXBRIDGE_VEC_STUBS
 #undef OHOS_PORTING_CXXBRIDGE_WEAK
 } // extern "C"
 """
@@ -6587,6 +6725,8 @@ def _fake_bridge_cc(source_text, source_path):
         "#include <cstdint>",
         "#include <cstring>",
         f"#include \"{header_name}\"",
+        "",
+        _fake_bridge_box_drop_definitions(source_text).strip(),
         "",
         _fake_bridge_cc_runtime_stubs().strip(),
         "",
@@ -10571,6 +10711,62 @@ def parse_build_diagnostics(
             )
         )
 
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "remote_object_wrapper.cpp" in plain_text
+        and "variable has incomplete type 'void'" in plain_text
+        and "new_remote_obj" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "ipc_rust_cxxbridge_box_return_mapped_to_void",
+                "source_build_compatibility",
+                "The compile-only cxxbridge fallback mapped Rust Box<RemoteObj> return values to void, so IPC remote_object_wrapper cannot store new_remote_obj().",
+                "Upgrade the fake cxxbridge type mapper to emit rust::Box<T> returns and invalidate stale generated IPC cxxbridge headers.",
+                [
+                    str(log_path),
+                    str(workspace / "foundation/communication/ipc/interfaces/innerkits/rust/src/remote/wrapper.rs"),
+                    str(workspace / "build/templates/rust/rust_cxxbridge.py"),
+                ],
+                matching_lines(
+                    all_text,
+                    ["remote_object_wrapper.cpp", "variable has incomplete type 'void'", "new_remote_obj"],
+                    12,
+                ),
+            )
+        )
+
+    if (
+        clean_str(target.get("architecture")) == "riscv64"
+        and "request/request/libpreload_native.z.so" in plain_text
+        and (
+            "undefined symbol: cxxbridge1$rust_vec$" in plain_text
+            or "undefined symbol: cxxbridge1$exception" in plain_text
+        )
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "request_cxxbridge_fake_runtime_vec_symbols_missing",
+                "source_build_compatibility",
+                "The request Rust cxxbridge fake cc output lacks weak rust::Vec runtime and exception symbols needed when linking libpreload_native.",
+                "Add compile-only weak cxxbridge1 rust_vec/exception stubs to the fake cxxbridge cc generator and invalidate stale request cxxbridge outputs.",
+                [
+                    str(log_path),
+                    str(workspace / "build/templates/rust/rust_cxxbridge.py"),
+                    str(workspace / "base/request/request"),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "request/request/libpreload_native.z.so",
+                        "undefined symbol: cxxbridge1$rust_vec$",
+                        "undefined symbol: cxxbridge1$exception",
+                    ],
+                    18,
+                ),
+            )
+        )
+
     component_failures = sorted(set(re.findall(r"find component ([^ ]+) failed", plain_text)))
     for component in component_failures[:8]:
         diagnostics.append(
@@ -10855,6 +11051,7 @@ def prepare_generated_artifacts_for_build(
 
     if target_has_webview_adapter_bridge_helper_run_mode_evidence(target_root):
         cleanups.extend(cleanup_stale_webview_adapter_bridge_helper_generated_source(workspace, product))
+    cleanups.extend(cleanup_stale_fake_cxxbridge_generated_outputs(workspace, product))
 
     if workspace_lume_asset_compiler_sources_support_riscv64(workspace):
         binary_path = generated_lume_asset_compiler_path(workspace, product)
