@@ -187,6 +187,12 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   `NAPI_TARGET_RISCV64`/`_RISCV64_` defines and import the matching
   `cj_support.cpp` ELF typedef/LIBS_NAME support instead of disabling CJ or
   ArkUI features.
+- When `arkui/ace_engine/libace_ndk.z.so` reports undefined
+  `ResourceManager::GetInstance()` and `Container::CurrentIdSafely()` from
+  `color.cpp`, use the target-evidenced `ACE_NDK_NO_RESOURCE_MANAGER` guard in
+  `Color::UpdateColorByResourceId()` and add that define to the `ace_ndk`
+  OHOS build block; do not link the full ArkUI container/resource-manager core
+  closure into the NDK library.
 - For graphic_2d VSync RISC-V format blockers, when `VPUBI64`/`VPUBU64`
   produce `-Werror=format` for LP64 `int64_t`/`uint64_t`, apply the
   target-evidenced `vsync_log.h` branch that treats

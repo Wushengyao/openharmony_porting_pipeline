@@ -127,6 +127,8 @@ LOCATION_LOCATOR_SDK_TARGET_BUILD_CANDIDATES = [
     "base/location/location/frameworks/native/locator_sdk/BUILD.gn",
     LOCATION_LOCATOR_SDK_BUILD_REL,
 ]
+ARKUI_ACE_NDK_BUILD_REL = "foundation/arkui/ace_engine/interfaces/native/BUILD.gn"
+ARKUI_ACE_COLOR_REL = "foundation/arkui/ace_engine/frameworks/core/components/common/properties/color.cpp"
 NETSTACK_HTTP_CLIENT_BUILD_REL = "foundation/communication/netstack/interfaces/innerkits/http_client/BUILD.gn"
 NETSTACK_BUNDLE_REL = "foundation/communication/netstack/bundle.json"
 NETSTACK_HTTP_CLIENT_RESPONSE_HEADER_REL = (
@@ -1953,6 +1955,49 @@ def workspace_needs_location_locator_sdk_explicit_thin_lto_guard(workspace: Path
         'ohos_shared_library("locator_sdk")' in text
         and '"-flto=thin"' in text
         and 'current_cpu != "riscv64"' not in text
+    )
+
+
+def target_has_arkui_ace_ndk_no_resource_manager_evidence(target_root: Path) -> bool:
+    build_gn = target_root / ARKUI_ACE_NDK_BUILD_REL
+    color_cpp = target_root / ARKUI_ACE_COLOR_REL
+    if not build_gn.is_file() or not color_cpp.is_file():
+        return False
+    build_text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    color_text = color_cpp.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        'ohos_shared_library("ace_ndk")' in build_text
+        and '"ACE_NDK_NO_RESOURCE_MANAGER"' in build_text
+        and "ACE_NDK_NO_RESOURCE_MANAGER" in color_text
+        and "ResourceManager::GetInstance()" in color_text
+        and "Container::CurrentIdSafely()" in color_text
+    )
+
+
+def workspace_needs_arkui_ace_color_no_resource_manager_guard(workspace: Path, target_root: Path) -> bool:
+    color_cpp = workspace / ARKUI_ACE_COLOR_REL
+    if not color_cpp.is_file() or not target_has_arkui_ace_ndk_no_resource_manager_evidence(target_root):
+        return False
+    text = color_cpp.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        "void Color::UpdateColorByResourceId()" in text
+        and "ResourceManager::GetInstance()" in text
+        and "Container::CurrentIdSafely()" in text
+        and "#ifndef ACE_UNITTEST" in text
+        and "ACE_NDK_NO_RESOURCE_MANAGER" not in text
+    )
+
+
+def workspace_needs_arkui_ace_ndk_no_resource_manager_define(workspace: Path, target_root: Path) -> bool:
+    build_gn = workspace / ARKUI_ACE_NDK_BUILD_REL
+    if not build_gn.is_file() or not target_has_arkui_ace_ndk_no_resource_manager_evidence(target_root):
+        return False
+    text = build_gn.read_text(encoding=TEXT_ENCODING, errors="ignore")
+    return (
+        'ohos_shared_library("ace_ndk")' in text
+        and 'if (target_os == "ohos")' in text
+        and "defines = [" in text
+        and '"ACE_NDK_NO_RESOURCE_MANAGER"' not in text
     )
 
 
@@ -3940,6 +3985,34 @@ def planned_actions(
             )
         )
 
+    if workspace_needs_arkui_ace_color_no_resource_manager_guard(workspace, target_root):
+        actions.append(
+            workspace_transform_action(
+                ARKUI_ACE_COLOR_REL,
+                "arkui_ace_color_no_resource_manager_guard",
+                "L1_build_compatibility",
+                (
+                    "Import the target-evidenced ACE_NDK_NO_RESOURCE_MANAGER guard around "
+                    "Color::UpdateColorByResourceId so ace_ndk can compile without pulling "
+                    "full ArkUI container/resource-manager symbols into the NDK surface."
+                ),
+            )
+        )
+
+    if workspace_needs_arkui_ace_ndk_no_resource_manager_define(workspace, target_root):
+        actions.append(
+            workspace_transform_action(
+                ARKUI_ACE_NDK_BUILD_REL,
+                "arkui_ace_ndk_no_resource_manager_define",
+                "L1_build_compatibility",
+                (
+                    "Add the target-evidenced ACE_NDK_NO_RESOURCE_MANAGER define to ace_ndk's "
+                    "OHOS build so color.cpp excludes ResourceManager/Container runtime lookups "
+                    "from the NDK library instead of linking broader ArkUI core internals."
+                ),
+            )
+        )
+
     if target_has_netstack_http_client_native_source_closure_evidence(target_root):
         actions.append(
             workspace_transform_action(
@@ -5271,6 +5344,39 @@ def apply_location_locator_sdk_riscv64_explicit_thin_lto_guard(data: bytes) -> t
         text = text.replace(old, new, 1)
         return text.encode(TEXT_ENCODING), ["guarded location locator_sdk explicit ThinLTO for riscv64"]
     return data, ["location locator_sdk explicit ThinLTO insertion point not found"]
+
+
+def apply_arkui_ace_color_no_resource_manager_guard(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if "ACE_NDK_NO_RESOURCE_MANAGER" in text:
+        return data, ["ArkUI color resource-manager guard already present"]
+    for newline in ("\r\n", "\n"):
+        old = f"#ifndef ACE_UNITTEST{newline}    CHECK_NULL_VOID(resourceId_ != 0);{newline}"
+        new = (
+            f"#if !defined(ACE_UNITTEST) && !defined(ACE_NDK_NO_RESOURCE_MANAGER){newline}"
+            f"    CHECK_NULL_VOID(resourceId_ != 0);{newline}"
+        )
+        if old in text:
+            text = text.replace(old, new, 1)
+            return text.encode(TEXT_ENCODING), ["guarded Color::UpdateColorByResourceId for ace_ndk"]
+    return data, ["ArkUI color resource-manager guard insertion point not found"]
+
+
+def apply_arkui_ace_ndk_no_resource_manager_define(data: bytes) -> tuple[bytes, list[str]]:
+    text = data.decode(TEXT_ENCODING, errors="ignore")
+    if '"ACE_NDK_NO_RESOURCE_MANAGER"' in text:
+        return data, ["ACE_NDK_NO_RESOURCE_MANAGER define already present in ace_ndk BUILD.gn"]
+    for newline in ("\r\n", "\n"):
+        old = f'    defines = [{newline}      "OHOS_PLATFORM",{newline}'
+        new = (
+            f'    defines = [{newline}'
+            f'      "ACE_NDK_NO_RESOURCE_MANAGER",{newline}'
+            f'      "OHOS_PLATFORM",{newline}'
+        )
+        if old in text:
+            text = text.replace(old, new, 1)
+            return text.encode(TEXT_ENCODING), ["added ACE_NDK_NO_RESOURCE_MANAGER define to ace_ndk"]
+    return data, ["ACE_NDK_NO_RESOURCE_MANAGER define insertion point not found"]
 
 
 def add_gn_line_after(text: str, anchor: str, line: str) -> tuple[str, bool]:
@@ -8403,6 +8509,16 @@ def materialize_action(
         ):
             data, transforms = apply_location_locator_sdk_riscv64_explicit_thin_lto_guard(data)
         elif (
+            rel_path == ARKUI_ACE_COLOR_REL
+            and action.get("source_role") == "arkui_ace_color_no_resource_manager_guard"
+        ):
+            data, transforms = apply_arkui_ace_color_no_resource_manager_guard(data)
+        elif (
+            rel_path == ARKUI_ACE_NDK_BUILD_REL
+            and action.get("source_role") == "arkui_ace_ndk_no_resource_manager_define"
+        ):
+            data, transforms = apply_arkui_ace_ndk_no_resource_manager_define(data)
+        elif (
             rel_path == NETSTACK_HTTP_CLIENT_BUILD_REL
             and action.get("source_role") == "netstack_http_client_native_source_closure"
         ):
@@ -8901,6 +9017,12 @@ def check_build_log_old_errors_absent(build_result: dict[str, Any] | None) -> di
             "location/location/liblocator_sdk.z.so",
             "lto.tmp",
             "cannot link object files with different floating-point ABI",
+        ],
+        "old_arkui_ace_ndk_resource_manager_symbols_exposed": [
+            "arkui/ace_engine/libace_ndk.z.so",
+            "ResourceManager::GetInstance()",
+            "Container::CurrentIdSafely()",
+            "color.cpp",
         ],
         "old_netstack_http_client_js_source_mixed_into_native_innerkit": [
             "communication/netstack/libhttp_client.z.so",
@@ -11021,6 +11143,46 @@ def parse_build_diagnostics(
                     all_text,
                     ["cannot link object files with different floating-point ABI", "-flto=thin", "thinlto-cache", "lto.tmp"],
                     14,
+                ),
+            )
+        )
+
+    if (
+        "arkui/ace_engine/libace_ndk.z.so" in plain_text
+        and "undefined symbol: OHOS::Ace::ResourceManager::GetInstance()" in plain_text
+        and "undefined symbol: OHOS::Ace::Container::CurrentIdSafely()" in plain_text
+        and "frameworks/core/components/common/properties/color.cpp" in plain_text
+    ):
+        diagnostics.append(
+            build_diagnostic(
+                "arkui_ace_ndk_resource_manager_symbols_exposed",
+                "source_build_compatibility",
+                (
+                    "ace_ndk compiles the shared Color::UpdateColorByResourceId implementation, "
+                    "which references ArkUI ResourceManager and Container runtime internals that "
+                    "are not part of the NDK link closure."
+                ),
+                (
+                    "Apply the target-evidenced ACE_NDK_NO_RESOURCE_MANAGER guard in color.cpp "
+                    "and add the same define to the ace_ndk OHOS BUILD.gn block; do not pull the "
+                    "full ArkUI core container/resource-manager closure into libace_ndk."
+                ),
+                [
+                    str(log_path),
+                    str(workspace / ARKUI_ACE_COLOR_REL),
+                    str(workspace / ARKUI_ACE_NDK_BUILD_REL),
+                    str(target_root / ARKUI_ACE_COLOR_REL),
+                    str(target_root / ARKUI_ACE_NDK_BUILD_REL),
+                ],
+                matching_lines(
+                    all_text,
+                    [
+                        "arkui/ace_engine/libace_ndk.z.so",
+                        "ResourceManager::GetInstance()",
+                        "Container::CurrentIdSafely()",
+                        "color.cpp",
+                    ],
+                    24,
                 ),
             )
         )
