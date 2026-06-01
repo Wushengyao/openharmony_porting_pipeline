@@ -5,7 +5,9 @@ This tool is intentionally narrower than the execution assistant planner.  It
 can stage, optionally apply, and optionally build-test the first patch needed
 to make a target product visible: productdefine, vendor product config, board
 binding config, and SoC binding config.  It does not import firmware, prebuilts,
-bootloader images, kernel modules, or closed-driver payloads.
+bootloader images, kernel modules, or closed-driver payloads by itself.  When a
+provenance-checked real dependency inventory is supplied, it can preserve those
+workspace dependencies and stop generating the matching compile-only fakes.
 """
 
 from __future__ import annotations
@@ -527,6 +529,241 @@ def workspace_fake_binary_action(
             "runtime_status": "wrong_architecture_not_functional",
             "follow_up": follow_up,
         },
+    }
+
+
+def is_fake_interface_action(action: dict[str, Any]) -> bool:
+    return isinstance(action.get("fake_interface"), dict)
+
+
+def _iter_inventory_entries(data: Any) -> list[dict[str, Any]]:
+    if isinstance(data, list):
+        entries = data
+    elif isinstance(data, dict):
+        for key in ("real_dependencies", "dependencies", "items"):
+            value = data.get(key)
+            if isinstance(value, list):
+                entries = value
+                break
+        else:
+            entries = [data] if isinstance(data.get("path"), str) else []
+    else:
+        entries = []
+    return [copy.deepcopy(item) for item in entries if isinstance(item, dict)]
+
+
+def normalize_inventory_rel_path(raw_path: Any, workspace: Path) -> str:
+    value = clean_str(raw_path, "")
+    if not value:
+        return ""
+    try:
+        path = Path(value)
+        if path.is_absolute():
+            try:
+                value = path.resolve().relative_to(workspace).as_posix()
+            except ValueError:
+                return ""
+        return normalize_rel(value)
+    except Exception:
+        return ""
+
+
+def _inventory_aliases(entry: dict[str, Any], workspace: Path) -> list[str]:
+    aliases: list[str] = []
+    for key in ("path", "workspace_path", "replacement_for_fake", "replaces"):
+        value = entry.get(key)
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            rel = normalize_inventory_rel_path(item, workspace)
+            if rel and rel not in aliases:
+                aliases.append(rel)
+    return aliases
+
+
+def load_real_dependency_inventory(paths: list[str] | None, workspace: Path) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]], list[str]]:
+    by_alias: dict[str, dict[str, Any]] = {}
+    entries: list[dict[str, Any]] = []
+    notes: list[str] = []
+    for raw_path in paths or []:
+        input_path = Path(raw_path)
+        inventory_path = input_path.resolve()
+        try:
+            inventory_text = input_path.read_text(encoding=TEXT_ENCODING, errors="ignore")
+        except OSError as exc:
+            raise FileNotFoundError(f"real dependency inventory not readable: {inventory_path}") from exc
+        data = yaml.safe_load(inventory_text) or {}
+        for entry in _iter_inventory_entries(data):
+            rel = normalize_inventory_rel_path(entry.get("path") or entry.get("workspace_path"), workspace)
+            if rel:
+                entry["_normalized_path"] = rel
+            entry["_inventory_source"] = str(inventory_path)
+            aliases = _inventory_aliases(entry, workspace)
+            if not aliases and rel:
+                aliases = [rel]
+            if not aliases:
+                notes.append(f"real dependency inventory entry without workspace path ignored: {inventory_path}")
+                continue
+            entries.append(entry)
+            for alias in aliases:
+                by_alias[alias] = entry
+    return by_alias, entries, notes
+
+
+def match_real_dependency_entry(
+    action: dict[str, Any],
+    real_dependency_by_alias: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    rel_path = clean_str(action.get("path"), "")
+    if rel_path in real_dependency_by_alias:
+        return real_dependency_by_alias[rel_path]
+    if action.get("source_role") == "board_kernel_fake_source_marker" and rel_path.endswith(
+        "/.openharmony_porting_fake_kernel_source"
+    ):
+        kernel_rel = rel_path.rsplit("/", 1)[0]
+        return real_dependency_by_alias.get(kernel_rel)
+    return None
+
+
+FAKE_PAYLOAD_MARKERS = [
+    b"FAKE_OPENHARMONY_PORTING_INTERFACE=1",
+    b"Compile-only fake",
+    b"compile-only fake",
+    b"__openharmony_porting_fake_shared_library_marker",
+    b"openharmony_porting_fake_kernel_source",
+    b"wrong_architecture_not_functional",
+    b"OpenHarmony porting assistant",
+    b"Auto-generated compile-only OpenHarmony porting source stub",
+]
+
+
+def workspace_file_looks_like_fake_payload(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        with path.open("rb") as fp:
+            data = fp.read(256 * 1024)
+    except OSError:
+        return False
+    return any(marker in data for marker in FAKE_PAYLOAD_MARKERS)
+
+
+def expected_real_dependency_elf_machine(rel_path: str, target: dict[str, str]) -> str:
+    if clean_str(target.get("architecture")) != "riscv64":
+        return ""
+    lower = rel_path.lower()
+    if "/linux-x86_64/current/bin/" in lower:
+        return ""
+    if lower.endswith(".ko") or lower.endswith(".so") or ".so." in lower or "/lib64/" in lower:
+        return "RISC-V"
+    return ""
+
+
+def probe_real_dependency_file(workspace_path: Path, rel_path: str, target: dict[str, str]) -> dict[str, Any]:
+    if not workspace_path.exists():
+        return {"status": "missing", "reason": "workspace path does not exist"}
+    if workspace_path.is_dir():
+        if rel_path.startswith("kernel/linux/") and not (workspace_path / "Makefile").is_file():
+            return {
+                "status": "fail",
+                "kind": "directory",
+                "reason": "kernel BSP directory is present but lacks a top-level Makefile",
+            }
+        return {"status": "pass", "kind": "directory", "reason": "directory dependency is present"}
+    if not workspace_path.is_file():
+        return {"status": "fail", "reason": "workspace path is neither file nor directory"}
+    result: dict[str, Any] = {
+        "status": "pass",
+        "kind": "file",
+        "size": workspace_path.stat().st_size,
+        "sha256": sha256_file(workspace_path),
+    }
+    expected_machine = expected_real_dependency_elf_machine(rel_path, target)
+    if not expected_machine:
+        return result
+    file_tool = shutil.which("file")
+    if not file_tool:
+        result["abi_probe"] = {"status": "skipped", "reason": "file command not found"}
+        return result
+    try:
+        proc = subprocess.run(
+            [file_tool, "-b", str(workspace_path)],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=10,
+        )
+    except Exception as exc:
+        result["abi_probe"] = {"status": "skipped", "reason": f"file command failed: {exc}"}
+        return result
+    description = (proc.stdout or proc.stderr or "").strip()
+    result["abi_probe"] = {
+        "status": "pass" if expected_machine in description else "fail",
+        "expected_machine": expected_machine,
+        "file": description,
+    }
+    if "ELF" in description and expected_machine not in description:
+        result["status"] = "fail"
+        result["reason"] = f"ELF machine does not match expected {expected_machine}"
+    return result
+
+
+def inventory_expected_sha256(entry: dict[str, Any]) -> str:
+    for key in ("sha256", "expected_sha256", "source_sha256"):
+        value = clean_str(entry.get(key), "")
+        if value and value != "unknown":
+            return value.lower()
+    return ""
+
+
+def render_real_dependency_from_entry(
+    entry: dict[str, Any],
+    action: dict[str, Any],
+    rel_path: str,
+    real_rel_path: str,
+    probe: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "path": rel_path,
+        "real_path": real_rel_path,
+        "source_role": action.get("source_role", "unknown"),
+        "phase": action.get("phase", "unknown"),
+        "provider": entry.get("provider", "unknown"),
+        "upstream_version": entry.get("upstream_version", entry.get("version", "unknown")),
+        "source_package": entry.get("source_package", "unknown"),
+        "license": entry.get("license", "unknown"),
+        "inventory_source": entry.get("_inventory_source", "auto_detected_existing_workspace"),
+        "replacement_for_fake": entry.get("replacement_for_fake", rel_path),
+        "validation": entry.get("validation", "not_recorded"),
+        "probe": probe,
+    }
+
+
+def summarize_real_dependencies(real_dependencies: list[dict[str, Any]]) -> dict[str, Any]:
+    missing = 0
+    failed_probe = 0
+    hash_mismatch = 0
+    fake_marked = 0
+    for item in real_dependencies:
+        probe = item.get("probe") or {}
+        if probe.get("status") == "missing":
+            missing += 1
+        if probe.get("status") == "fail" or (probe.get("abi_probe") or {}).get("status") == "fail":
+            failed_probe += 1
+        if item.get("hash_status") == "mismatch":
+            hash_mismatch += 1
+        if item.get("apply_status") == "blocked_real_dependency_still_fake_payload":
+            fake_marked += 1
+    return {
+        "total_real_dependency_count": len(real_dependencies),
+        "missing_count": missing,
+        "failed_probe_count": failed_probe,
+        "hash_mismatch_count": hash_mismatch,
+        "fake_marked_count": fake_marked,
+        "review_rule": (
+            "Inventory-backed real dependencies are preserved and excluded from fake-interface debt. "
+            "Missing, fake-marked, hash-mismatched, or ABI-mismatched entries block apply/build until corrected."
+        ),
     }
 
 
@@ -10376,6 +10613,7 @@ def render_markdown(manifest: dict[str, Any]) -> str:
         f"- Skipped same-content actions: {summary['skipped_same_content_actions']}",
         f"- Blocking issues: {summary['blocking_issue_count']}",
         f"- Fake interfaces: {summary.get('fake_interface_count', 0)}",
+        f"- Real dependency inventory matches: {summary.get('real_dependency_count', 0)}",
         f"- Prebuild cleanups: {summary.get('prebuild_cleanup_count', 0)}",
         f"- Regression checks: {summary.get('regression_check_count', 0)}",
         f"- Regression check failures: {summary.get('regression_check_fail_count', 0)}",
@@ -10501,6 +10739,31 @@ def render_markdown(manifest: dict[str, Any]) -> str:
                 ]
             )
         lines.append("")
+    real_dependencies = manifest.get("real_dependencies") or []
+    real_summary = manifest.get("real_dependency_summary") or {}
+    if real_dependencies:
+        lines.extend(["## Real Dependency Inventory Matches", ""])
+        lines.append(f"- Total matched entries: {real_summary.get('total_real_dependency_count', len(real_dependencies))}")
+        lines.append(f"- Missing entries: {real_summary.get('missing_count', 0)}")
+        lines.append(f"- Still fake-marked entries: {real_summary.get('fake_marked_count', 0)}")
+        lines.append(f"- Probe failures: {real_summary.get('failed_probe_count', 0)}")
+        lines.append(f"- Hash mismatches: {real_summary.get('hash_mismatch_count', 0)}")
+        lines.append(f"- Review rule: {real_summary.get('review_rule', 'keep provenance and validation records')}")
+        lines.append("")
+        for item in real_dependencies:
+            probe = item.get("probe") or {}
+            abi_probe = probe.get("abi_probe") or {}
+            lines.extend(
+                [
+                    f"- `{item.get('path', 'unknown')}` -> `{item.get('real_path', 'unknown')}`",
+                    f"  - Provider: `{item.get('provider', 'unknown')}`",
+                    f"  - Apply status: `{item.get('apply_status', 'unknown')}`",
+                    f"  - Probe: `{probe.get('status', 'unknown')}`",
+                ]
+            )
+            if abi_probe:
+                lines.append(f"  - ABI: `{abi_probe.get('status', 'unknown')}` `{abi_probe.get('file', '')}`")
+        lines.append("")
     deferrals = manifest.get("external_prebuilt_deferrals") or []
     if deferrals:
         lines.extend(["## External Prebuilt Deferrals", ""])
@@ -10592,6 +10855,7 @@ def render_porting_completion_summary(manifest: dict[str, Any]) -> str:
             f"- Planned actions: {summary.get('planned_actions', 0)}",
             f"- Applied actions: {summary.get('applied_actions', 0)}",
             f"- Same-content actions: {summary.get('skipped_same_content_actions', 0)}",
+            f"- Real dependency inventory matches: {summary.get('real_dependency_count', 0)}",
             f"- Blocking issues: {blocking_count}",
             f"- Regression checks: {summary.get('regression_check_count', 0)}",
             f"- Regression failures: {regression_fail_count}",
@@ -10628,6 +10892,25 @@ def render_porting_completion_summary(manifest: dict[str, Any]) -> str:
     else:
         lines.extend(["- No compile-only fake interfaces were recorded.", ""])
 
+    real_dependencies = manifest.get("real_dependencies") or []
+    real_summary = manifest.get("real_dependency_summary") or {}
+    lines.extend(["## Real Dependency Inventory", ""])
+    if real_dependencies:
+        lines.append(f"- Matched real dependency entries: `{real_summary.get('total_real_dependency_count', len(real_dependencies))}`")
+        lines.append(f"- Missing: `{real_summary.get('missing_count', 0)}`")
+        lines.append(f"- Still fake-marked: `{real_summary.get('fake_marked_count', 0)}`")
+        lines.append(f"- Probe failures: `{real_summary.get('failed_probe_count', 0)}`")
+        lines.append(f"- Hash mismatches: `{real_summary.get('hash_mismatch_count', 0)}`")
+        for item in real_dependencies[:20]:
+            probe = item.get("probe") or {}
+            lines.append(
+                f"- `{item.get('path', 'unknown')}` -> `{item.get('real_path', 'unknown')}` "
+                f"provider=`{item.get('provider', 'unknown')}` probe=`{probe.get('status', 'unknown')}`"
+            )
+    else:
+        lines.append("- No real dependency inventory entries matched fake-interface actions in this run.")
+    lines.append("")
+
     deferrals = manifest.get("external_prebuilt_deferrals") or []
     lines.extend(["## External Prebuilt Deferrals", ""])
     if deferrals:
@@ -10649,6 +10932,106 @@ def render_porting_completion_summary(manifest: dict[str, Any]) -> str:
             "- Replace compile-only fake interfaces with provenance-checked board, SoC, kernel, firmware, Rust, WebView, or app dependencies.",
             "- Keep product features visible while dependency replacement proceeds; avoid removing features just to hide missing binaries.",
             "- After dependency replacement, rerun full image build and then boot, driver, graphics, media, input, WebView, and application runtime validation.",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_dependency_request(manifest: dict[str, Any]) -> str:
+    target = manifest.get("target") or {}
+    fake_interfaces = manifest.get("fake_interfaces") or []
+    debt_summary = manifest.get("dependency_debt_summary") or {}
+    categories = debt_summary.get("categories") or []
+    lines = [
+        "# OpenHarmony rvbook Dependency Request",
+        "",
+        f"- Generated: `{manifest.get('generated_at', 'unknown')}`",
+        f"- Product: `{target.get('product', 'unknown')}`",
+        f"- Board: `{target.get('board', 'unknown')}`",
+        f"- SoC: `{target.get('soc', 'unknown')}`",
+        f"- Architecture: `{target.get('architecture', 'unknown')}`",
+        f"- Current fake-interface debt: `{len(fake_interfaces)}`",
+        "",
+        "## Request Context",
+        "",
+        (
+            "The source/build closure can produce a complete image, but the following "
+            "compile-only fake interfaces still need provenance-checked real dependencies "
+            "before boot, hardware, WebView, Rust, or application runtime validation."
+        ),
+        "",
+        "For every delivered item, provide version, license or authorization statement, "
+        "sha256, target architecture/ABI notes, dependency list, and integration instructions.",
+        "",
+    ]
+    real_blockers = [
+        item
+        for item in manifest.get("real_dependencies") or []
+        if clean_str(item.get("apply_status"), "").startswith("blocked_")
+    ]
+    if real_blockers:
+        lines.extend(["## Real Dependency Intake Blockers", ""])
+        for item in real_blockers:
+            probe = item.get("probe") or {}
+            lines.extend(
+                [
+                    f"- `{item.get('path', 'unknown')}` -> `{item.get('real_path', 'unknown')}`",
+                    f"  - Status: `{item.get('apply_status', 'unknown')}`",
+                    f"  - Provider: `{item.get('provider', 'unknown')}`",
+                    f"  - Probe: `{probe.get('status', 'unknown')}` {probe.get('reason', '')}",
+                    "  - Action: replace the workspace artifact with the real dependency or fix the inventory entry before retrying.",
+                ]
+            )
+        lines.append("")
+
+    if not fake_interfaces:
+        lines.extend(["## Outstanding Requests", "", "- No compile-only fake interfaces were recorded.", ""])
+        return "\n".join(lines).rstrip() + "\n"
+
+    lines.extend(["## Outstanding Requests", ""])
+    for bucket in categories:
+        category = bucket.get("category", "unknown")
+        bucket_paths = [
+            item
+            for item in fake_interfaces
+            if fake_dependency_category(item)[0] == category
+        ]
+        lines.extend(
+            [
+                f"### {category}",
+                "",
+                f"- Count: {len(bucket_paths)}",
+                f"- Risk: {bucket.get('risk', 'compile-only dependency debt')}",
+                f"- Requested follow-up: {bucket.get('follow_up', 'replace with real dependency evidence')}",
+                "- Required delivery metadata: provider, upstream version, source package, license, sha256, ABI check, validation notes.",
+                "- Integration rule: replace the fake at the same workspace path when possible; otherwise record `replacement_for_fake` in `real_dependency_inventory.yaml`.",
+                "",
+                "Paths:",
+            ]
+        )
+        for item in bucket_paths:
+            lines.append(f"- `{item.get('path', 'unknown')}`: {item.get('missing_dependency', 'unknown dependency')}")
+        lines.append("")
+
+    lines.extend(
+        [
+            "## Inventory Template",
+            "",
+            "After receiving a real dependency, add an entry like:",
+            "",
+            "```yaml",
+            "real_dependencies:",
+            "  - path: device/soc/thead/th1520/hardware/gpu/lib64/libEGL_impl.so",
+            "    provider: thead_or_board_vendor",
+            "    upstream_version: \"<sdk or release version>\"",
+            "    source_package: \"<delivery archive or repository commit>\"",
+            "    sha256: \"<sha256 of the installed workspace artifact>\"",
+            "    license: \"<license or authorization reference>\"",
+            "    replacement_for_fake: device/soc/thead/th1520/hardware/gpu/lib64/libEGL_impl.so",
+            "    validation: \"file/readelf checked; build pending\"",
+            "```",
+            "",
+            "Then rerun `apply_porting_base_patch.py` with `--real-dependency-inventory <inventory.yaml>`.",
         ]
     )
     return "\n".join(lines).rstrip() + "\n"
@@ -14420,6 +14803,25 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable generation of compile-only fake bundle.json registries for product components missing from the current source tree.",
     )
+    parser.add_argument(
+        "--real-dependency-inventory",
+        action="append",
+        default=[],
+        help=(
+            "YAML inventory of provenance-checked real dependencies that should preserve existing "
+            "workspace files/directories and suppress matching compile-only fake interfaces. "
+            "May be passed more than once."
+        ),
+    )
+    parser.add_argument(
+        "--prefer-existing-real-dependencies",
+        action="store_true",
+        help=(
+            "Opt in to preserving existing non-fake workspace files for fake-interface actions even "
+            "when they are not listed in the real dependency inventory. Use only after fake placeholders "
+            "have been reviewed or removed."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -14454,6 +14856,10 @@ def main() -> int:
         "architecture": clean_str(seed.get("architecture")),
         "openharmony_version": clean_str(seed.get("openharmony_version")),
     }
+    real_dependency_by_alias, real_dependency_inventory_entries, real_dependency_notes = load_real_dependency_inventory(
+        args.real_dependency_inventory,
+        workspace,
+    )
 
     actions, notes = planned_actions(
         seed,
@@ -14461,6 +14867,13 @@ def main() -> int:
         workspace,
         not args.no_fake_missing_source_components,
     )
+    notes.extend(real_dependency_notes)
+    if real_dependency_inventory_entries:
+        notes.append(
+            "Loaded real dependency inventory entries: "
+            + str(len(real_dependency_inventory_entries))
+            + ". Matching fake-interface actions will preserve real workspace files instead of regenerating fakes."
+        )
     component_visibility_filter_enabled = bool(args.filter_unavailable_components) and not args.no_component_visibility_filter
     component_features: dict[str, set[str] | None] | None = None
     if component_visibility_filter_enabled:
@@ -14486,6 +14899,119 @@ def main() -> int:
         staged_path = staged_root / rel_path
         if staged_path.name == "bundle.json":
             staged_path = staged_root / "_non_scanned_bundle_json" / (rel_path + ".staged")
+        result = {key: value for key, value in action.items() if key not in {"generated_json", "generated_text"}}
+        result.update(
+            {
+                "workspace_path": str(workspace_path),
+                "staged_path": str(staged_path),
+                "source_label": "pending",
+                "source_status": "pending",
+                "workspace_status": "missing",
+                "source_sha256": "unknown",
+                "workspace_sha256": "unknown",
+                "workspace_mode": "unknown",
+                "desired_mode": "unknown",
+                "apply_status": "not_requested",
+                "backup_path": "none",
+                "compatibility_transforms": [],
+            }
+        )
+
+        real_entry = match_real_dependency_entry(action, real_dependency_by_alias) if is_fake_interface_action(action) else None
+        if (
+            real_entry is None
+            and args.prefer_existing_real_dependencies
+            and is_fake_interface_action(action)
+            and workspace_path.exists()
+            and not workspace_file_looks_like_fake_payload(workspace_path)
+        ):
+            real_entry = {
+                "path": rel_path,
+                "provider": "existing_workspace_auto_detected",
+                "validation": "auto_detected_non_fake_workspace_path",
+                "_normalized_path": rel_path,
+            }
+
+        if real_entry is not None:
+            real_rel_path = normalize_inventory_rel_path(real_entry.get("path") or real_entry.get("workspace_path"), workspace) or rel_path
+            if (
+                action.get("source_role") == "board_kernel_fake_source_marker"
+                and rel_path.endswith("/.openharmony_porting_fake_kernel_source")
+                and real_rel_path == rel_path
+            ):
+                real_rel_path = rel_path.rsplit("/", 1)[0]
+            real_workspace_path = workspace / real_rel_path
+            probe = probe_real_dependency_file(real_workspace_path, real_rel_path, target)
+            real_dependency = render_real_dependency_from_entry(real_entry, action, rel_path, real_rel_path, probe)
+            expected_sha = inventory_expected_sha256(real_entry)
+            actual_sha = clean_str(probe.get("sha256"), "")
+            if expected_sha:
+                real_dependency["expected_sha256"] = expected_sha
+                real_dependency["hash_status"] = "match" if actual_sha.lower() == expected_sha else "mismatch"
+            result.pop("fake_interface", None)
+            result["dependency_policy"] = "real_dependency_inventory"
+            result["source_label"] = clean_str(real_entry.get("_inventory_source"), "real_dependency_inventory")
+            result["source_status"] = "real_dependency_present" if real_workspace_path.exists() else "real_dependency_missing"
+            result["real_workspace_path"] = str(real_workspace_path)
+            result["real_workspace_status"] = (
+                "present_directory"
+                if real_workspace_path.is_dir()
+                else "present_file"
+                if real_workspace_path.is_file()
+                else "missing"
+            )
+            result["real_dependency"] = real_dependency
+            result["compatibility_transforms"] = [
+                "real dependency inventory matched; skipped compile-only fake generation"
+            ]
+            if workspace_path.exists():
+                result["workspace_status"] = "present" if workspace_path.is_file() else "present_non_file"
+                if workspace_path.is_file():
+                    result["workspace_sha256"] = sha256_file(workspace_path)
+                    result["workspace_mode"] = oct(workspace_path.stat().st_mode & 0o777)
+            if actual_sha:
+                result["source_sha256"] = actual_sha
+
+            block_reason = ""
+            if probe.get("status") == "missing":
+                block_reason = "real_dependency_missing"
+            elif real_workspace_path.is_file() and workspace_file_looks_like_fake_payload(real_workspace_path):
+                block_reason = "real_dependency_still_fake_payload"
+            elif real_dependency.get("hash_status") == "mismatch":
+                block_reason = "real_dependency_hash_mismatch"
+            elif probe.get("status") == "fail" or (probe.get("abi_probe") or {}).get("status") == "fail":
+                block_reason = "real_dependency_probe_failed"
+
+            if block_reason:
+                result["apply_status"] = f"blocked_{block_reason}"
+                blocking_issues.append({"path": rel_path, "reason": result["apply_status"]})
+                results.append(result)
+                continue
+
+            removed_fake_marker = False
+            if (
+                args.apply
+                and action.get("source_role") == "board_kernel_fake_source_marker"
+                and workspace_path.is_file()
+                and workspace_file_looks_like_fake_payload(workspace_path)
+            ):
+                backup_path = backup_root / rel_path
+                mkdir_parent(backup_path)
+                shutil.copy2(workspace_path, backup_path)
+                workspace_path.unlink()
+                result["backup_path"] = str(backup_path)
+                removed_fake_marker = True
+                result["compatibility_transforms"].append(
+                    "removed stale fake kernel-source marker because real BSP source is inventoried"
+                )
+            result["apply_status"] = (
+                "removed_fake_marker_preserved_real_dependency"
+                if removed_fake_marker
+                else "preserved_real_dependency"
+            )
+            results.append(result)
+            continue
+
         data, source_label, source_status, transforms = materialize_action(
             action,
             workspace,
@@ -14495,24 +15021,9 @@ def main() -> int:
             component_features,
             component_deferrals,
         )
-
-        result = {key: value for key, value in action.items() if key not in {"generated_json", "generated_text"}}
-        result.update(
-            {
-                "workspace_path": str(workspace_path),
-                "staged_path": str(staged_path),
-                "source_label": source_label,
-                "source_status": source_status,
-                "workspace_status": "missing",
-                "source_sha256": "unknown",
-                "workspace_sha256": "unknown",
-                "workspace_mode": "unknown",
-                "desired_mode": "unknown",
-                "apply_status": "not_requested",
-                "backup_path": "none",
-                "compatibility_transforms": transforms,
-            }
-        )
+        result["source_label"] = source_label
+        result["source_status"] = source_status
+        result["compatibility_transforms"] = transforms
 
         if data is None:
             result["apply_status"] = "blocked_missing_source"
@@ -14622,7 +15133,17 @@ def main() -> int:
         for item in results
         if isinstance(item.get("fake_interface"), dict)
     ]
+    real_dependencies = [
+        {
+            **item.get("real_dependency", {}),
+            "apply_status": item.get("apply_status", "unknown"),
+            "source_status": item.get("source_status", "unknown"),
+        }
+        for item in results
+        if isinstance(item.get("real_dependency"), dict)
+    ]
     dependency_debt_summary = summarize_dependency_debt(fake_interfaces)
+    real_dependency_summary = summarize_real_dependencies(real_dependencies)
     regression_checks = run_regression_checks(
         workspace,
         target["product"],
@@ -14633,12 +15154,19 @@ def main() -> int:
     )
     summary = {
         "planned_actions": len(results),
-        "available_source_actions": sum(1 for item in results if item["source_status"] == "available"),
+        "available_source_actions": sum(
+            1 for item in results if item["source_status"] in {"available", "real_dependency_present"}
+        ),
         "applied_actions": sum(1 for item in results if str(item["apply_status"]).startswith("applied")),
         "skipped_same_content_actions": sum(1 for item in results if item["apply_status"] == "skipped_same_content"),
         "blocking_issue_count": len(blocking_issues),
         "build_diagnostic_count": len(build_result.get("diagnostics", [])) if build_result else 0,
         "fake_interface_count": len(fake_interfaces),
+        "real_dependency_count": len(real_dependencies),
+        "real_dependency_missing_count": real_dependency_summary.get("missing_count", 0),
+        "real_dependency_failed_probe_count": real_dependency_summary.get("failed_probe_count", 0),
+        "real_dependency_hash_mismatch_count": real_dependency_summary.get("hash_mismatch_count", 0),
+        "real_dependency_fake_marked_count": real_dependency_summary.get("fake_marked_count", 0),
         "prebuild_cleanup_count": len(prebuild_cleanups),
         "regression_check_count": len(regression_checks),
         "regression_check_fail_count": sum(1 for item in regression_checks if item.get("status") == "fail"),
@@ -14668,6 +15196,13 @@ def main() -> int:
         "external_prebuilt_deferrals": list(component_deferrals.values()),
         "fake_interfaces": fake_interfaces,
         "dependency_debt_summary": dependency_debt_summary,
+        "real_dependency_inventory": {
+            "input_paths": [str(Path(path).resolve()) for path in args.real_dependency_inventory],
+            "entry_count": len(real_dependency_inventory_entries),
+            "prefer_existing_real_dependencies": bool(args.prefer_existing_real_dependencies),
+        },
+        "real_dependencies": real_dependencies,
+        "real_dependency_summary": real_dependency_summary,
         "regression_checks": regression_checks,
         "prebuild_cleanups": prebuild_cleanups,
         "actions": results,
@@ -14676,14 +15211,17 @@ def main() -> int:
         "summary": summary,
         "build_result": build_result,
         "porting_completion_summary": str(out_dir / "porting_completion_summary.md"),
+        "dependency_request": str(out_dir / "dependency_request.md"),
     }
 
     manifest_yaml = out_dir / "base_patch_manifest.yaml"
     manifest_md = out_dir / "base_patch_manifest.md"
     completion_md = out_dir / "porting_completion_summary.md"
+    dependency_request_md = out_dir / "dependency_request.md"
     manifest_yaml.write_text(yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False), encoding=TEXT_ENCODING)
     manifest_md.write_text(render_markdown(manifest), encoding=TEXT_ENCODING)
     completion_md.write_text(render_porting_completion_summary(manifest), encoding=TEXT_ENCODING)
+    dependency_request_md.write_text(render_dependency_request(manifest), encoding=TEXT_ENCODING)
 
     if blocking_issues:
         return 2 if args.apply else 0

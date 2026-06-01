@@ -58,6 +58,29 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/apply_porting_
   --attempt-build
 ```
 
+Continue after real vendor/BSP dependencies arrive:
+
+```bash
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/apply_porting_base_patch.py \
+  --workspace /path/to/ohos \
+  --target-source-root /path/to/reference_target_ohos \
+  --target-profile /path/to/target_profile_seed.yaml \
+  --real-dependency-inventory /path/to/real_dependency_inventory.yaml \
+  --out /path/to/ohos/porting_knowledge_output/base_patch_apply_real_deps \
+  --apply \
+  --attempt-build
+```
+
+The real dependency inventory is a YAML mapping with a `real_dependencies`
+list. Each entry should name the workspace `path`, `provider`, version/source
+package, license or authorization reference, sha256 when available, and
+`replacement_for_fake` when the real path replaces a different fake marker such
+as `kernel/linux/<board-kernel>/.openharmony_porting_fake_kernel_source`.
+Inventory-backed dependencies are preserved and excluded from fake-interface
+debt; missing, fake-marked, hash-mismatched, or ABI-mismatched entries block the
+run. Use `--prefer-existing-real-dependencies` only after existing fake
+placeholders have been reviewed or removed.
+
 Aggregate multiple scenario outputs:
 
 ```bash
@@ -151,6 +174,17 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
   each controlled apply/build run. It records build status, patch coverage,
   fake-interface dependency debt, external prebuilt deferrals, and the next
   validation work without requiring a reader to scan every planned action.
+- Treat `dependency_request.md` as the generated external-dependency request
+  list after each controlled apply/build run. It groups unresolved fake
+  interfaces by dependency category and includes a `real_dependencies`
+  inventory template for later vendor/BSP payload intake.
+- When provenance-checked dependencies arrive, record them in a
+  `real_dependency_inventory.yaml` and pass it with
+  `--real-dependency-inventory`. The controlled executor must preserve matching
+  real files/directories, remove stale fake kernel-source markers when a real
+  BSP source tree is inventoried, and stop if the inventory path is missing,
+  still fake-marked, hash-mismatched, or fails the basic target-architecture
+  probe. Do not overwrite real dependencies with generated fakes.
 - When a compile blocker is backed by a target prebuilt such as WebView
   `ArkWebCore.hap`, keep `web:webview` selected and generate a tracked
   compile-only fake artifact only as a build-progress bridge. Record the
