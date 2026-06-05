@@ -166,6 +166,16 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py smoke
 ```
 
+For the ongoing MusePaper2 OH6.1 port, after each successful build/package,
+stage the zip on the Windows host as
+`F:\images\PortingTest\6.1\openharmony-spacemit-k1-musepaper2.zip` before
+flashing when direct Windows-path flashing is enabled. The known-good OH6.0
+control image is
+`F:\images\PortingTest\6.0\openharmony-spacemit-k1-musepaper2.zip`. Check
+`oh_autoctl.py capabilities` first: if `F:\images\PortingTest` is not in
+`allowed_local_roots`, use `oh_autoctl.py upload` and flash the artifact id
+instead of the direct `F:\...` path.
+
 Never blindly resubmit a flash after a network timeout. Query the known job with
 `oh_autoctl.py job "$JOB_ID"` and resume logs/events first.
 

@@ -66,6 +66,19 @@ ARTIFACT_ID=$(python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/
 
 If the image already exists on the Windows host and is inside `allowed_local_roots`, pass that Windows path as `--image` instead.
 
+MusePaper2 porting convention:
+
+- Known-good OH6.0 control package:
+  `F:\images\PortingTest\6.0\openharmony-spacemit-k1-musepaper2.zip`
+- Fresh OH6.1 test packages after each successful build:
+  `F:\images\PortingTest\6.1\openharmony-spacemit-k1-musepaper2.zip`
+
+Before using a direct `F:\...` path, confirm `oh_autoctl.py capabilities`
+shows `F:\images\PortingTest` or the exact staging directory in
+`allowed_local_roots`. If it does not, use `oh_autoctl.py upload` from the Linux
+build host and flash the returned artifact id. A direct `F:\...` path outside
+`allowed_local_roots` fails before flashing and does not modify the device.
+
 4. Submit flash job:
 
 ```bash

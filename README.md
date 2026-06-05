@@ -129,6 +129,13 @@ python3 tools/oh_autoctl.py wait "$JOB_ID" --events --timeout-sec 1800
 python3 tools/oh_autoctl.py smoke
 ```
 
+For the MusePaper2 OH6.1 porting loop, stage freshly built Windows-side test
+packages under `F:\images\PortingTest\6.1\`. The known-good OH6.0 control image
+is `F:\images\PortingTest\6.0\openharmony-spacemit-k1-musepaper2.zip`. Direct
+Windows-path flashing requires `/capabilities` to list `F:\images\PortingTest`
+inside `allowed_local_roots`; otherwise upload the Linux-side zip with
+`oh_autoctl.py upload` and flash the returned artifact id.
+
 Run the plan-only OpenHarmony porting execution assistant after a single
 scenario output and, optionally, cross-scenario meta output are available:
 

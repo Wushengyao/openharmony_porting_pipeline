@@ -262,13 +262,13 @@ def command_cancel(client: OhAutoClient, args: argparse.Namespace) -> Any:
 
 def command_smoke(client: OhAutoClient, args: argparse.Namespace) -> Any:
     commands = [
-        "echo oh_auto_agent_smoke_ok",
-        "param get const.product.name",
-        "param get const.ohos.fullname",
-        "uname -a",
+        ("echo oh_auto_agent_smoke_ok", "oh_auto_agent_smoke_ok"),
+        ("param get const.product.name", None),
+        ("param get const.ohos.fullname", None),
+        ("uname -a", "Linux"),
     ]
     results = []
-    for command in commands:
+    for command, expected in commands:
         job = client.request_json(
             "POST",
             f"/devices/{args.device_id}/ops/shell",
@@ -281,10 +281,40 @@ def command_smoke(client: OhAutoClient, args: argparse.Namespace) -> Any:
             timeout_sec=args.timeout_sec + 5,
         )
         stdout = client.request_json("GET", f"/jobs/{job['job_id']}/logs?stream=stdout&offset=0")
-        results.append({"command": command, "job": finished, "stdout": stdout.get("content", "")})
-        if finished.get("status") != "succeeded":
+        stdout_text = stdout.get("content", "")
+        stdout_valid = smoke_stdout_valid(stdout_text, expected)
+        results.append({
+            "command": command,
+            "job": finished,
+            "stdout": stdout_text,
+            "stdout_valid": stdout_valid,
+        })
+        if finished.get("status") != "succeeded" or not stdout_valid:
             break
-    return {"ok": all(item["job"].get("status") == "succeeded" for item in results), "results": results}
+    return {
+        "ok": all(
+            item["job"].get("status") == "succeeded" and item.get("stdout_valid") is True
+            for item in results
+        ),
+        "results": results,
+    }
+
+
+def smoke_stdout_valid(stdout_text: str, expected: str | None) -> bool:
+    stripped = stdout_text.strip()
+    if not stripped:
+        return False
+    failure_markers = [
+        "[Fail]",
+        "ExecuteCommand need connect-key",
+        "Offline",
+        "No any connected target",
+    ]
+    if any(marker in stdout_text for marker in failure_markers):
+        return False
+    if expected is not None and expected not in stdout_text:
+        return False
+    return True
 
 
 def wait_if_requested(client: OhAutoClient, job: dict[str, Any], args: argparse.Namespace) -> Any:
