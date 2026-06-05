@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "stage": {
+      "type": "string",
+      "const": "11_version_upgrade_porting"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "blocked",
+        "partial"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "execution_mode": {
+      "type": "string",
+      "const": "plan-only"
+    },
+    "artifact_root": {
+      "type": "string"
+    },
+    "baseline_mode": {
+      "type": "string"
+    },
+    "old_baseline_manifest": {
+      "type": "string"
+    },
+    "input_roots": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "input_files_read": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "output_files_written": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "blocking_issues": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "non_blocking_issues": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "next_stage_inputs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "old_porting_delta_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "upstream_upgrade_delta_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "new_workspace_delta_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "conflict_item_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "external_dependency_followup_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "uncertainty_count": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "stage",
+    "status",
+    "summary",
+    "execution_mode",
+    "artifact_root",
+    "input_roots",
+    "input_files_read",
+    "output_files_written",
+    "blocking_issues",
+    "non_blocking_issues",
+    "next_stage_inputs",
+    "old_porting_delta_count",
+    "upstream_upgrade_delta_count",
+    "new_workspace_delta_count",
+    "conflict_item_count",
+    "external_dependency_followup_count",
+    "uncertainty_count"
+  ],
+  "additionalProperties": false
+}

@@ -96,6 +96,39 @@ refinement and restores deterministic output if the Codex refine process fails.
 
 See `docs/CROSS_SCENARIO_USAGE.md` for a compact usage guide.
 
+## Local Device Automation
+
+For build-server Agents that need to close the OpenHarmony porting loop with a
+real board, use the Windows local automation service through:
+
+- `docs/local_device_automation.md`
+- `tools/oh_autoctl.py`
+
+The default endpoint is:
+
+```bash
+export OH_AUTO_BASE_URL=http://127.0.0.1:8787/api/v1
+export OH_AUTO_DEVICE_ID=default
+```
+
+`OH_AUTO_API_KEY` is optional and only needed when the Windows service enables
+API key authentication. Start with:
+
+```bash
+python3 tools/oh_autoctl.py capabilities
+python3 tools/oh_autoctl.py preflight --template-id musepaper2-titan
+python3 tools/oh_autoctl.py shell echo oh_auto_agent_probe --wait
+```
+
+For MusePaper2 Titan flashing, upload the image and run the configured template:
+
+```bash
+ARTIFACT_ID=$(python3 tools/oh_autoctl.py upload /path/to/openharmony-spacemit-k1-musepaper2.zip --id-only)
+python3 tools/oh_autoctl.py flash musepaper2-titan --image "$ARTIFACT_ID"
+python3 tools/oh_autoctl.py wait "$JOB_ID" --events --timeout-sec 1800
+python3 tools/oh_autoctl.py smoke
+```
+
 Run the plan-only OpenHarmony porting execution assistant after a single
 scenario output and, optionally, cross-scenario meta output are available:
 
@@ -177,6 +210,75 @@ P0 execution-assistant guardrails:
 - build success must not be promoted to boot/runtime/test success;
 - every recommendation must carry evidence references to user requirements,
   source tree evidence, meta methods, cases, or logs.
+
+Run the optional four-tree version-upgrade porting analysis when a completed old
+port must be migrated to a newer unported baseline:
+
+```bash
+bash tools/run_version_upgrade_porting.sh \
+  --old-original /path/to/old_clean_ohos \
+  --old-ported /path/to/old_ported_ohos \
+  --new-original /path/to/new_clean_ohos \
+  --new-workspace /path/to/new_unported_ohos
+```
+
+`old_original` must be the exact frozen baseline used before the old port
+started. Do not use a latest 6.0 release branch that may have advanced after the
+port. If the directory is unavailable, use a locked manifest from `old_ported`
+instead; the runner also auto-detects `.repo/manifests/tag/*.xml`:
+
+```bash
+bash tools/run_version_upgrade_porting.sh \
+  --old-ported /path/to/old_ported_ohos \
+  --old-baseline-manifest /path/to/old_ported_ohos/.repo/manifests/tag/manifest_tag_xxx.xml \
+  --new-original /path/to/new_clean_ohos \
+  --new-workspace /path/to/new_unported_ohos
+```
+
+Manifest-only mode is intentionally `partial`: it extracts
+`manifest_revision..HEAD` deltas from `old_ported` and writes an
+`old_original_baseline` reconstruction plan, but the full upstream-churn delta
+requires an actual `old_original` checkout.
+
+The four-tree mode writes plan-only artifacts under:
+
+```text
+/path/to/new_unported_ohos/porting_knowledge_output/09_version_upgrade/
+├── four_tree_profile.yaml
+├── old_original_baseline.yaml
+├── old_original_baseline.md
+├── old_porting_delta.csv
+├── old_porting_delta.md
+├── upstream_upgrade_delta.csv
+├── upstream_upgrade_delta.md
+├── new_workspace_delta.csv
+├── new_workspace_delta.md
+├── four_tree_conflict_matrix.yaml
+├── four_tree_conflict_matrix.md
+├── migration_requirement_index.yaml
+├── migration_requirement_index.md
+├── upgrade_porting_work_order.yaml
+├── upgrade_porting_work_order.md
+├── upgrade_patch_plan.yaml
+├── upgrade_patch_plan.md
+├── external_dependency_followup.yaml
+├── external_dependency_followup.md
+├── build_acceptance.yaml
+├── build_acceptance.md
+├── uncertainty_ledger.yaml
+├── uncertainty_ledger.md
+├── upgrade_porting_summary.yaml
+└── upgrade_porting_summary.md
+```
+
+Four-tree mode keeps the original pipeline behavior unchanged. It treats
+`old_original -> old_ported` as the old target-porting intent,
+`old_original -> new_original` as OpenHarmony/vendor version churn, and
+`new_original -> new_workspace` as current migration progress or drift. Each old
+porting item is classified as direct review, merge required, retarget required,
+already in progress, external dependency follow-up, or unknown. It does not
+write source files, generate patch hunks, fetch dependencies, install tools, or
+claim boot/runtime/test success.
 
 After the plan-only artifacts are reviewed, a narrow controlled executor can
 stage or apply the first product-visible patch:
@@ -434,8 +536,10 @@ Minimum local checks for the new execution-assistant layer:
 ```bash
 bash -n tools/run_porting_execution_assistant.sh
 python3 -m py_compile tools/apply_porting_base_patch.py
+python3 -m py_compile tools/compare_four_tree_upgrade.py
 python3 -m py_compile tools/validate_porting_execution_assistant.py
 python3 -m json.tool schemas/porting_execution_assistant.schema.json >/dev/null
+python3 -m json.tool schemas/version_upgrade_porting.schema.json >/dev/null
 python3 tools/validate_porting_execution_assistant.py \
   --workspace "$PWD" \
   --out "$PWD/porting_knowledge_output" \
@@ -466,6 +570,12 @@ Optional post-pipeline execution assistance:
 
 12. `10_porting_execution_assistant` via
     `tools/run_porting_execution_assistant.sh` or `tools/run_stage.sh`.
+13. `11_version_upgrade_porting` via
+    `tools/run_version_upgrade_porting.sh` or `tools/run_stage.sh` with
+    `VERSION_UPGRADE_OLD_PORTED`, `VERSION_UPGRADE_NEW_ORIGINAL`, and
+    `VERSION_UPGRADE_NEW_WORKSPACE`; add `VERSION_UPGRADE_OLD_ORIGINAL` for a
+    complete four-tree run, or `VERSION_UPGRADE_OLD_BASELINE_MANIFEST` for
+    manifest-only baseline reconstruction.
 
 Stage 08 writes:
 

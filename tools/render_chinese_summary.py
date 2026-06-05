@@ -22,9 +22,10 @@ STAGE_NAMES = {
     "06_skill_generator": "技能生成",
     "07_final_auditor": "最终审计",
     "08_meta_input_exporter": "跨场景输入导出",
+    "11_version_upgrade_porting": "版本升级移植四树分析",
 }
 
-STAGE_ORDER = list(STAGE_NAMES)
+STAGE_ORDER = [stage for stage in STAGE_NAMES if stage != "11_version_upgrade_porting"]
 STATUS_ZH = {
     "passed": "通过",
     "blocked": "阻塞",
@@ -75,6 +76,12 @@ def stage_highlights(data: dict[str, Any]) -> list[list[Any]]:
         ("method_fragment_count", "方法片段数"),
         ("blocking_issue_count", "阻塞问题数"),
         ("non_blocking_issue_count", "非阻塞问题数"),
+        ("old_porting_delta_count", "老版本移植变更数"),
+        ("upstream_upgrade_delta_count", "官方升级变更数"),
+        ("new_workspace_delta_count", "新工作区已有变更数"),
+        ("conflict_item_count", "升级迁移项数"),
+        ("external_dependency_followup_count", "外部依赖跟进数"),
+        ("uncertainty_count", "不确定项数"),
     ]
     rows = [[label, data[key]] for key, label in keys if key in data]
     blocking = data.get("blocking_issues") or []
@@ -115,6 +122,12 @@ def stage_cn_sentence(data: dict[str, Any]) -> str:
         )
     if stage == "04_semantic_analyzer" and "case_candidate_count" in data:
         return f"语义分析已{status}：识别 {data.get('case_candidate_count')} 个候选案例。"
+    if stage == "11_version_upgrade_porting":
+        return (
+            f"版本升级移植四树分析已{status}：老移植变更 {data.get('old_porting_delta_count', 0)} 条，"
+            f"官方升级变更 {data.get('upstream_upgrade_delta_count', 0)} 条，"
+            f"迁移/冲突项 {data.get('conflict_item_count', 0)} 条。"
+        )
     return f"{stage_name(stage)}阶段已{status}。"
 
 

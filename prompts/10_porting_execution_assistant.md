@@ -25,6 +25,10 @@ The runner exports:
 - `PORTING_EXECUTION_TARGET_SOURCE_ROOT`: optional read-only reference target
   source tree. Use it only for bounded product/board/SoC evidence extraction.
 - `PORTING_EXECUTION_BUILD_LOG`: optional existing build log for triage.
+- `OH_AUTO_BASE_URL`: optional OpenHarmony local automation service endpoint,
+  normally `http://127.0.0.1:8787/api/v1` through a reverse SSH tunnel or VPN.
+- `OH_AUTO_API_KEY`: optional API key for the local automation service.
+- `OH_AUTO_DEVICE_ID`: optional logical device id, default `default`.
 
 If an environment variable is unset, use the default path above or write
 `unknown`; do not invent missing facts.
@@ -177,6 +181,13 @@ trees.
    classes. Do not present a binary import as a source fix.
 8. Do not promote single-scenario cases into universal methods. Use meta methods
    and conditional methods only within their declared applicability.
+9. If the execution plan includes flashing, rebooting, HDC shell, serial logs,
+   hilog, bugreport, or device smoke validation, route those actions through the
+   Windows local automation service documented in
+   `/home/ve/.codex/skills/openharmony_porting_pipeline/docs/local_device_automation.md`.
+   Do not assume HDC, Titan flasher, serial ports, or the board USB device exist
+   on this Linux server. In plan-only mode, emit the exact `oh_autoctl.py`
+   commands and job/log recovery rules instead of running them.
 
 ## Artifact Contracts
 

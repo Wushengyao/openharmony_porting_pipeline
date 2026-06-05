@@ -1,6 +1,6 @@
 ---
 name: openharmony_porting_pipeline
-description: Run the Wushengyao OpenHarmony porting pipeline to extract evidence-bound board/SoC porting knowledge, generate reusable porting skill artifacts, audit outputs, and export cross-scenario meta inputs.
+description: Run the Wushengyao OpenHarmony porting pipeline to extract evidence-bound board/SoC porting knowledge, generate reusable porting skill artifacts, audit outputs, export cross-scenario meta inputs, and coordinate build-server to Windows local-device automation for OpenHarmony flashing and smoke validation.
 ---
 
 # OpenHarmony Porting Pipeline
@@ -71,6 +71,44 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/apply_porting_
   --attempt-build
 ```
 
+Run the four-tree version-upgrade porting analysis when an old completed port
+must be migrated onto a newer unported OpenHarmony baseline:
+
+```bash
+bash /home/ve/.codex/skills/openharmony_porting_pipeline/tools/run_version_upgrade_porting.sh \
+  --old-original /path/to/old_clean_ohos \
+  --old-ported /path/to/old_ported_ohos \
+  --new-original /path/to/new_clean_ohos \
+  --new-workspace /path/to/new_unported_ohos
+```
+
+The four inputs mean:
+
+- `old-original`: old clean baseline before the target board/SoC/product port.
+- `old-ported`: old version after that port was completed.
+- `new-original`: new clean baseline before the port.
+- `new-workspace`: new version workspace that will receive the migrated port.
+
+`old-original` must be the exact frozen pre-port baseline. Do not substitute the
+latest official/vendor/community branch for the same OpenHarmony version,
+because that branch may have advanced after the old port and would pollute the
+old-porting delta. If the original directory is missing, point the runner at a
+locked manifest from `old-ported`, or let it auto-detect
+`.repo/manifests/tag/*.xml`:
+
+```bash
+bash /home/ve/.codex/skills/openharmony_porting_pipeline/tools/run_version_upgrade_porting.sh \
+  --old-ported /path/to/old_ported_ohos \
+  --old-baseline-manifest /path/to/old_ported_ohos/.repo/manifests/tag/manifest_tag_xxx.xml \
+  --new-original /path/to/new_clean_ohos \
+  --new-workspace /path/to/new_unported_ohos
+```
+
+Manifest-only mode is partial by design: it extracts old-porting deltas from
+`manifest_revision..HEAD` and emits `old_original_baseline.*` with the
+reconstruction command. Reconstruct and supply the exact `old-original` tree for
+complete `old-original -> new-original` upstream-churn analysis.
+
 The real dependency inventory is a YAML mapping with a `real_dependencies`
 list. Each entry should name the workspace `path`, `provider`, version/source
 package, license or authorization reference, sha256 when available, and
@@ -96,6 +134,41 @@ Validate an existing cross-scenario output:
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_output.py --out openharmony_porting_meta_output
 ```
 
+## Local Device Automation
+
+When the task enters a compile -> flash -> device-smoke -> code-fix loop, use
+the Windows local OpenHarmony automation service instead of assuming HDC,
+serial ports, Titan flasher, or board USB devices exist on this Linux server.
+
+Read this runbook before device operations:
+
+```bash
+cat /home/ve/.codex/skills/openharmony_porting_pipeline/docs/local_device_automation.md
+```
+
+Use the helper CLI:
+
+```bash
+export OH_AUTO_BASE_URL=${OH_AUTO_BASE_URL:-http://127.0.0.1:8787/api/v1}
+export OH_AUTO_DEVICE_ID=${OH_AUTO_DEVICE_ID:-default}
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py capabilities
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py preflight --template-id musepaper2-titan
+```
+
+For MusePaper2 Titan flashing, the template id is `musepaper2-titan`. Upload the
+image when it is on this Linux server, then submit the flash job and persist the
+returned `job_id`:
+
+```bash
+ARTIFACT_ID=$(python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py upload /path/to/openharmony-spacemit-k1-musepaper2.zip --id-only)
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py flash musepaper2-titan --image "$ARTIFACT_ID"
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py wait "$JOB_ID" --events --timeout-sec 1800
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py smoke
+```
+
+Never blindly resubmit a flash after a network timeout. Query the known job with
+`oh_autoctl.py job "$JOB_ID"` and resume logs/events first.
+
 ## Operating Rules
 
 - Keep stage isolation: pass files and stage results between stages, not full chat history.
@@ -116,6 +189,20 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/validate_meta_
 - The execution assistant is a post-pipeline layer. It defaults to plan-only,
   must not auto-generate high-risk patches or external dependency artifacts,
   and must not infer boot/runtime/test pass from build pass.
+- Four-tree version-upgrade porting is optional and plan-only by default. It
+  must not change the default single-scenario pipeline behavior. Use it to
+  classify `old-original -> old-ported` as old porting intent,
+  `old-original -> new-original` as upstream version churn, and
+  `new-original -> new-workspace` as current target-workspace drift.
+- In version-upgrade mode, obtain `old-original` from the exact frozen baseline
+  used before the old port. Prefer a locked repo manifest inside `old-ported`
+  over downloading a moving latest release branch. Treat manifest-only baseline
+  extraction as partial until the baseline checkout is reconstructed.
+- During version upgrades, migrate intent rather than replaying old hunks:
+  classify each old-porting item as direct review, upstream merge, retarget
+  required, already in progress, external dependency follow-up, or unknown.
+- Keep four-tree upgrade artifacts under `09_version_upgrade/`; they are
+  evidence and work orders, not proof of completed runtime porting.
 - Use `implementation_readiness` and `porting_completion_summary` to separate
   source/compile files that are ready to implement from vendor/BSP/binary
   dependencies and incomplete validation states.

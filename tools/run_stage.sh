@@ -65,6 +65,7 @@ case "${STAGE}" in
   07_final_auditor) PROMPT="${PROMPTS_DIR}/07_final_auditor.md"; SCHEMA="${SCHEMAS_DIR}/audit_result.schema.json";;
   08_meta_input_exporter) PROMPT="${PROMPTS_DIR}/08_meta_input_exporter.md"; SCHEMA="${SCHEMAS_DIR}/stage_result.schema.json";;
   10_porting_execution_assistant) PROMPT="${PROMPTS_DIR}/10_porting_execution_assistant.md"; SCHEMA="${SCHEMAS_DIR}/porting_execution_assistant.schema.json";;
+  11_version_upgrade_porting) PROMPT="${PROMPTS_DIR}/11_version_upgrade_porting.md"; SCHEMA="${SCHEMAS_DIR}/version_upgrade_porting.schema.json";;
   *) echo "未知阶段：${STAGE}" >&2; exit 2;;
 esac
 
@@ -82,8 +83,20 @@ export PORTING_EXECUTION_SOURCE_OUTPUT="${PORTING_EXECUTION_SOURCE_OUTPUT:-${OUT
 export PORTING_EXECUTION_META_OUTPUT="${PORTING_EXECUTION_META_OUTPUT:-}"
 export PORTING_EXECUTION_TARGET_PROFILE_SEED="${PORTING_EXECUTION_TARGET_PROFILE_SEED:-}"
 export PORTING_EXECUTION_BUILD_LOG="${PORTING_EXECUTION_BUILD_LOG:-}"
+export VERSION_UPGRADE_OLD_ORIGINAL="${VERSION_UPGRADE_OLD_ORIGINAL:-}"
+export VERSION_UPGRADE_OLD_PORTED="${VERSION_UPGRADE_OLD_PORTED:-}"
+export VERSION_UPGRADE_OLD_BASELINE_MANIFEST="${VERSION_UPGRADE_OLD_BASELINE_MANIFEST:-}"
+export VERSION_UPGRADE_NEW_ORIGINAL="${VERSION_UPGRADE_NEW_ORIGINAL:-}"
+export VERSION_UPGRADE_NEW_WORKSPACE="${VERSION_UPGRADE_NEW_WORKSPACE:-${WORKSPACE_ROOT}}"
+export VERSION_UPGRADE_OUT_DIR="${VERSION_UPGRADE_OUT_DIR:-${OUT_DIR}}"
+export VERSION_UPGRADE_ARTIFACT_DIR="${VERSION_UPGRADE_ARTIFACT_DIR:-${OUT_DIR}/09_version_upgrade}"
+export VERSION_UPGRADE_TARGET_PROFILE_SEED="${VERSION_UPGRADE_TARGET_PROFILE_SEED:-}"
+export VERSION_UPGRADE_BUILD_LOG="${VERSION_UPGRADE_BUILD_LOG:-}"
 if [[ "${STAGE}" == "10_porting_execution_assistant" ]]; then
   mkdir -p "${PORTING_EXECUTION_ARTIFACT_DIR}"
+fi
+if [[ "${STAGE}" == "11_version_upgrade_porting" ]]; then
+  mkdir -p "${VERSION_UPGRADE_ARTIFACT_DIR}"
 fi
 
 CODEX_BASE_ARGS=(--cd "${WORKSPACE_ROOT}" --sandbox workspace-write --skip-git-repo-check --ephemeral --json)
@@ -131,7 +144,7 @@ log_msg INFO "codex=$(command -v codex || echo missing)"
 log_msg INFO "codex_model=${CODEX_MODEL:-default}"
 log_msg INFO "extra_args=${CODEX_EXTRA_ARGS:-<none>}"
 log_msg INFO "proxy=${CODEX_PROXY_URL}"
-log_msg INFO "deterministic flags: raw=${DETERMINISTIC_RAW_RECORD_EXTRACTOR:-1} dirty=${DETERMINISTIC_DIRTY_WORKSPACE_ANALYZER:-1} binary=${DETERMINISTIC_BINARY_ASSET_AUDITOR:-1} stats=${DETERMINISTIC_STATISTICS_QC:-1} semantic=${DETERMINISTIC_SEMANTIC_ANALYZER:-0} case=${DETERMINISTIC_CASE_KB:-0} skill=${DETERMINISTIC_SKILL_GENERATOR:-0} audit=${DETERMINISTIC_FINAL_AUDIT:-0} meta=${DETERMINISTIC_META_INPUT_EXPORTER:-1}"
+log_msg INFO "deterministic flags: raw=${DETERMINISTIC_RAW_RECORD_EXTRACTOR:-1} dirty=${DETERMINISTIC_DIRTY_WORKSPACE_ANALYZER:-1} binary=${DETERMINISTIC_BINARY_ASSET_AUDITOR:-1} stats=${DETERMINISTIC_STATISTICS_QC:-1} semantic=${DETERMINISTIC_SEMANTIC_ANALYZER:-0} case=${DETERMINISTIC_CASE_KB:-0} skill=${DETERMINISTIC_SKILL_GENERATOR:-0} audit=${DETERMINISTIC_FINAL_AUDIT:-0} meta=${DETERMINISTIC_META_INPUT_EXPORTER:-1} upgrade=${DETERMINISTIC_VERSION_UPGRADE_PORTING:-1}"
 log_file_state operator_context "${OUT_DIR}/00_config/operator_context.md"
 log_file_state prompt "${PROMPT}"
 log_file_state schema "${SCHEMA}"
@@ -173,6 +186,52 @@ elif [[ "${STAGE}" == "07_final_auditor" && "${DETERMINISTIC_FINAL_AUDIT:-0}" !=
   run_python_stage "final audit" "run_final_audit.py"
 elif [[ "${STAGE}" == "08_meta_input_exporter" && "${DETERMINISTIC_META_INPUT_EXPORTER:-1}" != "0" ]]; then
   run_python_stage "meta input export" "export_meta_inputs.py"
+elif [[ "${STAGE}" == "11_version_upgrade_porting" && "${DETERMINISTIC_VERSION_UPGRADE_PORTING:-1}" != "0" ]]; then
+  log_msg INFO "${STAGE}: using deterministic compare_four_tree_upgrade.py"
+  for required in VERSION_UPGRADE_OLD_PORTED VERSION_UPGRADE_NEW_ORIGINAL VERSION_UPGRADE_NEW_WORKSPACE; do
+    if [[ -z "${!required}" ]]; then
+      log_msg ERROR "${STAGE}: missing required environment variable ${required}"
+      exit 2
+    fi
+  done
+  UPGRADE_ARGS=(
+    --old-ported "${VERSION_UPGRADE_OLD_PORTED}"
+    --new-original "${VERSION_UPGRADE_NEW_ORIGINAL}"
+    --new-workspace "${VERSION_UPGRADE_NEW_WORKSPACE}"
+    --out "${VERSION_UPGRADE_OUT_DIR}"
+    --artifact-root "${VERSION_UPGRADE_ARTIFACT_DIR}"
+    --stage-result "${PENDING_RESULT}"
+  )
+  if [[ -n "${VERSION_UPGRADE_OLD_ORIGINAL}" ]]; then
+    UPGRADE_ARGS+=(--old-original "${VERSION_UPGRADE_OLD_ORIGINAL}")
+  fi
+  if [[ -n "${VERSION_UPGRADE_OLD_BASELINE_MANIFEST}" ]]; then
+    UPGRADE_ARGS+=(--old-baseline-manifest "${VERSION_UPGRADE_OLD_BASELINE_MANIFEST}")
+  fi
+  if [[ "${VERSION_UPGRADE_AUTO_OLD_BASELINE_MANIFEST:-1}" == "0" ]]; then
+    UPGRADE_ARGS+=(--no-auto-old-baseline-manifest)
+  fi
+  if [[ -n "${VERSION_UPGRADE_FOCUS_PATHS:-}" ]]; then
+    IFS=':' read -r -a UPGRADE_FOCUS_ARRAY <<< "${VERSION_UPGRADE_FOCUS_PATHS}"
+    for focus_path in "${UPGRADE_FOCUS_ARRAY[@]}"; do
+      [[ -n "${focus_path}" ]] && UPGRADE_ARGS+=(--focus-path "${focus_path}")
+    done
+  fi
+  if [[ -n "${VERSION_UPGRADE_MAX_RECORDS:-}" ]]; then
+    UPGRADE_ARGS+=(--max-records "${VERSION_UPGRADE_MAX_RECORDS}")
+  fi
+  if python3 "${TOOLS_DIR}/compare_four_tree_upgrade.py" "${UPGRADE_ARGS[@]}" > "${LOG}" 2>&1; then
+    END_EPOCH="$(date +%s)"
+    log_msg INFO "${STAGE}: deterministic four-tree comparison completed in $((END_EPOCH - START_EPOCH))s"
+  else
+    RC=$?
+    END_EPOCH="$(date +%s)"
+    log_msg ERROR "${STAGE}: deterministic four-tree comparison failed with exit_code=${RC} after $((END_EPOCH - START_EPOCH))s"
+    log_file_state "stage log" "${LOG}"
+    tail -n 120 "${LOG}" | tee -a "${PIPELINE_LOG}" || true
+    archive_failed_attempt
+    exit "${RC}"
+  fi
 elif codex exec \
   "${CODEX_BASE_ARGS[@]}" \
   "${EXTRA_ARGS[@]}" \

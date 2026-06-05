@@ -359,6 +359,74 @@ def validate_porting_execution_assistant(workspace: Path, out: Path, stage_resul
         fail(f"porting execution assistant validation failed with exit_code={proc.returncode}")
 
 
+def load_json_artifact(path: Path) -> dict[str, Any]:
+    require_file(path)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        fail(f"artifact is not JSON-compatible YAML: {path}: {exc}")
+    if not isinstance(data, dict):
+        fail(f"artifact root is not an object: {path}")
+    if data.get("schema_version") != 1:
+        fail(f"artifact missing schema_version: 1: {path}")
+    if not data.get("artifact_type"):
+        fail(f"artifact missing artifact_type: {path}")
+    return data
+
+
+def validate_version_upgrade_porting(out: Path, stage_result: Path) -> None:
+    result = load_stage_result(stage_result)
+    if result.get("stage") != "11_version_upgrade_porting":
+        fail(f"unexpected stage result stage: {result.get('stage')}")
+    artifact_root = Path(result.get("artifact_root") or out / "09_version_upgrade")
+    if not artifact_root.is_absolute():
+        artifact_root = out / artifact_root
+    require_dir(artifact_root)
+    required_yaml = [
+        "four_tree_profile.yaml",
+        "old_original_baseline.yaml",
+        "four_tree_conflict_matrix.yaml",
+        "migration_requirement_index.yaml",
+        "upgrade_porting_work_order.yaml",
+        "upgrade_patch_plan.yaml",
+        "external_dependency_followup.yaml",
+        "build_acceptance.yaml",
+        "uncertainty_ledger.yaml",
+        "upgrade_porting_summary.yaml",
+    ]
+    for name in required_yaml:
+        load_json_artifact(artifact_root / name)
+    for name in [
+        "old_porting_delta.csv",
+        "old_original_baseline.md",
+        "old_porting_delta.md",
+        "upstream_upgrade_delta.csv",
+        "upstream_upgrade_delta.md",
+        "new_workspace_delta.csv",
+        "new_workspace_delta.md",
+        "four_tree_conflict_matrix.md",
+        "migration_requirement_index.md",
+        "upgrade_porting_work_order.md",
+        "upgrade_patch_plan.md",
+        "external_dependency_followup.md",
+        "build_acceptance.md",
+        "uncertainty_ledger.md",
+        "upgrade_porting_summary.md",
+    ]:
+        require_file(artifact_root / name)
+    matrix = load_json_artifact(artifact_root / "four_tree_conflict_matrix.yaml")
+    matrix_count = int(matrix.get("item_count") or 0)
+    if matrix_count != int(result.get("conflict_item_count") or 0):
+        fail(f"conflict item count mismatch: artifact={matrix_count} result={result.get('conflict_item_count')}")
+    external = load_json_artifact(artifact_root / "external_dependency_followup.yaml")
+    external_count = int(external.get("item_count") or 0)
+    if external_count != int(result.get("external_dependency_followup_count") or 0):
+        fail(
+            "external dependency count mismatch: "
+            f"artifact={external_count} result={result.get('external_dependency_followup_count')}"
+        )
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--workspace", required=True)
@@ -472,6 +540,9 @@ def main() -> None:
 
     elif stage == "10_porting_execution_assistant":
         validate_porting_execution_assistant(workspace, out, Path(args.stage_result))
+
+    elif stage == "11_version_upgrade_porting":
+        validate_version_upgrade_porting(out, Path(args.stage_result))
 
     else:
         fail(f"Unknown stage: {stage}")
