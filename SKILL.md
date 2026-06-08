@@ -166,6 +166,20 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py smoke
 ```
 
+Serial console access is available through the same automation service. For the
+current MusePaper2 test setup, `/capabilities` reports `COM4` at `115200`, but
+always use the service defaults or pass `--port`/`--baudrate` explicitly instead
+of assuming a Linux-local serial device exists:
+
+```bash
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py serial "echo oh_auto_serial_probe" --wait
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py serial "uname -a" --wait
+```
+
+Serial responses include command echo and shell prompts such as `#`; parse the
+business output defensively. Use serial for pre-HDC boot diagnostics, especially
+when a MusePaper2 image stops at the Spacemit logo.
+
 For the ongoing MusePaper2 OH6.1 port, after each successful build/package,
 stage the zip on the Windows host as
 `F:\images\PortingTest\6.1\openharmony-spacemit-k1-musepaper2.zip` before

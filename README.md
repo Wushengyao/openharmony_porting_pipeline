@@ -118,6 +118,7 @@ API key authentication. Start with:
 python3 tools/oh_autoctl.py capabilities
 python3 tools/oh_autoctl.py preflight --template-id musepaper2-titan
 python3 tools/oh_autoctl.py shell echo oh_auto_agent_probe --wait
+python3 tools/oh_autoctl.py serial "echo oh_auto_serial_probe" --wait
 ```
 
 For MusePaper2 Titan flashing, upload the image and run the configured template:

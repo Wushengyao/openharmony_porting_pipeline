@@ -107,6 +107,17 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py smoke
 ```
 
+## Serial Console
+
+MusePaper2 的本机串口控制台当前配置为 `COM4`、`115200`。Agent 可以通过自动化服务发送串口命令，不要直接在 Linux 服务器上假设存在该串口。
+
+```bash
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py serial "echo oh_auto_serial_probe" --wait
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py serial "uname -a" --wait
+```
+
+串口响应包含命令回显和 `#` 提示符；判断业务输出时要避开这些回显/提示符噪声。
+
 ## Failure Handling
 
 - `agent_unreachable`: automation service cannot be reached. Check tunnel, VPN, or Windows service.

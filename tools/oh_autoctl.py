@@ -214,6 +214,30 @@ def command_shell(client: OhAutoClient, args: argparse.Namespace) -> Any:
     return wait_if_requested(client, job, args)
 
 
+def command_serial(client: OhAutoClient, args: argparse.Namespace) -> Any:
+    command = args.command if len(args.command) != 1 else args.command[0]
+    if isinstance(command, list):
+        command = " ".join(command)
+    payload: dict[str, Any] = {
+        "command": command,
+        "newline": args.newline,
+        "read_timeout_sec": args.read_timeout_sec,
+        "idle_timeout_sec": args.idle_timeout_sec,
+        "write_timeout_sec": args.write_timeout_sec,
+        "encoding": args.encoding,
+    }
+    if args.port:
+        payload["port"] = args.port
+    if args.baudrate:
+        payload["baudrate"] = args.baudrate
+    job = client.request_json(
+        "POST",
+        f"/devices/{args.device_id}/ops/serial",
+        payload,
+    )
+    return wait_if_requested(client, job, args)
+
+
 def command_flash(client: OhAutoClient, args: argparse.Namespace) -> Any:
     artifacts = parse_key_value_list(args.artifact)
     if args.image:
@@ -407,6 +431,16 @@ def build_parser() -> argparse.ArgumentParser:
     shell = add_job_command(subparsers, "shell", command_shell)
     shell.add_argument("command", nargs="+")
     shell.add_argument("--command-timeout-sec", type=float, default=300)
+
+    serial = add_job_command(subparsers, "serial", command_serial)
+    serial.add_argument("command", nargs="+")
+    serial.add_argument("--port")
+    serial.add_argument("--baudrate", type=int)
+    serial.add_argument("--newline", choices=["crlf", "lf", "cr", "none"], default="crlf")
+    serial.add_argument("--read-timeout-sec", type=float, default=5)
+    serial.add_argument("--idle-timeout-sec", type=float, default=0.5)
+    serial.add_argument("--write-timeout-sec", type=float, default=2)
+    serial.add_argument("--encoding", default="utf-8")
 
     flash = add_job_command(subparsers, "flash", command_flash)
     flash.add_argument("template_id")
