@@ -184,6 +184,9 @@ For MusePaper2 OH6.1 boot-failure iterations, the first automation milestone is
 an image that avoids early kernel panic and can execute `reboot fastboot` through
 HDC or serial. Preserve serial logs and notify the operator for manual reset
 whenever a panic-stopped board cannot enter fastboot by command.
+Use `oh_autoctl.py serial-log` to start long-running serial capture before
+flashing or boot validation, then save the job id and retrieve stdout/events
+with `oh_autoctl.py logs`.
 
 MusePaper2 can enter the Titan flashing mode from either HDC or the serial
 console by issuing `reboot fastboot`. Prefer HDC when OpenHarmony is alive; use

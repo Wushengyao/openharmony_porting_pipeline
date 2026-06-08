@@ -238,6 +238,33 @@ def command_serial(client: OhAutoClient, args: argparse.Namespace) -> Any:
     return wait_if_requested(client, job, args)
 
 
+def command_serial_log(client: OhAutoClient, args: argparse.Namespace) -> Any:
+    payload: dict[str, Any] = {"timeout_sec": args.capture_timeout_sec}
+    if args.port:
+        payload["port"] = args.port
+    if args.baudrate:
+        payload["baudrate"] = args.baudrate
+    job = client.request_json(
+        "POST",
+        f"/devices/{args.device_id}/logs/serial/start",
+        payload,
+    )
+    return wait_if_requested(client, job, args)
+
+
+def command_hilog(client: OhAutoClient, args: argparse.Namespace) -> Any:
+    payload: dict[str, Any] = {
+        "args": args.arg,
+        "timeout_sec": args.capture_timeout_sec,
+    }
+    job = client.request_json(
+        "POST",
+        f"/devices/{args.device_id}/logs/hilog/start",
+        payload,
+    )
+    return wait_if_requested(client, job, args)
+
+
 def command_flash(client: OhAutoClient, args: argparse.Namespace) -> Any:
     artifacts = parse_key_value_list(args.artifact)
     if args.image:
@@ -441,6 +468,30 @@ def build_parser() -> argparse.ArgumentParser:
     serial.add_argument("--idle-timeout-sec", type=float, default=0.5)
     serial.add_argument("--write-timeout-sec", type=float, default=2)
     serial.add_argument("--encoding", default="utf-8")
+
+    serial_log = add_job_command(subparsers, "serial-log", command_serial_log)
+    serial_log.add_argument("--port")
+    serial_log.add_argument("--baudrate", type=int)
+    serial_log.add_argument(
+        "--capture-timeout-sec",
+        type=float,
+        default=None,
+        help="Service-side serial capture timeout; omit for service default.",
+    )
+
+    hilog = add_job_command(subparsers, "hilog", command_hilog)
+    hilog.add_argument(
+        "--arg",
+        action="append",
+        default=[],
+        help="Argument passed to hilog; repeat for multiple args.",
+    )
+    hilog.add_argument(
+        "--capture-timeout-sec",
+        type=float,
+        default=None,
+        help="Service-side hilog capture timeout; omit for service default.",
+    )
 
     flash = add_job_command(subparsers, "flash", command_flash)
     flash.add_argument("template_id")

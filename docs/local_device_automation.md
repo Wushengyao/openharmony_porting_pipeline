@@ -152,6 +152,24 @@ offer a continuous bootlog API, treat that as an automation gap and request a
 service-side serial-capture endpoint instead of relying on short command
 transactions.
 
+Start continuous serial capture with:
+
+```bash
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py serial-log --capture-timeout-sec 180 --events
+```
+
+Persist the returned `job_id`, then save logs:
+
+```bash
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py logs "$SERIAL_JOB_ID" --stream stdout
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py logs "$SERIAL_JOB_ID" --stream events
+```
+
+Use `oh_autoctl.py cancel "$SERIAL_JOB_ID"` only after stdout/events have been
+saved, or when the capture job is clearly blocking the next serial operation.
+For post-HDC log capture, `oh_autoctl.py hilog --arg -r --arg 10M` starts a
+hilog job through the service-side API.
+
 For a MusePaper2 image that already panic-stopped, HDC and serial command jobs
 may both report no usable shell even when the automation job itself is marked
 successful. Inspect stdout for strings such as `need connect-key`, missing
