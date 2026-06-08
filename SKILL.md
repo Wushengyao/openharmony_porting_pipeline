@@ -221,6 +221,22 @@ honors `startup.init.panic.reboot_target`, and
 `fastboot`. Keep the crash threshold logic intact while porting; only redirect
 the final panic action so failed boots can return to Titan flashing mode.
 
+For unstable MusePaper2 OH6.1 images, add a product-level boot escape watchdog
+before asking an operator to flash when the board may be left unattended. The
+watchdog should be installed from `device/board/spacemit/musepaper2/cfg` into
+`/vendor/bin`, start from `init.musepaper2.cfg`, and default to armed unless
+`startup.porting.boot_escape.enable=false` is explicit. While the observed boot
+failure is the 84 second `sysrq triggered crash`, keep
+`startup.porting.boot_escape.timeout_sec=60`,
+`startup.porting.boot_escape.accept_boot_completed=false`, and
+`startup.porting.boot_escape.ack=false`. A healthy UI or boot-completed property
+is not enough to disarm it; only set
+`startup.porting.boot_escape.ack=true` after HDC or serial command access has
+been verified. On timeout or forced escape, set
+`ohos.startup.powerctrl=reboot,fastboot` and keep a direct
+`/system/bin/reboot fastboot` fallback so the board returns to Titan flashing
+mode before the known panic window.
+
 Never blindly resubmit a flash after a network timeout. Query the known job with
 `oh_autoctl.py job "$JOB_ID"` and resume logs/events first.
 
