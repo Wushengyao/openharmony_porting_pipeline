@@ -118,6 +118,15 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
 
 串口响应包含命令回显和 `#` 提示符；判断业务输出时要避开这些回显/提示符噪声。
 
+MusePaper2 可以通过 HDC 或串口控制台执行 `reboot fastboot` 进入 Titan
+烧录模式。OpenHarmony 已启动且 HDC 可用时优先用 HDC；HDC 不可用但串口
+控制台仍响应时使用串口：
+
+```bash
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py shell "reboot fastboot" --wait
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py serial "reboot fastboot" --wait
+```
+
 ## Failure Handling
 
 - `agent_unreachable`: automation service cannot be reached. Check tunnel, VPN, or Windows service.

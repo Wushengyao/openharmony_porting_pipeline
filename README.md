@@ -137,6 +137,14 @@ Windows-path flashing requires `/capabilities` to list `F:\images\PortingTest`
 inside `allowed_local_roots`; otherwise upload the Linux-side zip with
 `oh_autoctl.py upload` and flash the returned artifact id.
 
+MusePaper2 can enter Titan flashing mode with `reboot fastboot` from HDC or the
+serial console:
+
+```bash
+python3 tools/oh_autoctl.py shell "reboot fastboot" --wait
+python3 tools/oh_autoctl.py serial "reboot fastboot" --wait
+```
+
 Run the plan-only OpenHarmony porting execution assistant after a single
 scenario output and, optionally, cross-scenario meta output are available:
 

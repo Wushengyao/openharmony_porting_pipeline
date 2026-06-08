@@ -180,6 +180,15 @@ Serial responses include command echo and shell prompts such as `#`; parse the
 business output defensively. Use serial for pre-HDC boot diagnostics, especially
 when a MusePaper2 image stops at the Spacemit logo.
 
+MusePaper2 can enter the Titan flashing mode from either HDC or the serial
+console by issuing `reboot fastboot`. Prefer HDC when OpenHarmony is alive; use
+serial when HDC is unavailable but the boot console is responsive:
+
+```bash
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py shell "reboot fastboot" --wait
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py serial "reboot fastboot" --wait
+```
+
 For the ongoing MusePaper2 OH6.1 port, after each successful build/package,
 stage the zip on the Windows host as
 `F:\images\PortingTest\6.1\openharmony-spacemit-k1-musepaper2.zip` before
