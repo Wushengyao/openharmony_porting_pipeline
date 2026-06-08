@@ -207,6 +207,20 @@ control image is
 `allowed_local_roots`, use `oh_autoctl.py upload` and flash the artifact id
 instead of the direct `F:\...` path.
 
+During MusePaper2 OH6.1 boot-failure iterations, do not trust `hdc shell
+reboot fastboot` process success by itself. HDC can return code 0 while all USB
+and UART targets are still Offline. Treat `preflight --template-id
+musepaper2-titan` with a connected target, or an actual flash job that reaches
+the `wait_titan_fastboot`/`titan_flash` steps, as the authoritative burn-mode
+signal.
+
+The current MusePaper2 panic-automation workaround is source-level plus
+product-param gated: `base/startup/init/services/modules/reboot/reboot.c`
+honors `startup.init.panic.reboot_target`, and
+`vendor/spacemit/musepaper2/etc/param/product_musepaper2.para` sets it to
+`fastboot`. Keep the crash threshold logic intact while porting; only redirect
+the final panic action so failed boots can return to Titan flashing mode.
+
 Never blindly resubmit a flash after a network timeout. Query the known job with
 `oh_autoctl.py job "$JOB_ID"` and resume logs/events first.
 
