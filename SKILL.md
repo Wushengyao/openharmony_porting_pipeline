@@ -180,6 +180,11 @@ Serial responses include command echo and shell prompts such as `#`; parse the
 business output defensively. Use serial for pre-HDC boot diagnostics, especially
 when a MusePaper2 image stops at the Spacemit logo.
 
+For MusePaper2 OH6.1 boot-failure iterations, the first automation milestone is
+an image that avoids early kernel panic and can execute `reboot fastboot` through
+HDC or serial. Preserve serial logs and notify the operator for manual reset
+whenever a panic-stopped board cannot enter fastboot by command.
+
 MusePaper2 can enter the Titan flashing mode from either HDC or the serial
 console by issuing `reboot fastboot`. Prefer HDC when OpenHarmony is alive; use
 serial when HDC is unavailable but the boot console is responsive:

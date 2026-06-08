@@ -37,6 +37,23 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
 
 ## Standard Workflow
 
+### MusePaper2 recovery-first gate
+
+For the ongoing MusePaper2 OH6.1 port, the first boot milestone is not a full
+UI session. The first milestone is:
+
+- the kernel and init do not reach a panic path during early boot;
+- HDC or the serial console becomes responsive long enough to run
+  `reboot fastboot`;
+- the next flash cycle can be entered without a manual board reset.
+
+If a build reaches this milestone but later user-space services fail, preserve
+the milestone and continue diagnosis from a self-recoverable image. Do not
+weaken critical service policy or remove product functions just to hide a
+panic. Prefer targeted product parameters or narrow runtime workarounds that
+keep automatic recovery possible while the underlying service crash is being
+investigated.
+
 1. Discover service:
 
 ```bash
@@ -127,6 +144,19 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py serial "reboot fastboot" --wait
 ```
 
+During boot-failure iterations, start serial capture before or immediately after
+flashing and persist the job id plus stdout/events into the iteration log. Use
+long enough read/idle windows to keep the last seconds before a panic; avoid
+canceling a serial job until its logs have been saved. If the service does not
+offer a continuous bootlog API, treat that as an automation gap and request a
+service-side serial-capture endpoint instead of relying on short command
+transactions.
+
+For a MusePaper2 image that already panic-stopped, HDC and serial command jobs
+may both report no usable shell even when the automation job itself is marked
+successful. Inspect stdout for strings such as `need connect-key`, missing
+prompts, or empty command output before assuming the device can recover itself.
+
 ## Failure Handling
 
 - `agent_unreachable`: automation service cannot be reached. Check tunnel, VPN, or Windows service.
@@ -136,6 +166,20 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
 - `artifact_error`: upload failed, checksum/path problem, or Windows path not whitelisted.
 - `flash_failed`: collect stdout/stderr/events from the job, then decide retry or human intervention.
 - `smoke_failed`: flash completed but OpenHarmony validation failed. Use logs/system info to decide next code modification.
+
+## Human Reset Notification
+
+Until the test rig has power/reset control, a MusePaper2 kernel panic can block
+the automatic loop because the board cannot execute `reboot fastboot`. When this
+happens, immediately persist the reason, image hash, relevant serial excerpt,
+and last flash/log job ids, then notify the operator that a manual reset is
+needed.
+
+The Linux build host may not have a local MTA. If `mail`, `sendmail`, `msmtp`,
+or another configured notifier is unavailable, do not invent an email path.
+Use the conversation plus iteration log as the fallback. If a webhook/SMTP
+endpoint is supplied later, send the same reset-needed summary through that
+configured endpoint, for example via `curl`.
 
 ## Useful Commands
 
