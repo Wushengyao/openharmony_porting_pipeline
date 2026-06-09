@@ -147,6 +147,30 @@ Do not accept template `wait_hdc` or template smoke as proof of boot when its
 event payload contains `[Empty]`; rerun `wait-connected` and strict smoke from
 this CLI.
 
+### Post-Boot HDC Log Snapshots
+
+For finite post-boot hilog checks on the current MusePaper2 rig, prefer a
+single HDC shell command such as:
+
+```bash
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py shell "hilog -z 80" --wait
+```
+
+Important command-shape notes from OH6.1 MusePaper2 validation:
+
+- `hilog -T` filters by tag; it is not a time-window option.
+- `hilog -x` cannot be combined with `-z`; `hilog -z N` is the reliable finite
+  tail form observed on the device.
+- Long `hilog -e` regular expressions fail above 127 characters, and some
+  filtered hilog invocations can leave an automation job running even after
+  partial stdout appears.
+- HDC shell commands containing pipes or compound shell syntax may return
+  `Mutlti commands can't be used in combination [CODE: -31]`. Prefer a single
+  device command, or collect a finite `hilog -z N` snapshot and filter it on the
+  build host.
+- After any long or experimental log capture, run `oh_autoctl.py status` and
+  cancel stale running jobs before flashing or submitting another device job.
+
 ## Serial Console
 
 MusePaper2 的本机串口控制台当前配置为 `COM4`、`115200`。Agent 可以通过自动化服务发送串口命令，不要直接在 Linux 服务器上假设存在该串口。
@@ -190,8 +214,10 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
 
 Use `oh_autoctl.py cancel "$SERIAL_JOB_ID"` only after stdout/events have been
 saved, or when the capture job is clearly blocking the next serial operation.
-For post-HDC log capture, `oh_autoctl.py hilog --arg -r --arg 10M` starts a
-hilog job through the service-side API.
+For post-HDC log capture, use finite HDC shell snapshots first. The
+service-side `oh_autoctl.py hilog` subcommand is useful when the service can
+bound the capture, but long-running invocations may time out as failed jobs on
+service version `0.1.0`; always inspect `oh_autoctl.py status` afterward.
 
 For a MusePaper2 image that already panic-stopped, HDC and serial command jobs
 may both report no usable shell even when the automation job itself is marked

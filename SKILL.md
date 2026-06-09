@@ -227,6 +227,10 @@ For post-flash validation, do not trust template `wait_hdc` or template smoke
 steps when the event payload contains `[Empty]`; run `oh_autoctl.py
 wait-connected` and then `smoke --wait-connected` so only a real
 Connected/Online/Ready USB target is accepted.
+For finite post-boot log snapshots on MusePaper2, prefer
+`oh_autoctl.py shell "hilog -z N" --wait`; see
+`docs/local_device_automation.md` before trying compound shell pipelines or
+service-side long-running hilog captures.
 
 The current MusePaper2 panic-automation workaround is source-level plus
 product-param gated: `base/startup/init/services/modules/reboot/reboot.c`
