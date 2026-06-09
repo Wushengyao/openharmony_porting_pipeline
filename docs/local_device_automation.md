@@ -22,6 +22,27 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py preflight
 ```
 
+### Service reachability troubleshooting
+
+If `oh_autoctl.py status`, `health`, or `capabilities` returns
+`ConnectionRefusedError: [Errno 111] Connection refused`, treat it as an
+automation service or port-forwarding problem. Do not infer that the MusePaper2
+board is disconnected or that the image failed to boot.
+
+Record the failure in the active iteration directory and check:
+
+```bash
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py status 2>&1
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py capabilities 2>&1
+ss -ltnp | rg ':8787|oh_auto|python' || true
+```
+
+If no local listener exists on `127.0.0.1:8787`, the Windows oh-auto service or
+the SSH/VPN path to it must be restored before flashing, HDC, or serial
+validation can proceed. It is acceptable to add a bounded wait helper that polls
+for service recovery and then runs the normal flash/smoke workflow, but do not
+leave an unbounded background flash job running.
+
 ## Mandatory Rules
 
 - Do not assume HDC, serial ports, Titan flasher, or Windows paths exist on the Linux server.
