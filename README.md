@@ -121,14 +121,33 @@ python3 tools/oh_autoctl.py shell echo oh_auto_agent_probe --wait
 python3 tools/oh_autoctl.py serial "echo oh_auto_serial_probe" --wait
 ```
 
+For MusePaper2 Titan flashing, `preflight ok=true` means the flash job can be
+submitted. It does not directly prove Titan burn mode; confirm that from flash
+events such as `titan_fastboot_found`.
+
 For MusePaper2 Titan flashing, upload the image and run the configured template:
 
 ```bash
 ARTIFACT_ID=$(python3 tools/oh_autoctl.py upload /path/to/openharmony-spacemit-k1-musepaper2.zip --id-only)
 python3 tools/oh_autoctl.py flash musepaper2-titan --image "$ARTIFACT_ID"
 python3 tools/oh_autoctl.py wait "$JOB_ID" --events --timeout-sec 1800
-python3 tools/oh_autoctl.py smoke
+python3 tools/oh_autoctl.py wait-connected --connect-channel usb --connect-target 0123456789ABCDEF --timeout-sec 240
+python3 tools/oh_autoctl.py smoke --wait-connected --connect-channel usb --connect-target 0123456789ABCDEF
 ```
+
+When HDC reports multiple targets, select the USB connect key before shell or
+smoke checks:
+
+```bash
+python3 tools/oh_autoctl.py connect --connect-channel usb --connect-target 0123456789ABCDEF
+python3 tools/oh_autoctl.py smoke --wait-connected --connect-channel usb --connect-target 0123456789ABCDEF --set-boot-escape-ack
+```
+
+Inspect command stdout for `[Fail]`, `ExecuteCommand need connect-key`,
+`Offline`, or `No any connected target`; a job-level `succeeded` status alone
+is not enough.
+Treat template `wait_hdc` events with `[Empty]` as not connected; rerun
+`wait-connected` and strict smoke after flashing.
 
 For the MusePaper2 OH6.1 porting loop, stage freshly built Windows-side test
 packages under `F:\images\PortingTest\6.1\`. The known-good OH6.0 control image

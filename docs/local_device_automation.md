@@ -29,6 +29,9 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
 - Use only the OpenHarmony automation HTTP API or `tools/oh_autoctl.py`.
 - Always run discovery before device operations: `oh_autoctl.py capabilities`.
 - Always run preflight before flashing: `oh_autoctl.py preflight --template-id musepaper2-titan`.
+- Interpret preflight as flash-job submission readiness, not proof of Titan burn
+  mode. In service version `0.1.0`, Titan burn mode is only confirmed by flash
+  events such as `titan_fastboot_found`.
 - Treat all device operations as jobs. Persist every returned `job_id` in the build log before waiting.
 - If a POST request times out after a `job_id` was returned, never resubmit the same flash blindly. Query the existing `job_id`.
 - If the network drops, first query `oh_autoctl.py job JOB_ID`, then resume logs/events.
@@ -73,7 +76,10 @@ Confirm:
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py preflight --template-id musepaper2-titan
 ```
 
-Continue only if `ok=true`.
+Continue with flash submission only if `ok=true`. If `device_connected=false`
+but `template_can_wait_titan_fastboot=true`, the board may already be in Titan
+burn mode; HDC Offline alone does not disprove burn mode. The first definitive
+burn-mode proof is the flash event `titan_fastboot_found`.
 
 3. Upload image artifact if the image is on the Linux server:
 
@@ -121,8 +127,25 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
 7. Run post-flash smoke checks:
 
 ```bash
-python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py smoke
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py wait-connected --connect-channel usb --connect-target 0123456789ABCDEF --timeout-sec 240
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py smoke --wait-connected --connect-channel usb --connect-target 0123456789ABCDEF
 ```
+
+When HDC lists both USB and UART targets, select the concrete USB connect key
+before shell/smoke operations, or pass the connect options inline:
+
+```bash
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py connect --connect-channel usb --connect-target 0123456789ABCDEF
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py shell --connect-channel usb --connect-target 0123456789ABCDEF "echo oh_auto_agent_probe" --wait
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py smoke --wait-connected --connect-channel usb --connect-target 0123456789ABCDEF --set-boot-escape-ack
+```
+
+Do not accept a shell job as successful until stdout has been inspected for the
+expected payload and does not contain `[Fail]`, `ExecuteCommand need
+connect-key`, `Offline`, or `No any connected target`.
+Do not accept template `wait_hdc` or template smoke as proof of boot when its
+event payload contains `[Empty]`; rerun `wait-connected` and strict smoke from
+this CLI.
 
 ## Serial Console
 

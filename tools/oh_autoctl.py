@@ -15,6 +15,8 @@ from urllib.parse import urlparse
 
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8787/api/v1"
+CONNECTED_HDC_STATES = {"connected", "online", "ready"}
+EMPTY_HDC_TARGET_MARKERS = {"", "[empty]", "empty", "none", "null"}
 
 
 class ApiError(RuntimeError):
@@ -161,6 +163,23 @@ def command_status(client: OhAutoClient, args: argparse.Namespace) -> Any:
     return client.request_json("GET", f"/devices/{args.device_id}/status")
 
 
+def command_connect(client: OhAutoClient, args: argparse.Namespace) -> Any:
+    return connect_if_requested(client, args, force=True)
+
+
+def command_wait_connected(client: OhAutoClient, args: argparse.Namespace) -> Any:
+    return wait_for_connected_hdc(
+        client,
+        args.device_id,
+        timeout_sec=args.timeout_sec,
+        interval_sec=args.interval_sec,
+        channel=args.connect_channel,
+        target=args.connect_target,
+        baudrate=args.connect_baudrate,
+        retry_connect=args.connect_retry,
+    )
+
+
 def command_preflight(client: OhAutoClient, args: argparse.Namespace) -> Any:
     health = client.request_json("GET", "/health")
     capabilities = client.request_json("GET", "/capabilities")
@@ -170,27 +189,59 @@ def command_preflight(client: OhAutoClient, args: argparse.Namespace) -> Any:
         for item in capabilities.get("flash_templates", [])
         if isinstance(item, dict)
     }
-    connected_targets = [
-        item
-        for item in status.get("hdc", {}).get("targets", [])
-        if item.get("status") in {None, "Connected"} or item.get("status", "").lower() == "connected"
-    ]
+    connected_targets = connected_hdc_targets(status)
+    template = templates.get(args.template_id, {})
+    step_types = set(template.get("step_types") or [])
+    titan_flash_template = {"wait_titan_fastboot", "titan_flash"}.issubset(step_types)
+    running_jobs = status.get("running_jobs", [])
     checks = {
         "health_ok": health.get("status") == "ok",
         "device_exists": any(
             item.get("device_id") == args.device_id for item in capabilities.get("devices", [])
         ),
-        "template_available": templates.get(args.template_id, {}).get("valid") is True,
+        "template_available": template.get("valid") is True,
         "device_connected": bool(connected_targets),
         "device_unlocked": not status.get("device_locked", False),
+        "no_running_jobs": not running_jobs,
+        "template_can_wait_titan_fastboot": titan_flash_template,
     }
+    host_ready = all(
+        checks[key]
+        for key in [
+            "health_ok",
+            "device_exists",
+            "template_available",
+            "device_unlocked",
+            "no_running_jobs",
+        ]
+    )
+    hdc_preflight_ok = host_ready and checks["device_connected"]
+    flash_job_submittable = host_ready and (checks["device_connected"] or titan_flash_template)
+    notes = []
+    if titan_flash_template:
+        notes.append(
+            "Titan burn mode is not directly probed by preflight; it is checked inside the flash job."
+        )
+    if not checks["device_connected"] and titan_flash_template:
+        notes.append(
+            "HDC Offline can be normal in Titan burn mode and does not by itself prove the board is absent."
+        )
     return {
-        "ok": all(checks.values()),
+        "ok": flash_job_submittable,
+        "preflight_mode": "flash_job_submission",
         "checks": checks,
+        "hdc_preflight_ok": hdc_preflight_ok,
+        "flash_job_submittable": flash_job_submittable,
+        "titan_burn_mode_confirmed": None,
+        "burn_mode_probe": {
+            "available": False,
+            "reason": "oh-auto exposes wait_titan_fastboot only as part of a flash job",
+        },
         "health": health,
         "template_id": args.template_id,
         "connected_targets": connected_targets,
-        "running_jobs": status.get("running_jobs", []),
+        "running_jobs": running_jobs,
+        "notes": notes,
     }
 
 
@@ -203,6 +254,7 @@ def command_upload(client: OhAutoClient, args: argparse.Namespace) -> Any:
 
 
 def command_shell(client: OhAutoClient, args: argparse.Namespace) -> Any:
+    connect_if_requested(client, args)
     command = args.command if len(args.command) != 1 else args.command[0]
     if isinstance(command, list):
         command = " ".join(command)
@@ -211,7 +263,9 @@ def command_shell(client: OhAutoClient, args: argparse.Namespace) -> Any:
         f"/devices/{args.device_id}/ops/shell",
         {"command": command, "timeout_sec": args.command_timeout_sec},
     )
-    return wait_if_requested(client, job, args)
+    if not args.wait:
+        return job
+    return wait_shell_and_collect(client, job, args)
 
 
 def command_serial(client: OhAutoClient, args: argparse.Namespace) -> Any:
@@ -312,12 +366,42 @@ def command_cancel(client: OhAutoClient, args: argparse.Namespace) -> Any:
 
 
 def command_smoke(client: OhAutoClient, args: argparse.Namespace) -> Any:
+    wait_connected_result = None
+    if args.wait_connected:
+        wait_connected_result = wait_for_connected_hdc(
+            client,
+            args.device_id,
+            timeout_sec=args.wait_connected_timeout_sec,
+            interval_sec=args.wait_connected_interval_sec,
+            channel=args.connect_channel,
+            target=args.connect_target,
+            baudrate=args.connect_baudrate,
+            retry_connect=args.connect_retry,
+        )
+        if not wait_connected_result["ok"]:
+            return {
+                "ok": False,
+                "wait_connected": wait_connected_result,
+                "connect": None,
+                "results": [],
+            }
+    connect_result = connect_if_requested(client, args)
     commands = [
         ("echo oh_auto_agent_smoke_ok", "oh_auto_agent_smoke_ok"),
+    ]
+    if args.set_boot_escape_ack:
+        commands.extend([
+            (
+                f"param set {args.boot_escape_ack_param} true",
+                "",
+            ),
+            (f"param get {args.boot_escape_ack_param}", "true"),
+        ])
+    commands.extend([
         ("param get const.product.name", None),
         ("param get const.ohos.fullname", None),
         ("uname -a", "Linux"),
-    ]
+    ])
     results = []
     for command, expected in commands:
         job = client.request_json(
@@ -325,47 +409,212 @@ def command_smoke(client: OhAutoClient, args: argparse.Namespace) -> Any:
             f"/devices/{args.device_id}/ops/shell",
             {"command": command, "timeout_sec": args.command_timeout_sec},
         )
-        finished = client.request_json(
-            "POST",
-            f"/jobs/{job['job_id']}/wait?timeout_sec={args.timeout_sec}",
-            {},
-            timeout_sec=args.timeout_sec + 5,
-        )
-        stdout = client.request_json("GET", f"/jobs/{job['job_id']}/logs?stream=stdout&offset=0")
-        stdout_text = stdout.get("content", "")
-        stdout_valid = smoke_stdout_valid(stdout_text, expected)
+        shell_result = wait_shell_and_collect(client, job, args, expected=expected)
         results.append({
             "command": command,
-            "job": finished,
-            "stdout": stdout_text,
-            "stdout_valid": stdout_valid,
+            **shell_result,
         })
-        if finished.get("status") != "succeeded" or not stdout_valid:
+        if shell_result["job"].get("status") != "succeeded" or not shell_result["stdout_valid"]:
             break
     return {
         "ok": all(
             item["job"].get("status") == "succeeded" and item.get("stdout_valid") is True
             for item in results
         ),
+        "wait_connected": wait_connected_result,
+        "connect": connect_result,
         "results": results,
     }
 
 
-def smoke_stdout_valid(stdout_text: str, expected: str | None) -> bool:
-    stripped = stdout_text.strip()
-    if not stripped:
+def normalized_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def hdc_targets(status: dict[str, Any]) -> list[dict[str, Any]]:
+    targets = status.get("hdc", {}).get("targets", [])
+    return [item for item in targets if isinstance(item, dict)]
+
+
+def hdc_target_key(item: dict[str, Any]) -> str:
+    for key in ["connect_key", "target", "serial", "device_id", "id"]:
+        value = normalized_text(item.get(key))
+        if value:
+            return value
+    return ""
+
+
+def hdc_target_channel(item: dict[str, Any]) -> str:
+    for key in ["transport", "channel", "type"]:
+        value = normalized_text(item.get(key))
+        if value:
+            return value
+    return ""
+
+
+def hdc_target_values(item: dict[str, Any]) -> set[str]:
+    values = set()
+    for key in ["connect_key", "target", "serial", "device_id", "id"]:
+        value = normalized_text(item.get(key))
+        if value:
+            values.add(value.lower())
+    raw = normalized_text(item.get("raw"))
+    if raw:
+        values.add(raw.split()[0].lower())
+    return values
+
+
+def hdc_target_is_real(item: dict[str, Any]) -> bool:
+    key = hdc_target_key(item).lower()
+    raw = normalized_text(item.get("raw")).lower()
+    return key not in EMPTY_HDC_TARGET_MARKERS and raw not in EMPTY_HDC_TARGET_MARKERS
+
+
+def hdc_target_matches(item: dict[str, Any], channel: str | None = None, target: str | None = None) -> bool:
+    if channel:
+        actual_channel = hdc_target_channel(item)
+        if actual_channel and actual_channel.lower() != channel.lower():
+            return False
+    if target and target.strip().lower() not in hdc_target_values(item):
         return False
+    return True
+
+
+def connected_hdc_targets(
+    status: dict[str, Any],
+    channel: str | None = None,
+    target: str | None = None,
+) -> list[dict[str, Any]]:
+    matches = []
+    for item in hdc_targets(status):
+        state = normalized_text(item.get("status")).lower()
+        if state not in CONNECTED_HDC_STATES:
+            continue
+        if not hdc_target_is_real(item):
+            continue
+        if not hdc_target_matches(item, channel=channel, target=target):
+            continue
+        matches.append(item)
+    return matches
+
+
+def wait_for_connected_hdc(
+    client: OhAutoClient,
+    device_id: str,
+    timeout_sec: float,
+    interval_sec: float,
+    channel: str | None = None,
+    target: str | None = None,
+    baudrate: int | None = None,
+    retry_connect: bool = False,
+) -> dict[str, Any]:
+    start = time.monotonic()
+    deadline = start + max(timeout_sec, 0)
+    interval = max(interval_sec, 0.2)
+    attempts = 0
+    last_status = None
+    last_error = None
+    last_connect = None
+    last_connect_error = None
+
+    while True:
+        attempts += 1
+        if retry_connect and (channel or target or baudrate):
+            payload: dict[str, Any] = {"channel": channel or "usb"}
+            if target:
+                payload["target"] = target
+            if baudrate:
+                payload["baudrate"] = baudrate
+            try:
+                last_connect = client.request_json("POST", f"/devices/{device_id}/connect", payload)
+                last_connect_error = None
+            except Exception as exc:
+                last_connect_error = f"{type(exc).__name__}: {exc}"
+        try:
+            last_status = client.request_json("GET", f"/devices/{device_id}/status")
+            last_error = None
+            matches = connected_hdc_targets(last_status, channel=channel, target=target)
+            if matches:
+                return {
+                    "ok": True,
+                    "elapsed_sec": round(time.monotonic() - start, 3),
+                    "attempts": attempts,
+                    "target": matches[0],
+                    "matches": matches,
+                    "connect": last_connect,
+                    "last_status": last_status,
+                }
+        except Exception as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+
+        now = time.monotonic()
+        if now >= deadline:
+            break
+        time.sleep(min(interval, max(deadline - now, 0)))
+
+    return {
+        "ok": False,
+        "elapsed_sec": round(time.monotonic() - start, 3),
+        "attempts": attempts,
+        "requested": {
+            "channel": channel,
+            "target": target,
+            "baudrate": baudrate,
+        },
+        "last_error": last_error,
+        "last_connect": last_connect,
+        "last_connect_error": last_connect_error,
+        "last_targets": hdc_targets(last_status or {}),
+        "last_status": last_status,
+    }
+
+
+def smoke_stdout_valid(stdout_text: str, expected: str | None) -> bool:
     failure_markers = [
         "[Fail]",
+        "[Empty]",
         "ExecuteCommand need connect-key",
         "Offline",
         "No any connected target",
     ]
     if any(marker in stdout_text for marker in failure_markers):
         return False
+    if expected == "":
+        return True
+    stripped = stdout_text.strip()
+    if not stripped:
+        return False
     if expected is not None and expected not in stdout_text:
         return False
     return True
+
+
+def wait_shell_and_collect(
+    client: OhAutoClient,
+    job: dict[str, Any],
+    args: argparse.Namespace,
+    expected: str | None = None,
+) -> dict[str, Any]:
+    job_id = job["job_id"]
+    if getattr(args, "events", False):
+        client.stream_events(job_id)
+    finished = client.request_json(
+        "POST",
+        f"/jobs/{job_id}/wait?timeout_sec={args.timeout_sec}",
+        {},
+        timeout_sec=args.timeout_sec + 5,
+    )
+    stdout = client.request_json("GET", f"/jobs/{job_id}/logs?stream=stdout&offset=0")
+    stderr = client.request_json("GET", f"/jobs/{job_id}/logs?stream=stderr&offset=0")
+    stdout_text = stdout.get("content", "")
+    return {
+        "job": finished,
+        "stdout": stdout_text,
+        "stderr": stderr.get("content", ""),
+        "stdout_valid": smoke_stdout_valid(stdout_text, expected),
+    }
 
 
 def wait_if_requested(client: OhAutoClient, job: dict[str, Any], args: argparse.Namespace) -> Any:
@@ -379,6 +628,28 @@ def wait_if_requested(client: OhAutoClient, job: dict[str, Any], args: argparse.
         f"/jobs/{job_id}/wait?timeout_sec={args.timeout_sec}",
         {},
         timeout_sec=args.timeout_sec + 5,
+    )
+
+
+def connect_if_requested(
+    client: OhAutoClient,
+    args: argparse.Namespace,
+    force: bool = False,
+) -> Any:
+    channel = getattr(args, "connect_channel", None)
+    target = getattr(args, "connect_target", None)
+    baudrate = getattr(args, "connect_baudrate", None)
+    if not force and not (channel or target or baudrate):
+        return None
+    payload: dict[str, Any] = {"channel": channel or "usb"}
+    if target:
+        payload["target"] = target
+    if baudrate:
+        payload["baudrate"] = baudrate
+    return client.request_json(
+        "POST",
+        f"/devices/{args.device_id}/connect",
+        payload,
     )
 
 
@@ -448,6 +719,19 @@ def build_parser() -> argparse.ArgumentParser:
     add_simple_command(subparsers, "capabilities", command_capabilities)
     add_simple_command(subparsers, "status", command_status)
 
+    connect = add_simple_command(subparsers, "connect", command_connect)
+    add_connect_arguments(connect, required_channel=True)
+
+    wait_connected = add_simple_command(subparsers, "wait-connected", command_wait_connected)
+    add_connect_arguments(wait_connected)
+    wait_connected.add_argument("--timeout-sec", type=float, default=180)
+    wait_connected.add_argument("--interval-sec", type=float, default=2)
+    wait_connected.add_argument(
+        "--connect-retry",
+        action="store_true",
+        help="Retry HDC target selection while polling status.",
+    )
+
     preflight = add_simple_command(subparsers, "preflight", command_preflight)
     preflight.add_argument("--template-id", default="musepaper2-titan")
 
@@ -456,6 +740,7 @@ def build_parser() -> argparse.ArgumentParser:
     upload.add_argument("--id-only", action="store_true")
 
     shell = add_job_command(subparsers, "shell", command_shell)
+    add_connect_arguments(shell)
     shell.add_argument("command", nargs="+")
     shell.add_argument("--command-timeout-sec", type=float, default=300)
 
@@ -519,8 +804,31 @@ def build_parser() -> argparse.ArgumentParser:
     cancel.add_argument("job_id")
 
     smoke = add_simple_command(subparsers, "smoke", command_smoke)
+    add_connect_arguments(smoke)
     smoke.add_argument("--timeout-sec", type=float, default=60)
     smoke.add_argument("--command-timeout-sec", type=float, default=60)
+    smoke.add_argument(
+        "--wait-connected",
+        action="store_true",
+        help="Wait for a real Connected/Online/Ready HDC target before smoke commands.",
+    )
+    smoke.add_argument("--wait-connected-timeout-sec", type=float, default=180)
+    smoke.add_argument("--wait-connected-interval-sec", type=float, default=2)
+    smoke.add_argument(
+        "--connect-retry",
+        action="store_true",
+        help="Retry HDC target selection while --wait-connected polls status.",
+    )
+    smoke.add_argument(
+        "--set-boot-escape-ack",
+        action="store_true",
+        help="Set the musepaper2 boot escape acknowledgement as soon as smoke starts.",
+    )
+    smoke.add_argument(
+        "--boot-escape-ack-param",
+        default="startup.porting.boot_escape.ack",
+        help="Parameter written by --set-boot-escape-ack.",
+    )
 
     return parser
 
@@ -537,6 +845,24 @@ def add_job_command(subparsers, name: str, handler):
     command.add_argument("--events", action="store_true")
     command.add_argument("--timeout-sec", type=float, default=600)
     return command
+
+
+def add_connect_arguments(command, required_channel: bool = False) -> None:
+    command.add_argument(
+        "--connect-channel",
+        choices=["usb", "tcp", "uart"],
+        required=required_channel,
+        help="Select the HDC channel before running the operation.",
+    )
+    command.add_argument(
+        "--connect-target",
+        help="Select a concrete HDC connect key, for example 0123456789ABCDEF.",
+    )
+    command.add_argument(
+        "--connect-baudrate",
+        type=int,
+        help="Baudrate for uart connect selection.",
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

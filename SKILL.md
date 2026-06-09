@@ -155,6 +155,13 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py preflight --template-id musepaper2-titan
 ```
 
+`preflight ok=true` means the host, template, lock state, and submission path
+are ready for a flash job. It does not prove the board is already in Titan burn
+mode; `titan_burn_mode_confirmed` remains `null` because service version `0.1.0`
+only exposes Titan detection inside a flash job. The authoritative burn-mode
+evidence is a flash event such as `titan_fastboot_found`, followed by
+`titan_flash` starting or succeeding.
+
 For MusePaper2 Titan flashing, the template id is `musepaper2-titan`. Upload the
 image when it is on this Linux server, then submit the flash job and persist the
 returned `job_id`:
@@ -163,7 +170,8 @@ returned `job_id`:
 ARTIFACT_ID=$(python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py upload /path/to/openharmony-spacemit-k1-musepaper2.zip --id-only)
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py flash musepaper2-titan --image "$ARTIFACT_ID"
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py wait "$JOB_ID" --events --timeout-sec 1800
-python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py smoke
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py wait-connected --connect-channel usb --connect-target 0123456789ABCDEF --timeout-sec 240
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py smoke --wait-connected --connect-channel usb --connect-target 0123456789ABCDEF --set-boot-escape-ack
 ```
 
 Serial console access is available through the same automation service. For the
@@ -209,10 +217,16 @@ instead of the direct `F:\...` path.
 
 During MusePaper2 OH6.1 boot-failure iterations, do not trust `hdc shell
 reboot fastboot` process success by itself. HDC can return code 0 while all USB
-and UART targets are still Offline. Treat `preflight --template-id
-musepaper2-titan` with a connected target, or an actual flash job that reaches
-the `wait_titan_fastboot`/`titan_flash` steps, as the authoritative burn-mode
-signal.
+and UART targets are still Offline, or while stdout contains
+`ExecuteCommand need connect-key`. Treat an actual flash job that reaches
+`wait_titan_fastboot` and emits `titan_fastboot_found` as the authoritative
+burn-mode signal. When HDC lists multiple targets, run
+`oh_autoctl.py connect --connect-channel usb --connect-target 0123456789ABCDEF`
+before shell/smoke checks, or pass the same connect options to `shell`/`smoke`.
+For post-flash validation, do not trust template `wait_hdc` or template smoke
+steps when the event payload contains `[Empty]`; run `oh_autoctl.py
+wait-connected` and then `smoke --wait-connected` so only a real
+Connected/Online/Ready USB target is accepted.
 
 The current MusePaper2 panic-automation workaround is source-level plus
 product-param gated: `base/startup/init/services/modules/reboot/reboot.c`
