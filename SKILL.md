@@ -187,6 +187,10 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
 Serial responses include command echo and shell prompts such as `#`; parse the
 business output defensively. Use serial for pre-HDC boot diagnostics, especially
 when a MusePaper2 image stops at the Spacemit logo.
+For MusePaper2 serial command and `serial-log` boot capture, prefer
+`--port COM4 --baudrate 115200`; do not reuse the HDC connection baudrate
+`921600` for serial logs unless a fresh probe proves it, because it can capture
+gibberish while `115200` gives a working console.
 
 For MusePaper2 OH6.1 boot-failure iterations, the first automation milestone is
 an image that avoids early kernel panic and can execute `reboot fastboot` through

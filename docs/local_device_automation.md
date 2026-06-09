@@ -181,6 +181,10 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
 ```
 
 串口响应包含命令回显和 `#` 提示符；判断业务输出时要避开这些回显/提示符噪声。
+MusePaper2 的串口命令和 `serial-log` 启动日志优先使用
+`--port COM4 --baudrate 115200`。不要把 HDC 连接参数里的 `921600` 直接套
+到串口日志上，除非现场重新探测确认；该波特率可能只产生乱码，而 `115200`
+可以得到可交互 console。
 
 MusePaper2 可以通过 HDC 或串口控制台执行 `reboot fastboot` 进入 Titan
 烧录模式。OpenHarmony 已启动且 HDC 可用时优先用 HDC；HDC 不可用但串口
