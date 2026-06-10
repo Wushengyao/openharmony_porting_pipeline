@@ -189,6 +189,11 @@ Important command-shape notes from OH6.1 MusePaper2 validation:
   `Mutlti commands can't be used in combination [CODE: -31]`. Prefer a single
   device command, or collect a finite `hilog -z N` snapshot and filter it on the
   build host.
+- Avoid unbounded or unknown HDC shell probes during automation, especially
+  bare `dmesg` and `which <possibly-missing-command>`. On the MusePaper2 OH6.1
+  rig these have produced stale service-side `hdc_shell` jobs that do not stop
+  promptly after `cancel`. Use known-good finite commands, explicit command
+  timeouts, or a screenshot/base64 path that has already been validated.
 - When a device-side shell snippet really needs variables such as `$f`, quote
   the whole command so the Linux build-host shell cannot expand them before
   `oh_autoctl.py` submits the job. A lost variable can turn `cat "$f"` into
@@ -197,6 +202,13 @@ Important command-shape notes from OH6.1 MusePaper2 validation:
   `oh_autoctl.py cancel JOB_ID`.
 - After any long or experimental log capture, run `oh_autoctl.py status` and
   cancel stale running jobs before flashing or submitting another device job.
+
+For screenshots, `snapshot_display -f /data/local/tmp/name.jpeg` proves the
+display pipeline can capture a frame and `pull` saves it as a Windows-side
+artifact. Service version `0.1.0` returns artifact metadata from
+`GET /artifacts/{id}` but no binary content, so use a previously validated
+small-file base64 HDC path when the Linux-side report needs local visual
+inspection, or request a service-side artifact download endpoint.
 
 ## Serial Console
 

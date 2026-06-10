@@ -264,6 +264,14 @@ For finite post-boot log snapshots on MusePaper2, prefer
 `oh_autoctl.py shell "hilog -z N" --wait`; see
 `docs/local_device_automation.md` before trying compound shell pipelines or
 service-side long-running hilog captures.
+Do not treat noisy native OpenHarmony logs as a primary porting failure without
+functional correlation. Repeated I2C, battery, thermal, metadata, or parameter
+warnings are detail debt when HDC smoke passes, `snapshot_display` can capture
+display 0, and key services such as RenderService, AbilityManagerService,
+BundleMgr, CameraService, WindowManagerService, DisplayManagerService,
+PowerManagerService, BatteryService, StorageManager, and HdfDeviceServiceManager
+are registered. Track those warnings in the iteration ledger, but move the
+main loop to failing user-visible functions or interfaces.
 
 The current MusePaper2 panic-automation workaround is source-level plus
 product-param gated: `base/startup/init/services/modules/reboot/reboot.c`
