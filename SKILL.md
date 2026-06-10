@@ -226,6 +226,14 @@ control image is
 `oh_autoctl.py capabilities` first: if `F:\images\PortingTest` is not in
 `allowed_local_roots`, use `oh_autoctl.py upload` and flash the artifact id
 instead of the direct `F:\...` path.
+The helper upload path uses Python `requests` multipart first when available,
+then falls back to the built-in HTTP client. If small artifact uploads succeed
+but MusePaper2 image uploads fail with HTTP 400 body-parse errors or HTTP 500,
+treat it as an automation-service artifact ingestion/storage issue rather than
+a board flash or HDC failure. Capture `capabilities`, `status`, upload
+responses, and a current `smoke` result; do not submit a flash job until an
+artifact id is returned or the Windows allowed local roots include the target
+image directory.
 
 During MusePaper2 OH6.1 boot-failure iterations, do not trust `hdc shell
 reboot fastboot` process success by itself. HDC can return code 0 while all USB

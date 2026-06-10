@@ -75,8 +75,26 @@ class OhAutoClient:
         if not file_path.exists() or not file_path.is_file():
             raise FileNotFoundError(file_path)
 
-        boundary = f"oh_auto_{uuid.uuid4().hex}"
         content_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
+        try:
+            import requests  # type: ignore[import-untyped]
+        except ImportError:
+            requests = None
+
+        if requests is not None:
+            with file_path.open("rb") as handle:
+                response = requests.post(
+                    f"{self.base_url}/artifacts",
+                    files={field_name: (file_path.name, handle, content_type)},
+                    headers=self._headers(),
+                    timeout=self.timeout_sec,
+                )
+            text = response.text
+            if response.status_code >= 400:
+                raise ApiError(response.status_code, response.reason, text)
+            return response.json()
+
+        boundary = f"oh_auto_{uuid.uuid4().hex}"
         prefix = (
             f"--{boundary}\r\n"
             f'Content-Disposition: form-data; name="{field_name}"; '
