@@ -63,6 +63,13 @@ If the service implementation is being updated, add hard per-job output caps,
 make `cancel` terminate the child process and force a terminal DB state, and
 add artifact cleanup/download endpoints.
 
+Use the helper diagnosis command to summarize stale jobs without submitting new
+device work:
+
+```bash
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py diagnose-jobs
+```
+
 ## Mandatory Rules
 
 - Do not assume HDC, serial ports, Titan flasher, or Windows paths exist on the Linux server.

@@ -252,7 +252,8 @@ submitting device jobs: service `0.1.0` can leave already-finished commands as
 stale `running`/`queued` jobs, causing preflight to fail with
 `no_running_jobs=false`. Free/clean the Windows oh-auto data directory, restart
 the service, then require `status` to have no stale `running_jobs` and
-`preflight --template-id musepaper2-titan` to return `ok=true`.
+`preflight --template-id musepaper2-titan` to return `ok=true`. Use
+`oh_autoctl.py diagnose-jobs` for a read-only summary of stale job evidence.
 
 During MusePaper2 OH6.1 boot-failure iterations, do not trust `hdc shell
 reboot fastboot` process success by itself. HDC can return code 0 while all USB

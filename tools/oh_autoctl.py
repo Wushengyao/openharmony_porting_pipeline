@@ -263,6 +263,57 @@ def command_preflight(client: OhAutoClient, args: argparse.Namespace) -> Any:
     }
 
 
+def command_diagnose_jobs(client: OhAutoClient, args: argparse.Namespace) -> Any:
+    status = client.request_json("GET", f"/devices/{args.device_id}/status")
+    running_jobs = status.get("running_jobs", [])
+    diagnostics: list[dict[str, Any]] = []
+    storage_full_detected = False
+
+    for item in running_jobs:
+        job_id = item.get("job_id")
+        if not job_id:
+            continue
+        detail: dict[str, Any] = {"status_entry": item}
+        try:
+            detail["job"] = client.request_json("GET", f"/jobs/{job_id}")
+        except ApiError as exc:
+            detail["job_error"] = str(exc)
+        try:
+            events = client.request_json("GET", f"/jobs/{job_id}/logs?stream=events&offset=0")
+            content = events.get("content", "") if isinstance(events, dict) else str(events)
+            detail["events_tail"] = content[-args.tail_chars:]
+            if "database or disk is full" in content or "OperationalError" in content:
+                detail["storage_full_evidence"] = True
+                storage_full_detected = True
+        except ApiError as exc:
+            detail["events_error"] = str(exc)
+        diagnostics.append(detail)
+
+    recommendations: list[str] = []
+    if storage_full_detected:
+        recommendations.extend([
+            "Stop submitting device jobs; stale running/queued jobs may be DB state, not live processes.",
+            "Free space under C:\\Users\\sheng\\Documents\\OH自动化\\data, especially old artifacts and runs.",
+            "Restart the oh-auto service, then rerun status and preflight.",
+            "Require no running_jobs and preflight ok=true before flashing.",
+        ])
+    elif running_jobs:
+        recommendations.append(
+            "Running jobs exist but no storage-full evidence was found in event tails; inspect logs or cancel only after preserving needed output."
+        )
+    else:
+        recommendations.append("No running_jobs reported by status.")
+
+    return {
+        "ok": not running_jobs,
+        "device_id": args.device_id,
+        "running_job_count": len(running_jobs),
+        "storage_full_detected": storage_full_detected,
+        "diagnostics": diagnostics,
+        "recommendations": recommendations,
+    }
+
+
 def command_upload(client: OhAutoClient, args: argparse.Namespace) -> Any:
     result = client.upload(Path(args.file))
     if args.id_only:
@@ -794,6 +845,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     preflight = add_simple_command(subparsers, "preflight", command_preflight)
     preflight.add_argument("--template-id", default="musepaper2-titan")
+
+    diagnose_jobs = add_simple_command(subparsers, "diagnose-jobs", command_diagnose_jobs)
+    diagnose_jobs.add_argument(
+        "--tail-chars",
+        type=int,
+        default=4000,
+        help="Number of event-log tail characters to include for each running job.",
+    )
 
     upload = add_simple_command(subparsers, "upload", command_upload)
     upload.add_argument("file")
