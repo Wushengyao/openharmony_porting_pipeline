@@ -200,6 +200,14 @@ Use `oh_autoctl.py serial-log` to start long-running serial capture before
 flashing or boot validation, then save the job id and retrieve stdout/events
 with `oh_autoctl.py logs`.
 
+When changing MusePaper2 kernel sources, do not trust a successful top-level
+`build.sh` by itself. Check that `out/kernel/OBJ/<product>/...`, `Image`,
+`bootfs/Image.itb`, `boot.img`, and the final zip have fresh timestamps or
+different hashes. The MusePaper2 kernel build is a GN action and only reruns
+for files listed in its `inputs`; if a touched kernel source is not listed,
+add a narrow input entry or deliberately refresh the kernel action before
+flashing. This avoids validating a stale boot image.
+
 MusePaper2 can enter the Titan flashing mode from either HDC or the serial
 console by issuing `reboot fastboot`. Prefer HDC when OpenHarmony is alive; use
 serial when HDC is unavailable but the boot console is responsive:
