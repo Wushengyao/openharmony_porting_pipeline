@@ -43,6 +43,26 @@ validation can proceed. It is acceptable to add a bounded wait helper that polls
 for service recovery and then runs the normal flash/smoke workflow, but do not
 leave an unbounded background flash job running.
 
+If job events or logs contain `OperationalError: database or disk is full`, do
+not treat the board, HDC, or Titan flashing as the root cause. On service
+version `0.1.0`, a device command may have already exited successfully, but the
+job can remain reported as `running`/`queued` because the Windows-side data
+store cannot persist the terminal state. In that state:
+
+- `preflight` fails with `no_running_jobs=false`;
+- repeated `cancel` may not clear the stale rows;
+- new shell/serial/push/pull/flash jobs can deepen the queue or fail with 500;
+- large artifact uploads are likely to keep failing.
+
+Stop submitting device jobs and ask the Windows-side operator to free space
+under `C:\Users\sheng\Documents\OH自动化\data` (especially old `artifacts` and
+`runs`), checkpoint any needed logs, restart the oh-auto service, then verify
+`oh_autoctl.py status` shows no stale `running_jobs` and `oh_autoctl.py
+preflight --template-id musepaper2-titan` returns `ok=true` before continuing.
+If the service implementation is being updated, add hard per-job output caps,
+make `cancel` terminate the child process and force a terminal DB state, and
+add artifact cleanup/download endpoints.
+
 ## Mandatory Rules
 
 - Do not assume HDC, serial ports, Titan flasher, or Windows paths exist on the Linux server.
