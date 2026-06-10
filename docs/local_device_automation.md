@@ -189,6 +189,12 @@ Important command-shape notes from OH6.1 MusePaper2 validation:
   `Mutlti commands can't be used in combination [CODE: -31]`. Prefer a single
   device command, or collect a finite `hilog -z N` snapshot and filter it on the
   build host.
+- When a device-side shell snippet really needs variables such as `$f`, quote
+  the whole command so the Linux build-host shell cannot expand them before
+  `oh_autoctl.py` submits the job. A lost variable can turn `cat "$f"` into
+  `cat` with no arguments, leaving a stale `hdc_shell` job that holds the
+  device lock; recover with `oh_autoctl.py status` followed by targeted
+  `oh_autoctl.py cancel JOB_ID`.
 - After any long or experimental log capture, run `oh_autoctl.py status` and
   cancel stale running jobs before flashing or submitting another device job.
 
