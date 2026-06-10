@@ -174,6 +174,19 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py smoke --wait-connected --connect-channel usb --connect-target 0123456789ABCDEF --set-boot-escape-ack
 ```
 
+For lightweight post-boot iterations that only need to replace or inspect files
+on a live OpenHarmony system, the helper exposes the service `push`, `pull`, and
+`reboot` operations. For example, upload an image or diagnostic binary from the
+Linux build server, push it to the device, pull a screenshot back as an artifact,
+or request a normal reboot:
+
+```bash
+ARTIFACT_ID=$(python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py upload /path/to/file --id-only)
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py push /data/local/tmp/file --artifact-id "$ARTIFACT_ID" --wait --connect-channel usb --connect-target 0123456789ABCDEF
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py pull /data/local/tmp/screen.png --filename screen.png --wait --connect-channel usb --connect-target 0123456789ABCDEF
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py reboot --mode normal --wait --connect-channel usb --connect-target 0123456789ABCDEF
+```
+
 Serial console access is available through the same automation service. For the
 current MusePaper2 test setup, `/capabilities` reports `COM4` at `115200`, but
 always use the service defaults or pass `--port`/`--baudrate` explicitly instead

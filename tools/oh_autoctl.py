@@ -271,6 +271,48 @@ def command_upload(client: OhAutoClient, args: argparse.Namespace) -> Any:
     return result
 
 
+def command_push(client: OhAutoClient, args: argparse.Namespace) -> Any:
+    connect_if_requested(client, args)
+    payload: dict[str, Any] = {
+        "remote_path": args.remote_path,
+        "options": args.option,
+        "timeout_sec": args.command_timeout_sec,
+    }
+    if args.artifact_id:
+        payload["artifact_id"] = args.artifact_id
+    if args.local_path:
+        payload["local_path"] = args.local_path
+    if not args.artifact_id and not args.local_path:
+        raise ValueError("push requires --artifact-id or --local-path")
+    job = client.request_json("POST", f"/devices/{args.device_id}/ops/push", payload)
+    return wait_if_requested(client, job, args)
+
+
+def command_pull(client: OhAutoClient, args: argparse.Namespace) -> Any:
+    connect_if_requested(client, args)
+    payload: dict[str, Any] = {
+        "remote_path": args.remote_path,
+        "options": args.option,
+        "timeout_sec": args.command_timeout_sec,
+    }
+    if args.local_path:
+        payload["local_path"] = args.local_path
+    if args.filename:
+        payload["filename"] = args.filename
+    job = client.request_json("POST", f"/devices/{args.device_id}/ops/pull", payload)
+    return wait_if_requested(client, job, args)
+
+
+def command_reboot(client: OhAutoClient, args: argparse.Namespace) -> Any:
+    connect_if_requested(client, args)
+    job = client.request_json(
+        "POST",
+        f"/devices/{args.device_id}/ops/reboot",
+        {"mode": args.mode, "timeout_sec": args.command_timeout_sec},
+    )
+    return wait_if_requested(client, job, args)
+
+
 def command_shell(client: OhAutoClient, args: argparse.Namespace) -> Any:
     connect_if_requested(client, args)
     command = args.command if len(args.command) != 1 else args.command[0]
@@ -756,6 +798,27 @@ def build_parser() -> argparse.ArgumentParser:
     upload = add_simple_command(subparsers, "upload", command_upload)
     upload.add_argument("file")
     upload.add_argument("--id-only", action="store_true")
+
+    push = add_job_command(subparsers, "push", command_push)
+    add_connect_arguments(push)
+    push.add_argument("remote_path", help="Device-side destination path.")
+    push.add_argument("--artifact-id", help="Artifact id returned by upload.")
+    push.add_argument("--local-path", help="Allowed Windows local source path.")
+    push.add_argument("--option", action="append", default=[], help="Raw hdc file send option.")
+    push.add_argument("--command-timeout-sec", type=float, default=300)
+
+    pull = add_job_command(subparsers, "pull", command_pull)
+    add_connect_arguments(pull)
+    pull.add_argument("remote_path", help="Device-side source path.")
+    pull.add_argument("--local-path", help="Allowed Windows local destination path.")
+    pull.add_argument("--filename", help="Artifact filename when local_path is omitted.")
+    pull.add_argument("--option", action="append", default=[], help="Raw hdc file recv option.")
+    pull.add_argument("--command-timeout-sec", type=float, default=300)
+
+    reboot = add_job_command(subparsers, "reboot", command_reboot)
+    add_connect_arguments(reboot)
+    reboot.add_argument("--mode", choices=["normal", "bootloader", "recovery", "updater"], default="normal")
+    reboot.add_argument("--command-timeout-sec", type=float, default=120)
 
     shell = add_job_command(subparsers, "shell", command_shell)
     add_connect_arguments(shell)
