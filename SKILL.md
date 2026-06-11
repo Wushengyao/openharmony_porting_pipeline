@@ -184,6 +184,7 @@ or request a normal reboot:
 ARTIFACT_ID=$(python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py upload /path/to/file --id-only)
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py push /data/local/tmp/file --artifact-id "$ARTIFACT_ID" --wait --connect-channel usb --connect-target 0123456789ABCDEF
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py pull /data/local/tmp/screen.png --filename screen.png --wait --connect-channel usb --connect-target 0123456789ABCDEF
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py bugreport --filename bugreport.zip --wait --connect-channel usb --connect-target 0123456789ABCDEF
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py reboot --mode normal --wait --connect-channel usb --connect-target 0123456789ABCDEF
 ```
 

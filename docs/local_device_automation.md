@@ -249,6 +249,17 @@ artifact. Service version `0.1.0` returns artifact metadata from
 small-file base64 HDC path when the Linux-side report needs local visual
 inspection, or request a service-side artifact download endpoint.
 
+For full-device evidence after boot, use the service-side bugreport operation
+instead of hand-rolling a large set of HDC pulls:
+
+```bash
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py bugreport --filename musepaper2-bugreport.zip --wait --connect-channel usb --connect-target 0123456789ABCDEF
+```
+
+Save the returned `job_id` and logs in the active iteration directory. A
+bugreport can be slow; set `--command-timeout-sec` and `--timeout-sec` together
+when collecting it during unattended loops.
+
 ## Serial Console
 
 MusePaper2 的本机串口控制台当前配置为 `COM4`、`115200`。Agent 可以通过自动化服务发送串口命令，不要直接在 Linux 服务器上假设存在该串口。

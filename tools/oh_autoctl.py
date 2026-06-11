@@ -265,6 +265,13 @@ def command_preflight(client: OhAutoClient, args: argparse.Namespace) -> Any:
 
 def command_diagnose_jobs(client: OhAutoClient, args: argparse.Namespace) -> Any:
     status = client.request_json("GET", f"/devices/{args.device_id}/status")
+    capabilities: dict[str, Any] = {}
+    capabilities_error = None
+    try:
+        capabilities = client.request_json("GET", "/capabilities")
+    except Exception as exc:
+        capabilities_error = f"{type(exc).__name__}: {exc}"
+    data_dir = capabilities.get("runtime", {}).get("data_dir") or "F:\\oh-auto-data"
     running_jobs = status.get("running_jobs", [])
     diagnostics: list[dict[str, Any]] = []
     storage_full_detected = False
@@ -293,7 +300,7 @@ def command_diagnose_jobs(client: OhAutoClient, args: argparse.Namespace) -> Any
     if storage_full_detected:
         recommendations.extend([
             "Stop submitting device jobs; stale running/queued jobs may be DB state, not live processes.",
-            "Free space under C:\\Users\\sheng\\Documents\\OH自动化\\data, especially old artifacts and runs.",
+            f"Free space under {data_dir}, especially old artifacts and runs.",
             "Restart the oh-auto service, then rerun status and preflight.",
             "Require no running_jobs and preflight ok=true before flashing.",
         ])
@@ -309,6 +316,8 @@ def command_diagnose_jobs(client: OhAutoClient, args: argparse.Namespace) -> Any
         "device_id": args.device_id,
         "running_job_count": len(running_jobs),
         "storage_full_detected": storage_full_detected,
+        "runtime_data_dir": data_dir,
+        "capabilities_error": capabilities_error,
         "diagnostics": diagnostics,
         "recommendations": recommendations,
     }
@@ -360,6 +369,20 @@ def command_reboot(client: OhAutoClient, args: argparse.Namespace) -> Any:
         "POST",
         f"/devices/{args.device_id}/ops/reboot",
         {"mode": args.mode, "timeout_sec": args.command_timeout_sec},
+    )
+    return wait_if_requested(client, job, args)
+
+
+def command_bugreport(client: OhAutoClient, args: argparse.Namespace) -> Any:
+    connect_if_requested(client, args)
+    payload: dict[str, Any] = {
+        "filename": args.filename,
+        "timeout_sec": args.command_timeout_sec,
+    }
+    job = client.request_json(
+        "POST",
+        f"/devices/{args.device_id}/ops/bugreport",
+        payload,
     )
     return wait_if_requested(client, job, args)
 
@@ -878,6 +901,11 @@ def build_parser() -> argparse.ArgumentParser:
     add_connect_arguments(reboot)
     reboot.add_argument("--mode", choices=["normal", "bootloader", "recovery", "updater"], default="normal")
     reboot.add_argument("--command-timeout-sec", type=float, default=120)
+
+    bugreport = add_job_command(subparsers, "bugreport", command_bugreport)
+    add_connect_arguments(bugreport)
+    bugreport.add_argument("--filename", help="Artifact filename for the collected report.")
+    bugreport.add_argument("--command-timeout-sec", type=float, default=600)
 
     shell = add_job_command(subparsers, "shell", command_shell)
     add_connect_arguments(shell)
