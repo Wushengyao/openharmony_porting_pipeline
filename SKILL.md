@@ -165,6 +165,7 @@ Use the helper CLI:
 export OH_AUTO_BASE_URL=${OH_AUTO_BASE_URL:-http://127.0.0.1:8787/api/v1}
 export OH_AUTO_DEVICE_ID=${OH_AUTO_DEVICE_ID:-default}
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py capabilities
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py profile musepaper2
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py preflight --template-id musepaper2-titan
 ```
 
@@ -175,6 +176,11 @@ mode. On service `0.2.0+`, after `reboot fastboot`, use
 for standalone burn-mode evidence. During a flash job, the authoritative
 burn-mode evidence is still a flash event such as `titan_fastboot_found`,
 followed by `titan_flash` starting or succeeding.
+
+On service `0.3.0+`, query `oh_autoctl.py profile musepaper2` before each new
+MusePaper2 device loop. Treat it as the service-side source of truth for the
+Titan template, USB HDC target, UART port and baudrates, Windows image staging
+paths, and current `rc0` artifact/hash.
 
 If the Windows oh-auto service reports admin support, the 184-side Agent is
 trusted to maintain the service itself:
@@ -193,7 +199,7 @@ For oh-auto service improvements, inspect and edit these files first:
 `config/flash-templates/*.yaml`, and `config/oh-auto.yaml`. After edits, run
 `admin-run-check py_compile`; run `admin-run-check pytest` for behavior changes;
 then `admin-restart` and re-run `version`, `capabilities`, and
-`preflight --template-id musepaper2-titan`.
+`profile musepaper2`, then `preflight --template-id musepaper2-titan`.
 
 For MusePaper2 Titan flashing, the template id is `musepaper2-titan`. Upload the
 image when it is on this Linux server, then submit the flash job and persist the
