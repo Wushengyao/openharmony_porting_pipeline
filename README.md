@@ -152,9 +152,13 @@ Treat template `wait_hdc` events with `[Empty]` as not connected; rerun
 For the MusePaper2 OH6.1 porting loop, stage freshly built Windows-side test
 packages under `F:\images\PortingTest\6.1\`. The known-good OH6.0 control image
 is `F:\images\PortingTest\6.0\openharmony-spacemit-k1-musepaper2.zip`. Direct
-Windows-path flashing requires `/capabilities` to list `F:\images\PortingTest`
-inside `allowed_local_roots`; otherwise upload the Linux-side zip with
-`oh_autoctl.py upload` and flash the returned artifact id.
+Windows-path flashing requires `/capabilities` to list `F:\images` or the exact
+staging directory inside `allowed_local_roots`; otherwise upload the Linux-side
+zip with `oh_autoctl.py upload` and flash the returned artifact id. Prefer a
+direct `F:\images` path when the zip is already on Windows to avoid duplicate
+artifact copies. Current oh-auto runtime data lives under `F:\oh-auto-data`, and
+successful `musepaper2-titan` jobs clean extracted image directories through the
+template `cleanup_path` step.
 
 MusePaper2 can enter Titan flashing mode with `reboot fastboot` from HDC or the
 serial console:

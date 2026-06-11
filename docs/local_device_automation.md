@@ -44,31 +44,27 @@ for service recovery and then runs the normal flash/smoke workflow, but do not
 leave an unbounded background flash job running.
 
 If job events or logs contain `OperationalError: database or disk is full`, do
-not treat the board, HDC, or Titan flashing as the root cause. On service
-version `0.1.0`, a device command may have already exited successfully, but the
-job can remain reported as `running`/`queued` because the Windows-side data
-store cannot persist the terminal state. In that state:
-
-- `preflight` fails with `no_running_jobs=false`;
-- repeated `cancel` may not clear the stale rows;
-- new shell/serial/push/pull/flash jobs can deepen the queue or fail with 500;
-- large artifact uploads are likely to keep failing.
-
-Stop submitting device jobs and ask the Windows-side operator to free space
-under `C:\Users\sheng\Documents\OH自动化\data` (especially old `artifacts` and
-`runs`), checkpoint any needed logs, restart the oh-auto service, then verify
-`oh_autoctl.py status` shows no stale `running_jobs` and `oh_autoctl.py
-preflight --template-id musepaper2-titan` returns `ok=true` before continuing.
-If the service implementation is being updated, add hard per-job output caps,
-make `cancel` terminate the child process and force a terminal DB state, and
-add artifact cleanup/download endpoints.
-
-Use the helper diagnosis command to summarize stale jobs without submitting new
-device work:
+not treat the board, HDC, or Titan flashing as the root cause. Stop submitting
+device jobs and inspect the service state without creating more device work:
 
 ```bash
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py capabilities
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py status
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py diagnose-jobs
 ```
+
+The current Windows service stores new runtime data under `F:\oh-auto-data`
+and allows direct image references under `F:\images`. The previous C-drive
+accumulation under the repo-local `data\artifacts` and `data\runs` directories
+has been cleaned and should not be used for new artifacts. Successful
+`musepaper2-titan` jobs include `cleanup_path` and delete the extracted image
+directory after smoke checks.
+Failed jobs may intentionally retain extracted images under
+`F:\oh-auto-data\runs\<job_id>` for debugging. If disk pressure recurs, clean
+old generated artifacts/runs under the runtime `data_dir` reported by
+`/capabilities`, restart the service, then require `status` to show no stale
+`running_jobs` and `preflight --template-id musepaper2-titan` to return
+`ok=true` before continuing.
 
 ## Mandatory Rules
 
@@ -135,7 +131,12 @@ burn-mode proof is the flash event `titan_fastboot_found`.
 ARTIFACT_ID=$(python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py upload /path/to/openharmony-spacemit-k1-musepaper2.zip --id-only)
 ```
 
-If the image already exists on the Windows host and is inside `allowed_local_roots`, pass that Windows path as `--image` instead.
+If the image already exists on the Windows host under `F:\images` and is inside
+`allowed_local_roots`, prefer passing that Windows path as `--image` instead of
+uploading it from Linux. This avoids duplicate artifact copies. As of service
+`0.1.0`, `oh_autoctl.py upload` has no destination-path argument and cannot
+place a Linux-built zip directly into `F:\images`; when the image exists only on
+Linux, upload it and flash the returned artifact id.
 
 MusePaper2 porting convention:
 
@@ -145,10 +146,21 @@ MusePaper2 porting convention:
   `F:\images\PortingTest\6.1\openharmony-spacemit-k1-musepaper2.zip`
 
 Before using a direct `F:\...` path, confirm `oh_autoctl.py capabilities`
-shows `F:\images\PortingTest` or the exact staging directory in
-`allowed_local_roots`. If it does not, use `oh_autoctl.py upload` from the Linux
-build host and flash the returned artifact id. A direct `F:\...` path outside
-`allowed_local_roots` fails before flashing and does not modify the device.
+shows `F:\images` or the exact staging directory in `allowed_local_roots`. If
+it does not, use `oh_autoctl.py upload` from the Linux build host and flash the
+returned artifact id. A direct `F:\...` path outside `allowed_local_roots`
+fails before flashing and does not modify the device.
+
+Storage policy:
+
+- Prefer a direct Windows path for known images under `F:\images\PortingTest\...`.
+- Upload only when the image exists only on the Linux build host.
+- Do not store new artifacts or run outputs on C drive.
+- Current runtime data is under `F:\oh-auto-data`; old small metadata backups,
+  if needed, are under `F:\oh-auto-data\legacy-metadata`.
+- Successful `musepaper2-titan` flash jobs auto-delete the extracted image
+  directory via `cleanup_path`; failed jobs may keep extracted data under
+  `F:\oh-auto-data\runs\<job_id>` for debugging.
 
 4. Submit flash job:
 

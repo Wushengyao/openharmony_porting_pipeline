@@ -236,9 +236,14 @@ stage the zip on the Windows host as
 flashing when direct Windows-path flashing is enabled. The known-good OH6.0
 control image is
 `F:\images\PortingTest\6.0\openharmony-spacemit-k1-musepaper2.zip`. Check
-`oh_autoctl.py capabilities` first: if `F:\images\PortingTest` is not in
-`allowed_local_roots`, use `oh_autoctl.py upload` and flash the artifact id
-instead of the direct `F:\...` path.
+`oh_autoctl.py capabilities` first: if `F:\images` or the exact staging
+directory is not in `allowed_local_roots`, use `oh_autoctl.py upload` and flash
+the artifact id instead of the direct `F:\...` path. Prefer direct `F:\images`
+paths when the image is already on Windows to avoid duplicate artifact uploads.
+As of service `0.1.0`, `oh_autoctl.py upload` accepts only a source file and
+does not copy the Linux zip to an arbitrary `F:\images` destination; if no
+Windows-side copy operation is available, upload from Linux and flash the
+returned artifact id.
 The helper upload path uses Python `requests` multipart first when available,
 then falls back to the built-in HTTP client. If small artifact uploads succeed
 but MusePaper2 image uploads fail with HTTP 400 body-parse errors or HTTP 500,
@@ -250,10 +255,16 @@ image directory.
 If job logs/events show `OperationalError: database or disk is full`, stop
 submitting device jobs: service `0.1.0` can leave already-finished commands as
 stale `running`/`queued` jobs, causing preflight to fail with
-`no_running_jobs=false`. Free/clean the Windows oh-auto data directory, restart
-the service, then require `status` to have no stale `running_jobs` and
+`no_running_jobs=false`. The current Windows service stores runtime data under
+`F:\oh-auto-data`; the old C-drive `data\artifacts`/`data\runs` accumulation has
+been cleaned and should not be used for new outputs. Free/clean old generated
+artifacts/runs under the runtime `data_dir` reported by `/capabilities`,
+restart the service, then require `status` to have no stale `running_jobs` and
 `preflight --template-id musepaper2-titan` to return `ok=true`. Use
 `oh_autoctl.py diagnose-jobs` for a read-only summary of stale job evidence.
+Successful `musepaper2-titan` jobs clean extracted image directories via
+`cleanup_path`; failed jobs may keep extracted data under
+`F:\oh-auto-data\runs\<job_id>` for debugging.
 
 During MusePaper2 OH6.1 boot-failure iterations, do not trust `hdc shell
 reboot fastboot` process success by itself. HDC can return code 0 while all USB
