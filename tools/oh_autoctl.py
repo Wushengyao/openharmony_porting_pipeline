@@ -217,6 +217,14 @@ def command_capabilities(client: OhAutoClient, _args: argparse.Namespace) -> Any
     return client.request_json("GET", "/capabilities")
 
 
+def command_profiles(client: OhAutoClient, _args: argparse.Namespace) -> Any:
+    return client.request_json("GET", "/profiles")
+
+
+def command_profile(client: OhAutoClient, args: argparse.Namespace) -> Any:
+    return client.request_json("GET", f"/profiles/{quote(args.profile_id, safe='')}")
+
+
 def command_admin_status(client: OhAutoClient, _args: argparse.Namespace) -> Any:
     return client.request_json("GET", "/admin/status")
 
@@ -1026,6 +1034,9 @@ def build_parser() -> argparse.ArgumentParser:
     add_simple_command(subparsers, "health", command_health)
     add_simple_command(subparsers, "version", command_version)
     add_simple_command(subparsers, "capabilities", command_capabilities)
+    add_simple_command(subparsers, "profiles", command_profiles)
+    profile = add_simple_command(subparsers, "profile", command_profile)
+    profile.add_argument("profile_id", nargs="?", default="musepaper2")
     add_simple_command(subparsers, "status", command_status)
 
     add_simple_command(subparsers, "admin-status", command_admin_status)

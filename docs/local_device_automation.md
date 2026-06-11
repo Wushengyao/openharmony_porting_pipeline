@@ -19,6 +19,7 @@ export OH_AUTO_DEVICE_ID=default
 ```bash
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py health
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py capabilities
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py profile musepaper2
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py preflight
 ```
 
@@ -77,6 +78,7 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py admin-restart --delay-sec 1
 sleep 8
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py version
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py profile musepaper2
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py preflight --template-id musepaper2-titan
 ```
 
@@ -193,6 +195,16 @@ MusePaper2 porting convention:
   `F:\images\PortingTest\6.0\openharmony-spacemit-k1-musepaper2.zip`
 - Fresh OH6.1 test packages after each successful build:
   `F:\images\PortingTest\6.1\openharmony-spacemit-k1-musepaper2.zip`
+
+On service `0.3.0+`, prefer querying the rig profile before flash/smoke loops:
+
+```bash
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py profile musepaper2
+```
+
+The profile is the service-side source of truth for the MusePaper2 Titan
+template, USB HDC target, UART port and baudrates, staging image paths, and the
+current `rc0` artifact/hash.
 
 Before using a direct `F:\...` path, confirm `oh_autoctl.py capabilities`
 shows `F:\images` or the exact staging directory in `allowed_local_roots`. If

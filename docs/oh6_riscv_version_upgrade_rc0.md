@@ -189,6 +189,13 @@ Current known values:
 | Known-good OH6.0 image | `F:\images\PortingTest\6.0\openharmony-spacemit-k1-musepaper2.zip` |
 | Preferred OH6.1 Windows staging | `F:\images\PortingTest\6.1\openharmony-spacemit-k1-musepaper2.zip` |
 
+On oh-auto service `0.3.0+`, fetch these values from the Windows-side rig
+profile before running a new device loop:
+
+```bash
+python3 tools/oh_autoctl.py profile musepaper2
+```
+
 If Linux cannot see the Windows staging directory and `/capabilities` reports
 `local_shell=false`, upload the Linux-built zip and flash the artifact id. Do
 not claim the image was copied to `F:\images\PortingTest\6.1` unless the
