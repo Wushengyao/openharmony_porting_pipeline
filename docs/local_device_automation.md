@@ -43,6 +43,47 @@ validation can proceed. It is acceptable to add a bounded wait helper that polls
 for service recovery and then runs the normal flash/smoke workflow, but do not
 leave an unbounded background flash job running.
 
+### Trusted Windows Service Maintenance
+
+The Windows oh-auto service may expose trusted admin operations to this 184-side
+Agent. Discover them before attempting service edits:
+
+```bash
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py admin-status
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py capabilities
+```
+
+If `admin-status.enabled=true`, the Agent may use:
+
+- `admin-shell "COMMAND"` for Windows PowerShell commands in the oh-auto repo root.
+- `admin-read-file PATH --out LOCAL_FILE` and `admin-write-file PATH --from-file LOCAL_FILE`.
+- `admin-run-check py_compile` for quick syntax checks.
+- `admin-run-check pytest` before behavior-sensitive changes.
+- `admin-restart` after code/config changes that require a service reload.
+
+Focus edits on these paths unless the current task clearly points elsewhere:
+
+- `src/oh_auto/api.py`, `src/oh_auto/models.py`, `src/oh_auto/admin.py`
+- `src/oh_auto/flash.py`, `src/oh_auto/serial_client.py`, `src/oh_auto/storage.py`
+- `scripts/oh_autoctl.py`
+- `config/oh-auto.yaml` for local runtime config
+- `config/flash-templates/*.yaml` for board flashing workflows
+- `scripts/start_oh_auto.ps1`, `scripts/restart_oh_auto.ps1`, tunnel/watchdog scripts
+
+After a self-maintenance change, run at least:
+
+```bash
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py admin-run-check py_compile --command-timeout-sec 60
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py admin-restart --delay-sec 1
+sleep 8
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py version
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py preflight --template-id musepaper2-titan
+```
+
+Use admin shell for trusted maintenance only. Do not run broad destructive
+cleanup commands unless the exact target path is verified and inside the oh-auto
+workspace or configured runtime data directory.
+
 If job events or logs contain `OperationalError: database or disk is full`, do
 not treat the board, HDC, or Titan flashing as the root cause. Stop submitting
 device jobs and inspect the service state without creating more device work:
@@ -74,8 +115,8 @@ old generated artifacts/runs under the runtime `data_dir` reported by
 - Always run discovery before device operations: `oh_autoctl.py capabilities`.
 - Always run preflight before flashing: `oh_autoctl.py preflight --template-id musepaper2-titan`.
 - Interpret preflight as flash-job submission readiness, not proof of Titan burn
-  mode. In service version `0.1.0`, Titan burn mode is only confirmed by flash
-  events such as `titan_fastboot_found`.
+  mode. On service version `0.2.0+`, use `oh_autoctl.py wait-titan-fastboot`
+  after `reboot fastboot` when the loop needs explicit Titan burn-mode evidence.
 - Treat all device operations as jobs. Persist every returned `job_id` in the build log before waiting.
 - If a POST request times out after a `job_id` was returned, never resubmit the same flash blindly. Query the existing `job_id`.
 - If the network drops, first query `oh_autoctl.py job JOB_ID`, then resume logs/events.
@@ -133,10 +174,18 @@ ARTIFACT_ID=$(python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/
 
 If the image already exists on the Windows host under `F:\images` and is inside
 `allowed_local_roots`, prefer passing that Windows path as `--image` instead of
-uploading it from Linux. This avoids duplicate artifact copies. As of service
-`0.1.0`, `oh_autoctl.py upload` has no destination-path argument and cannot
-place a Linux-built zip directly into `F:\images`; when the image exists only on
-Linux, upload it and flash the returned artifact id.
+uploading it from Linux. This avoids duplicate artifact copies. On service
+`0.2.0+`, when the image exists only on Linux but the loop or test team requires
+the canonical Windows path, upload once and promote the artifact:
+
+```bash
+ARTIFACT_ID=$(python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py upload /path/to/openharmony-spacemit-k1-musepaper2.zip --id-only)
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py promote-artifact "$ARTIFACT_ID" --dest "F:\images\PortingTest\6.1\openharmony-spacemit-k1-musepaper2.zip"
+```
+
+The promote operation is Windows-side, uses a temporary file plus atomic replace,
+returns `dest_path`, `size`, `sha256`, and `mtime`, and rejects destinations
+outside `allowed_local_roots`.
 
 MusePaper2 porting convention:
 
@@ -161,6 +210,9 @@ Storage policy:
 - Successful `musepaper2-titan` flash jobs auto-delete the extracted image
   directory via `cleanup_path`; failed jobs may keep extracted data under
   `F:\oh-auto-data\runs\<job_id>` for debugging.
+- Use `oh_autoctl.py download-artifact ARTIFACT_ID --out /linux/path` for pulled
+  screenshots, bugreports, and logs. It streams artifact bytes from Windows and
+  verifies `X-Artifact-Sha256`; avoid base64 HDC shell workarounds.
 
 4. Submit flash job:
 
@@ -244,10 +296,13 @@ Important command-shape notes from OH6.1 MusePaper2 validation:
 
 For screenshots, `snapshot_display -f /data/local/tmp/name.jpeg` proves the
 display pipeline can capture a frame and `pull` saves it as a Windows-side
-artifact. Service version `0.1.0` returns artifact metadata from
-`GET /artifacts/{id}` but no binary content, so use a previously validated
-small-file base64 HDC path when the Linux-side report needs local visual
-inspection, or request a service-side artifact download endpoint.
+artifact. On service `0.2.0+`, download the artifact content directly:
+
+```bash
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py download-artifact ARTIFACT_ID --out /path/to/records/screenshot.jpeg
+```
+
+The CLI streams bytes from Windows and verifies the returned sha256 header.
 
 For full-device evidence after boot, use the service-side bugreport operation
 instead of hand-rolling a large set of HDC pulls:
@@ -310,7 +365,7 @@ saved, or when the capture job is clearly blocking the next serial operation.
 For post-HDC log capture, use finite HDC shell snapshots first. The
 service-side `oh_autoctl.py hilog` subcommand is useful when the service can
 bound the capture, but long-running invocations may time out as failed jobs on
-service version `0.1.0`; always inspect `oh_autoctl.py status` afterward.
+older service versions; always inspect `oh_autoctl.py status` afterward.
 
 For a MusePaper2 image that already panic-stopped, HDC and serial command jobs
 may both report no usable shell even when the automation job itself is marked

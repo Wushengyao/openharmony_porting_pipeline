@@ -170,10 +170,30 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
 
 `preflight ok=true` means the host, template, lock state, and submission path
 are ready for a flash job. It does not prove the board is already in Titan burn
-mode; `titan_burn_mode_confirmed` remains `null` because service version `0.1.0`
-only exposes Titan detection inside a flash job. The authoritative burn-mode
-evidence is a flash event such as `titan_fastboot_found`, followed by
-`titan_flash` starting or succeeding.
+mode. On service `0.2.0+`, after `reboot fastboot`, use
+`oh_autoctl.py wait-titan-fastboot --template-id musepaper2-titan --timeout-sec 30`
+for standalone burn-mode evidence. During a flash job, the authoritative
+burn-mode evidence is still a flash event such as `titan_fastboot_found`,
+followed by `titan_flash` starting or succeeding.
+
+If the Windows oh-auto service reports admin support, the 184-side Agent is
+trusted to maintain the service itself:
+
+```bash
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py admin-status
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py admin-shell "Get-ChildItem"
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py admin-run-check py_compile --command-timeout-sec 60
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py admin-restart --delay-sec 1
+```
+
+For oh-auto service improvements, inspect and edit these files first:
+`src/oh_auto/api.py`, `src/oh_auto/models.py`, `src/oh_auto/admin.py`,
+`src/oh_auto/flash.py`, `src/oh_auto/serial_client.py`,
+`src/oh_auto/storage.py`, `scripts/oh_autoctl.py`,
+`config/flash-templates/*.yaml`, and `config/oh-auto.yaml`. After edits, run
+`admin-run-check py_compile`; run `admin-run-check pytest` for behavior changes;
+then `admin-restart` and re-run `version`, `capabilities`, and
+`preflight --template-id musepaper2-titan`.
 
 For MusePaper2 Titan flashing, the template id is `musepaper2-titan`. Upload the
 image when it is on this Linux server, then submit the flash job and persist the
@@ -276,10 +296,15 @@ control image is
 directory is not in `allowed_local_roots`, use `oh_autoctl.py upload` and flash
 the artifact id instead of the direct `F:\...` path. Prefer direct `F:\images`
 paths when the image is already on Windows to avoid duplicate artifact uploads.
-As of service `0.1.0`, `oh_autoctl.py upload` accepts only a source file and
-does not copy the Linux zip to an arbitrary `F:\images` destination; if no
-Windows-side copy operation is available, upload from Linux and flash the
-returned artifact id.
+On service `0.2.0+`, if the image exists only on Linux but must be staged at
+the canonical Windows path, run `oh_autoctl.py upload`, then
+`oh_autoctl.py promote-artifact ARTIFACT_ID --dest "F:\images\PortingTest\6.1\openharmony-spacemit-k1-musepaper2.zip"`.
+The promote operation is Windows-side, uses a temporary file plus atomic replace,
+returns `dest_path`, `size`, `sha256`, and `mtime`, and rejects destinations
+outside `allowed_local_roots`.
+Use `oh_autoctl.py download-artifact ARTIFACT_ID --out /linux/path` to retrieve
+pulled screenshots, bugreports, and logs from Windows artifacts; avoid base64
+HDC shell workarounds for binary evidence.
 The helper upload path uses Python `requests` multipart first when available,
 then falls back to the built-in HTTP client. If small artifact uploads succeed
 but MusePaper2 image uploads fail with HTTP 400 body-parse errors or HTTP 500,
@@ -289,8 +314,8 @@ responses, and a current `smoke` result; do not submit a flash job until an
 artifact id is returned or the Windows allowed local roots include the target
 image directory.
 If job logs/events show `OperationalError: database or disk is full`, stop
-submitting device jobs: service `0.1.0` can leave already-finished commands as
-stale `running`/`queued` jobs, causing preflight to fail with
+submitting device jobs: older service versions can leave already-finished
+commands as stale `running`/`queued` jobs, causing preflight to fail with
 `no_running_jobs=false`. The current Windows service stores runtime data under
 `F:\oh-auto-data`; the old C-drive `data\artifacts`/`data\runs` accumulation has
 been cleaned and should not be used for new outputs. Free/clean old generated
@@ -305,9 +330,11 @@ Successful `musepaper2-titan` jobs clean extracted image directories via
 During MusePaper2 OH6.1 boot-failure iterations, do not trust `hdc shell
 reboot fastboot` process success by itself. HDC can return code 0 while all USB
 and UART targets are still Offline, or while stdout contains
-`ExecuteCommand need connect-key`. Treat an actual flash job that reaches
-`wait_titan_fastboot` and emits `titan_fastboot_found` as the authoritative
-burn-mode signal. When HDC lists multiple targets, run
+`ExecuteCommand need connect-key`. On service `0.2.0+`, after issuing
+`reboot fastboot`, run `oh_autoctl.py wait-titan-fastboot --template-id musepaper2-titan --timeout-sec 30`
+for explicit Titan burn-mode evidence; during a flash job, the
+`titan_fastboot_found` event remains the authoritative in-job signal. When HDC
+lists multiple targets, run
 `oh_autoctl.py connect --connect-channel usb --connect-target 0123456789ABCDEF`
 before shell/smoke checks, or pass the same connect options to `shell`/`smoke`.
 For post-flash validation, do not trust template `wait_hdc` or template smoke

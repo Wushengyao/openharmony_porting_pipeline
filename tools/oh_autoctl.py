@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import mimetypes
 import os
@@ -11,7 +12,7 @@ import uuid
 from http.client import HTTPConnection, HTTPSConnection
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8787/api/v1"
@@ -127,6 +128,45 @@ class OhAutoClient:
             raise ApiError(response.status, response.reason, text)
         return json.loads(text)
 
+    def download(self, artifact_id: str, out_path: Path) -> Any:
+        out_path = out_path.expanduser().resolve()
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = out_path.with_name(f".{out_path.name}.tmp-{uuid.uuid4().hex}")
+        digest = hashlib.sha256()
+        size = 0
+        conn = self._connection(None)
+        try:
+            conn.request(
+                "GET",
+                self._url_path(f"/artifacts/{artifact_id}/content"),
+                headers=self._headers(),
+            )
+            response = conn.getresponse()
+            if response.status >= 400:
+                body = response.read().decode("utf-8", errors="replace")
+                raise ApiError(response.status, response.reason, body)
+            remote_sha256 = response.getheader("X-Artifact-Sha256")
+            with temp_path.open("wb") as handle:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+                    size += len(chunk)
+                    handle.write(chunk)
+        finally:
+            conn.close()
+        temp_path.replace(out_path)
+        local_sha256 = digest.hexdigest()
+        return {
+            "artifact_id": artifact_id,
+            "out_path": str(out_path),
+            "size": size,
+            "sha256": local_sha256,
+            "remote_sha256": remote_sha256,
+            "sha256_match": remote_sha256 in {None, local_sha256},
+        }
+
     def stream_events(self, job_id: str) -> None:
         conn = self._connection(None)
         try:
@@ -177,6 +217,82 @@ def command_capabilities(client: OhAutoClient, _args: argparse.Namespace) -> Any
     return client.request_json("GET", "/capabilities")
 
 
+def command_admin_status(client: OhAutoClient, _args: argparse.Namespace) -> Any:
+    return client.request_json("GET", "/admin/status")
+
+
+def command_admin_list_files(client: OhAutoClient, args: argparse.Namespace) -> Any:
+    return client.request_json("GET", f"/admin/files?path={quote(args.path)}")
+
+
+def command_admin_read_file(client: OhAutoClient, args: argparse.Namespace) -> Any:
+    result = client.request_json(
+        "GET",
+        f"/admin/files/content?path={quote(args.path)}&encoding={quote(args.encoding)}",
+    )
+    if args.out:
+        Path(args.out).expanduser().write_text(result["content"], encoding=args.encoding)
+        return {
+            "path": result["path"],
+            "out": args.out,
+            "encoding": args.encoding,
+            "size": result["size"],
+        }
+    if args.content_only:
+        print(result["content"], end="")
+        return None
+    return result
+
+
+def command_admin_write_file(client: OhAutoClient, args: argparse.Namespace) -> Any:
+    content = Path(args.from_file).expanduser().read_text(encoding=args.encoding)
+    return client.request_json(
+        "PUT",
+        "/admin/files/content",
+        {
+            "path": args.path,
+            "content": content,
+            "encoding": args.encoding,
+            "create_parent": not args.no_create_parent,
+        },
+    )
+
+
+def command_admin_shell(client: OhAutoClient, args: argparse.Namespace) -> Any:
+    command = args.command if len(args.command) != 1 else args.command[0]
+    if isinstance(command, list):
+        command = " ".join(command)
+    payload: dict[str, Any] = {
+        "command": command,
+        "timeout_sec": args.command_timeout_sec,
+    }
+    if args.cwd:
+        payload["cwd"] = args.cwd
+    return client.request_json(
+        "POST",
+        "/admin/shell",
+        payload,
+        timeout_sec=args.command_timeout_sec + 5,
+    )
+
+
+def command_admin_run_check(client: OhAutoClient, args: argparse.Namespace) -> Any:
+    return client.request_json(
+        "POST",
+        "/admin/checks/run",
+        {"check": args.check, "timeout_sec": args.command_timeout_sec},
+        timeout_sec=args.command_timeout_sec + 5,
+    )
+
+
+def command_admin_restart(client: OhAutoClient, args: argparse.Namespace) -> Any:
+    return client.request_json(
+        "POST",
+        "/admin/restart",
+        {"delay_sec": args.delay_sec},
+    )
+
+
 def command_status(client: OhAutoClient, args: argparse.Namespace) -> Any:
     return client.request_json("GET", f"/devices/{args.device_id}/status")
 
@@ -211,6 +327,9 @@ def command_preflight(client: OhAutoClient, args: argparse.Namespace) -> Any:
     template = templates.get(args.template_id, {})
     step_types = set(template.get("step_types") or [])
     titan_flash_template = {"wait_titan_fastboot", "titan_flash"}.issubset(step_types)
+    wait_titan_api_available = bool(
+        capabilities.get("operations", {}).get("wait_titan_fastboot")
+    )
     running_jobs = status.get("running_jobs", [])
     checks = {
         "health_ok": health.get("status") == "ok",
@@ -237,9 +356,14 @@ def command_preflight(client: OhAutoClient, args: argparse.Namespace) -> Any:
     flash_job_submittable = host_ready and (checks["device_connected"] or titan_flash_template)
     notes = []
     if titan_flash_template:
-        notes.append(
-            "Titan burn mode is not directly probed by preflight; it is checked inside the flash job."
-        )
+        if wait_titan_api_available:
+            notes.append(
+                "Preflight does not change device state; after reboot fastboot, run wait-titan-fastboot for direct Titan burn-mode evidence."
+            )
+        else:
+            notes.append(
+                "Titan burn mode is not directly probed by preflight; it is checked inside the flash job."
+            )
     if not checks["device_connected"] and titan_flash_template:
         notes.append(
             "HDC Offline can be normal in Titan burn mode and does not by itself prove the board is absent."
@@ -252,8 +376,15 @@ def command_preflight(client: OhAutoClient, args: argparse.Namespace) -> Any:
         "flash_job_submittable": flash_job_submittable,
         "titan_burn_mode_confirmed": None,
         "burn_mode_probe": {
-            "available": False,
-            "reason": "oh-auto exposes wait_titan_fastboot only as part of a flash job",
+            "available": wait_titan_api_available,
+            "command": (
+                f"oh_autoctl.py wait-titan-fastboot --template-id {args.template_id} --timeout-sec 30"
+                if wait_titan_api_available
+                else None
+            ),
+            "reason": None
+            if wait_titan_api_available
+            else "oh-auto exposes wait_titan_fastboot only as part of a flash job",
         },
         "health": health,
         "template_id": args.template_id,
@@ -329,6 +460,24 @@ def command_upload(client: OhAutoClient, args: argparse.Namespace) -> Any:
         print(result["artifact_id"])
         return None
     return result
+
+
+def command_download_artifact(client: OhAutoClient, args: argparse.Namespace) -> Any:
+    result = client.download(args.artifact_id, Path(args.out))
+    if not result["sha256_match"]:
+        raise RuntimeError(
+            f"Downloaded sha256 mismatch: local={result['sha256']} remote={result['remote_sha256']}"
+        )
+    return result
+
+
+def command_promote_artifact(client: OhAutoClient, args: argparse.Namespace) -> Any:
+    return client.request_json(
+        "POST",
+        f"/artifacts/{args.artifact_id}/promote",
+        {"dest_path": args.dest, "overwrite": not args.no_overwrite},
+        timeout_sec=args.timeout_sec,
+    )
 
 
 def command_push(client: OhAutoClient, args: argparse.Namespace) -> Any:
@@ -427,7 +576,13 @@ def command_serial(client: OhAutoClient, args: argparse.Namespace) -> Any:
 
 
 def command_serial_log(client: OhAutoClient, args: argparse.Namespace) -> Any:
-    payload: dict[str, Any] = {"timeout_sec": args.capture_timeout_sec}
+    payload: dict[str, Any] = {
+        "timeout_sec": args.capture_timeout_sec,
+        "idle_timeout_sec": args.idle_timeout_sec,
+        "max_bytes": args.max_bytes,
+        "timestamp_lines": not args.no_timestamp,
+        "encoding": args.encoding,
+    }
     if args.port:
         payload["port"] = args.port
     if args.baudrate:
@@ -466,6 +621,26 @@ def command_flash(client: OhAutoClient, args: argparse.Namespace) -> Any:
         {"template_id": args.template_id, "artifacts": artifacts, "params": params},
     )
     return wait_if_requested(client, job, args)
+
+
+def command_wait_titan_fastboot(client: OhAutoClient, args: argparse.Namespace) -> Any:
+    payload: dict[str, Any] = {
+        "template_id": args.template_id,
+        "params": parse_key_value_list(args.param),
+        "timeout_sec": args.timeout_sec,
+    }
+    if args.interval_sec is not None:
+        payload["interval_sec"] = args.interval_sec
+    if args.list_timeout_sec is not None:
+        payload["list_timeout_sec"] = args.list_timeout_sec
+    if args.serial:
+        payload["serial"] = args.serial
+    return client.request_json(
+        "POST",
+        f"/devices/{args.device_id}/wait_titan_fastboot",
+        payload,
+        timeout_sec=args.timeout_sec + 10,
+    )
 
 
 def command_wait(client: OhAutoClient, args: argparse.Namespace) -> Any:
@@ -853,6 +1028,35 @@ def build_parser() -> argparse.ArgumentParser:
     add_simple_command(subparsers, "capabilities", command_capabilities)
     add_simple_command(subparsers, "status", command_status)
 
+    add_simple_command(subparsers, "admin-status", command_admin_status)
+
+    admin_list = add_simple_command(subparsers, "admin-list-files", command_admin_list_files)
+    admin_list.add_argument("path", nargs="?", default=".")
+
+    admin_read = add_simple_command(subparsers, "admin-read-file", command_admin_read_file)
+    admin_read.add_argument("path")
+    admin_read.add_argument("--encoding", default="utf-8")
+    admin_read.add_argument("--out")
+    admin_read.add_argument("--content-only", action="store_true")
+
+    admin_write = add_simple_command(subparsers, "admin-write-file", command_admin_write_file)
+    admin_write.add_argument("path")
+    admin_write.add_argument("--from-file", required=True)
+    admin_write.add_argument("--encoding", default="utf-8")
+    admin_write.add_argument("--no-create-parent", action="store_true")
+
+    admin_shell = add_simple_command(subparsers, "admin-shell", command_admin_shell)
+    admin_shell.add_argument("command", nargs="+")
+    admin_shell.add_argument("--cwd")
+    admin_shell.add_argument("--command-timeout-sec", type=float, default=300)
+
+    admin_check = add_simple_command(subparsers, "admin-run-check", command_admin_run_check)
+    admin_check.add_argument("check", choices=["py_compile", "pytest"], default="py_compile")
+    admin_check.add_argument("--command-timeout-sec", type=float, default=300)
+
+    admin_restart = add_simple_command(subparsers, "admin-restart", command_admin_restart)
+    admin_restart.add_argument("--delay-sec", type=float, default=2)
+
     connect = add_simple_command(subparsers, "connect", command_connect)
     add_connect_arguments(connect, required_channel=True)
 
@@ -880,6 +1084,15 @@ def build_parser() -> argparse.ArgumentParser:
     upload = add_simple_command(subparsers, "upload", command_upload)
     upload.add_argument("file")
     upload.add_argument("--id-only", action="store_true")
+
+    download = add_simple_command(subparsers, "download-artifact", command_download_artifact)
+    download.add_argument("artifact_id")
+    download.add_argument("--out", required=True)
+
+    promote = add_simple_command(subparsers, "promote-artifact", command_promote_artifact)
+    promote.add_argument("artifact_id")
+    promote.add_argument("--dest", required=True)
+    promote.add_argument("--no-overwrite", action="store_true")
 
     push = add_job_command(subparsers, "push", command_push)
     add_connect_arguments(push)
@@ -931,6 +1144,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Service-side serial capture timeout; omit for service default.",
     )
+    serial_log.add_argument("--idle-timeout-sec", type=float, default=None)
+    serial_log.add_argument("--max-bytes", type=int, default=None)
+    serial_log.add_argument("--no-timestamp", action="store_true")
+    serial_log.add_argument("--encoding", default="utf-8")
 
     hilog = add_job_command(subparsers, "hilog", command_hilog)
     hilog.add_argument(
@@ -951,6 +1168,16 @@ def build_parser() -> argparse.ArgumentParser:
     flash.add_argument("--image", help="Artifact id or allowed Windows local path for artifacts.image")
     flash.add_argument("--artifact", action="append", default=[], help="Artifact mapping, name=value")
     flash.add_argument("--param", action="append", default=[], help="Template parameter, name=value")
+
+    wait_titan = add_simple_command(
+        subparsers, "wait-titan-fastboot", command_wait_titan_fastboot
+    )
+    wait_titan.add_argument("--template-id", default="musepaper2-titan")
+    wait_titan.add_argument("--timeout-sec", type=float, default=30)
+    wait_titan.add_argument("--interval-sec", type=float, default=None)
+    wait_titan.add_argument("--list-timeout-sec", type=float, default=None)
+    wait_titan.add_argument("--serial")
+    wait_titan.add_argument("--param", action="append", default=[], help="Template parameter, name=value")
 
     wait = add_simple_command(subparsers, "wait", command_wait)
     wait.add_argument("job_id")

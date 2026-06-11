@@ -149,6 +149,13 @@ is not enough.
 Treat template `wait_hdc` events with `[Empty]` as not connected; rerun
 `wait-connected` and strict smoke after flashing.
 
+When oh-auto reports `admin.enabled=true`, the 184-side Agent may maintain the
+Windows service through `tools/oh_autoctl.py admin-*` commands. Use
+`admin-shell` for trusted PowerShell work in the service repo, edit primarily
+under `src/oh_auto/`, `scripts/oh_autoctl.py`, `config/flash-templates/`, and
+`config/oh-auto.yaml`, then run `admin-run-check py_compile` or `pytest` and
+`admin-restart` before returning to device operations.
+
 For the MusePaper2 OH6.1 porting loop, stage freshly built Windows-side test
 packages under `F:\images\PortingTest\6.1\`. The known-good OH6.0 control image
 is `F:\images\PortingTest\6.0\openharmony-spacemit-k1-musepaper2.zip`. Direct
@@ -158,7 +165,11 @@ zip with `oh_autoctl.py upload` and flash the returned artifact id. Prefer a
 direct `F:\images` path when the zip is already on Windows to avoid duplicate
 artifact copies. Current oh-auto runtime data lives under `F:\oh-auto-data`, and
 successful `musepaper2-titan` jobs clean extracted image directories through the
-template `cleanup_path` step.
+template `cleanup_path` step. With oh-auto service `0.2.0+`, use
+`oh_autoctl.py promote-artifact ARTIFACT_ID --dest "F:\images\PortingTest\6.1\openharmony-spacemit-k1-musepaper2.zip"`
+to atomically stage an uploaded Linux artifact at the canonical Windows path,
+and use `oh_autoctl.py download-artifact ARTIFACT_ID --out /linux/path` to copy
+pulled screenshots, bugreports, and logs back to the Linux record directory.
 
 MusePaper2 can enter Titan flashing mode with `reboot fastboot` from HDC or the
 serial console:
@@ -166,6 +177,7 @@ serial console:
 ```bash
 python3 tools/oh_autoctl.py shell "reboot fastboot" --wait
 python3 tools/oh_autoctl.py serial "reboot fastboot" --wait
+python3 tools/oh_autoctl.py wait-titan-fastboot --template-id musepaper2-titan --timeout-sec 30
 ```
 
 Run the plan-only OpenHarmony porting execution assistant after a single
