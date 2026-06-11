@@ -188,6 +188,28 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py reboot --mode normal --wait --connect-channel usb --connect-target 0123456789ABCDEF
 ```
 
+For native HATS smoke runs on a live device, prefer the evidence-producing
+runner instead of repeating upload/push/chmod/run/pull commands by hand. Build
+the HATS binaries first with `test/xts/hats/build.py`, then point the runner at
+the generated binary directory:
+
+```bash
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_hats_native_runner.py \
+  --binary-dir /path/to/ohos/out/musepaper2/tests/moduletest/hats/syscalls/fileio \
+  --out /path/to/work/records/iterationNNN/hats_native_batch \
+  --iteration-tag iterationNNN \
+  --connect-channel usb \
+  --connect-target 0123456789ABCDEF \
+  HatsOpenatTest HatsRenameatTest
+```
+
+The runner writes per-binary artifact ids, push/chmod/run/pull JSON files,
+`hats_native_run_status.tsv`, `hats_native_result_summary.json`, and
+`hats_native_result_summary.tsv`. Use repeated `--filter
+BINARY=GTEST_FILTER` for known test-expectation hazards, and repeated
+`--cleanup-path /data/local/tmp/path` for fixed temporary paths that should be
+removed before and after the batch.
+
 Serial console access is available through the same automation service. For the
 current MusePaper2 test setup, `/capabilities` reports `COM4` at `115200`, but
 always use the service defaults or pass `--port`/`--baudrate` explicitly instead
