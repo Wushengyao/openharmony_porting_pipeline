@@ -317,6 +317,38 @@ may both report no usable shell even when the automation job itself is marked
 successful. Inspect stdout for strings such as `need connect-key`, missing
 prompts, or empty command output before assuming the device can recover itself.
 
+## Boot Escape Policy
+
+Use the boot escape watchdog differently across phases.
+
+For unstable images that may panic before HDC or serial command access, keep the
+strict debug profile:
+
+```text
+startup.porting.boot_escape.timeout_sec=60
+startup.porting.boot_escape.accept_boot_completed=false
+startup.porting.boot_escape.ack=false
+```
+
+Only set `startup.porting.boot_escape.ack=true` after HDC or serial command
+access has been verified. This prevents a board from remaining stuck in a
+pre-HDC failure state when no one is near the device.
+
+For an `rc0` or test-team candidate that already reaches boot completed, relax
+the profile:
+
+```text
+startup.porting.boot_escape.timeout_sec=120
+startup.porting.boot_escape.accept_boot_completed=true
+startup.porting.boot_escape.ack=false
+```
+
+This prevents a healthy boot-completed system from unexpectedly returning to
+fastboot just because the test team did not run the automation ack command,
+while still preserving an escape route if boot completed is never reached.
+Automation smoke may still set `startup.porting.boot_escape.ack=true` after
+strict HDC validation.
+
 ## Failure Handling
 
 - `agent_unreachable`: automation service cannot be reached. Check tunnel, VPN, or Windows service.

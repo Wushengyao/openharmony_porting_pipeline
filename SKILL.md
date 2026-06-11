@@ -119,6 +119,19 @@ debt; missing, fake-marked, hash-mismatched, or ABI-mismatched entries block the
 run. Use `--prefer-existing-real-dependencies` only after existing fake
 placeholders have been reviewed or removed.
 
+For OH6.x RISC-V version-upgrade work that must progress from four-tree
+analysis through build closure, flash/recovery automation, UI bring-up, and a
+test-team `rc0`, read the rc0 runbook before editing source or widening tests:
+
+```bash
+cat /home/ve/.codex/skills/openharmony_porting_pipeline/docs/oh6_riscv_version_upgrade_rc0.md
+```
+
+Use that runbook to keep the loop ordered as recovery-first -> boot/UI ->
+rc0 freeze -> layered test expansion. Do not block a requested `rc0` on full
+XTS/HATS/ACTS unless the user explicitly makes formal test pass the release
+gate.
+
 Aggregate multiple scenario outputs:
 
 ```bash
