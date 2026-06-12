@@ -175,6 +175,42 @@ After rc0 handoff, continue in layers:
 Use native HATS expansion to find regressions, but do not block rc0 on full
 XTS/HATS/ACTS unless the user explicitly makes it a release gate.
 
+### MusePaper2 Camera Smoke Notes
+
+For the current MusePaper2 OH6.1-rv rc0 line, keep the standard product build
+as the primary validation path:
+
+```bash
+./build.sh --product-name musepaper2@spacemit --ccache --prebuilt-sdk
+```
+
+Do not switch the rc0 candidate to `--device-type tablet` merely because the
+hardware is tablet-like. In the first MusePaper2 OH6.1 run, a tablet-runtime
+build fixed Camera HAP preinstall visibility but selected a bad Camera runtime
+path/layout. The standard product path keeps
+`const.product.devicetype=default` and restores the default Camera UI.
+
+When validating Camera after fresh flash or after accepting permission prompts:
+
+- Use `uitest uiInput click 745 1045` or `/bin/uinput -T -c 745 1045` for the
+  Allow button on the 1200x1920 MusePaper2 permission dialog.
+- After permissions, force a cold Camera launch before judging the preview:
+
+```bash
+aa force-stop com.ohos.camera
+aa start -b com.ohos.camera -a com.ohos.camera.MainAbility
+sleep 12
+snapshot_display -f /data/local/tmp/camera_preview.jpeg
+hidumper -s CameraService
+```
+
+A hot-started Camera window can show the default UI while CameraService still
+reports `Number of Active Cameras:[0]` and `Number of Camera sessions:[0]`.
+Treat that as an invalid preview verdict. A positive rc0 Camera smoke should
+have at least one active Camera session, a repeat stream, no kernel panic, and
+if capture is checked, `PhotoOutputNapi::Capture` completion or equivalent HDI
+capture evidence.
+
 ## MusePaper2 Rig Profile
 
 Current known values:
