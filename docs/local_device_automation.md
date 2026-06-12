@@ -174,6 +174,15 @@ burn-mode proof is the flash event `titan_fastboot_found`.
 ARTIFACT_ID=$(python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py upload /path/to/openharmony-spacemit-k1-musepaper2.zip --id-only)
 ```
 
+For large MusePaper2 zip packages, pass a longer global client timeout before
+the `upload` subcommand. The default HTTP timeout may expire before a 700MB+
+artifact finishes transferring even though the service is healthy:
+
+```bash
+ARTIFACT_ID=$(python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py \
+  --timeout-sec 900 upload /path/to/openharmony-spacemit-k1-musepaper2.zip --id-only)
+```
+
 If the image already exists on the Windows host under `F:\images` and is inside
 `allowed_local_roots`, prefer passing that Windows path as `--image` instead of
 uploading it from Linux. This avoids duplicate artifact copies. On service
@@ -262,6 +271,17 @@ before shell/smoke operations, or pass the connect options inline:
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py connect --connect-channel usb --connect-target 0123456789ABCDEF
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py shell --connect-channel usb --connect-target 0123456789ABCDEF "echo oh_auto_agent_probe" --wait
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py smoke --wait-connected --connect-channel usb --connect-target 0123456789ABCDEF --set-boot-escape-ack
+```
+
+When a device command contains arguments beginning with `-`, pass the whole
+device-side command as a single positional string after `--`. Otherwise local
+`argparse` may treat options such as `-l`, `-n`, `-s`, or `-a` as
+`oh_autoctl.py` options:
+
+```bash
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py shell \
+  --wait --connect-channel usb --connect-target 0123456789ABCDEF \
+  -- "hidumper -s BluetoothHost -a -br"
 ```
 
 Do not accept a shell job as successful until stdout has been inspected for the
