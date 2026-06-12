@@ -639,6 +639,17 @@ Never blindly resubmit a flash after a network timeout. Query the known job with
   target-evidenced `device/board/<vendor>/<board>/audio_alsa` text/source
   closure instead of removing the audio adapter feature; keep any non-text
   payloads as fake-interface dependency debt.
+- For RISC-V64 HDF audio/runtime failures where `audio_host` loads
+  `libaudio_manager_service_*.z.so` but does not load the vendor impl and
+  `AudioPolicyService` reports 0 local input/output devices, check
+  `drivers/hdf_core/interfaces/inner_api/utils/hdf_base.h` first. Older
+  `HDF_LIBRARY_FULL_PATH()` guards may only treat `__aarch64__` and `__x86_64__`
+  as 64-bit, causing RISC-V64 builds to dlopen `/vendor/lib/*.z.so` even though
+  the installed ELF64 libraries are under `/vendor/lib64`. Add a narrow
+  `defined(__riscv) && __riscv_xlen == 64` branch, then validate by confirming
+  the target library string is `/vendor/lib64/...`, `audio_manager_service`
+  appears in `HdfDeviceServiceManager`, `libaudio_primary_impl_vendor.z.so` is
+  mapped in `audio_host`, and AudioPolicy local Speaker/Mic counts are nonzero.
 - When Ninja reports a missing `kernel/linux/<board-kernel>` BSP source tree,
   keep image generation enabled and use a tracked fake kernel-source marker plus
   a `build_kernel.sh` fake-output bridge for compile triage; report the real
