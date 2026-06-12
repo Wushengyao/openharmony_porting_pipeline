@@ -206,7 +206,11 @@ image when it is on this Linux server, then submit the flash job and persist the
 returned `job_id`:
 
 ```bash
-ARTIFACT_ID=$(python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py upload /path/to/openharmony-spacemit-k1-musepaper2.zip --id-only)
+ARTIFACT_ID=$(python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py \
+  --timeout-sec 1200 upload /path/to/openharmony-spacemit-k1-musepaper2.zip --id-only)
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py \
+  --timeout-sec 1200 promote-artifact "$ARTIFACT_ID" \
+  --dest "F:\images\PortingTest\6.1\openharmony-spacemit-k1-musepaper2.zip"
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py flash musepaper2-titan --image "$ARTIFACT_ID"
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py wait "$JOB_ID" --events --timeout-sec 1800
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py wait-connected --connect-channel usb --connect-target 0123456789ABCDEF --timeout-sec 240
@@ -303,8 +307,8 @@ directory is not in `allowed_local_roots`, use `oh_autoctl.py upload` and flash
 the artifact id instead of the direct `F:\...` path. Prefer direct `F:\images`
 paths when the image is already on Windows to avoid duplicate artifact uploads.
 On service `0.2.0+`, if the image exists only on Linux but must be staged at
-the canonical Windows path, run `oh_autoctl.py upload`, then
-`oh_autoctl.py promote-artifact ARTIFACT_ID --dest "F:\images\PortingTest\6.1\openharmony-spacemit-k1-musepaper2.zip"`.
+the canonical Windows path, run `oh_autoctl.py --timeout-sec 1200 upload`, then
+`oh_autoctl.py --timeout-sec 1200 promote-artifact ARTIFACT_ID --dest "F:\images\PortingTest\6.1\openharmony-spacemit-k1-musepaper2.zip"`.
 The promote operation is Windows-side, uses a temporary file plus atomic replace,
 returns `dest_path`, `size`, `sha256`, and `mtime`, and rejects destinations
 outside `allowed_local_roots`.

@@ -180,7 +180,7 @@ artifact finishes transferring even though the service is healthy:
 
 ```bash
 ARTIFACT_ID=$(python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py \
-  --timeout-sec 900 upload /path/to/openharmony-spacemit-k1-musepaper2.zip --id-only)
+  --timeout-sec 1200 upload /path/to/openharmony-spacemit-k1-musepaper2.zip --id-only)
 ```
 
 If the image already exists on the Windows host under `F:\images` and is inside
@@ -190,8 +190,11 @@ uploading it from Linux. This avoids duplicate artifact copies. On service
 the canonical Windows path, upload once and promote the artifact:
 
 ```bash
-ARTIFACT_ID=$(python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py upload /path/to/openharmony-spacemit-k1-musepaper2.zip --id-only)
-python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py promote-artifact "$ARTIFACT_ID" --dest "F:\images\PortingTest\6.1\openharmony-spacemit-k1-musepaper2.zip"
+ARTIFACT_ID=$(python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py \
+  --timeout-sec 1200 upload /path/to/openharmony-spacemit-k1-musepaper2.zip --id-only)
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py \
+  --timeout-sec 1200 promote-artifact "$ARTIFACT_ID" \
+  --dest "F:\images\PortingTest\6.1\openharmony-spacemit-k1-musepaper2.zip"
 ```
 
 The promote operation is Windows-side, uses a temporary file plus atomic replace,
