@@ -1217,7 +1217,15 @@ def build_parser() -> argparse.ArgumentParser:
     add_connect_arguments(wifi_smoke)
     wifi_smoke.add_argument("--ssid", required=True)
     wifi_smoke.add_argument("--psk", required=True)
-    wifi_smoke.add_argument("--diag-path", default="/data/local/tmp/muse_wifi_diag")
+    wifi_smoke.add_argument(
+        "--diag-path",
+        default="/system/bin/muse_wifi_diag",
+        help=(
+            "Device-side diagnostic helper path. Defaults to the MusePaper2 "
+            "OH6.1 system-installed helper; use /data/local/tmp/muse_wifi_diag "
+            "for older images where the helper was pushed manually."
+        ),
+    )
     wifi_smoke.add_argument("--connect-timeout-sec", type=int, default=45)
     wifi_smoke.add_argument("--command-timeout-sec", type=float, default=90)
     wifi_smoke.add_argument("--gateway-ping-count", type=int, default=2)

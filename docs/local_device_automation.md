@@ -207,6 +207,10 @@ MusePaper2 porting convention:
   `F:\images\PortingTest\6.0\openharmony-spacemit-k1-musepaper2.zip`
 - Fresh OH6.1 test packages after each successful build:
   `F:\images\PortingTest\6.1\openharmony-spacemit-k1-musepaper2.zip`
+- MusePaper2 OH6.1 images from iteration255 onward include the WiFi diagnostic
+  helper at `/system/bin/muse_wifi_diag`. `oh_autoctl.py wifi-smoke` defaults to
+  this path. For older images where the helper was pushed into `/data/local/tmp`,
+  pass `--diag-path /data/local/tmp/muse_wifi_diag`.
 
 On service `0.3.0+`, prefer querying the rig profile before flash/smoke loops:
 

@@ -251,6 +251,10 @@ On oh-auto service revisions after the MusePaper2 iteration254 fix,
 and executable. If it returns `diag_available=false` with
 `error=wifi_diag_helper_unavailable`, treat the result as an automation/helper
 coverage gap rather than a proved OpenHarmony WiFi association failure.
+MusePaper2 OH6.1 images from iteration255 onward install the helper as
+`/system/bin/muse_wifi_diag`, which is the default `oh_autoctl.py wifi-smoke`
+diagnostic path. For older images where the helper was pushed manually, override
+it with `--diag-path /data/local/tmp/muse_wifi_diag`.
 
 If post-flash screenshots or test logs show a stale lock-screen date, verify the
 device RTC before assuming an OH6.1 source regression. After HDC is connected,
