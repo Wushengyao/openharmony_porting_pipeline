@@ -263,6 +263,20 @@ through the OpenHarmony networking path. In that case, use
 `route_default_observation` to classify the route evidence instead of treating
 `route_has_default=false` alone as a network failure.
 
+For post-WiFi HTTPS validation, diagnose CA failures before treating them as
+network failures. If default `curl -I https://...` fails with certificate error
+60 but `curl --cacert /etc/ssl/certs/cacert.pem ...` or
+`CURL_CA_BUNDLE=/etc/ssl/certs/cacert.pem curl ...` succeeds, the CA bundle is
+valid and the remaining issue is the tool's default CA path. For MusePaper2
+OH6.1, install common CA aliases (`/system/etc/ssl/cert.pem` and
+`/system/etc/ssl/certs/ca-certificates.crt`) and check whether `/system/bin/curl`
+is a board/vendor prebuilt. If it is a prebuilt with an incompatible default CA
+path, preserve the original binary as `curl.bin` and install a small
+`/system/bin/curl` wrapper that exports `CURL_CA_BUNDLE` only when the caller
+has not already set it. Validate the final image on-device with default
+`curl -I --connect-timeout 5 --max-time 15 https://www.baidu.com` and record
+the HTTP status plus `CURL_RC`.
+
 If post-flash screenshots or test logs show a stale lock-screen date, verify the
 device RTC before assuming an OH6.1 source regression. After HDC is connected,
 use `oh_autoctl.py sync-time --wait-connected --connect-channel usb
