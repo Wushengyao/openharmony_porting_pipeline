@@ -242,6 +242,10 @@ connectivity results. For MusePaper2 WiFi, validate in this order:
 framework-level add-config/connect status, `wlan0` address, local gateway ping,
 route/default-route state, then DNS/HTTP against a lab-approved endpoint; do
 not classify public ICMP loss alone as a WiFi porting failure.
+After any credentialed WiFi probe, assume device-side HDC logs may have echoed
+the submitted command even when the oh-auto job result is redacted. Run
+`hilog -r` before collecting broad hilog evidence, and always run a plaintext
+secret scan over new iteration records before commit.
 
 If post-flash screenshots or test logs show a stale lock-screen date, verify the
 device RTC before assuming an OH6.1 source regression. After HDC is connected,
