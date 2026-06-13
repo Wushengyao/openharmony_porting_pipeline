@@ -267,6 +267,24 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py smoke --wait-connected --connect-channel usb --connect-target 0123456789ABCDEF
 ```
 
+If the lock screen or test logs show an obviously stale date after flashing,
+check whether the RTC itself is stale before treating it as a porting bug. On
+MusePaper2 this has been observed as OpenHarmony booting correctly while
+`/proc/driver/rtc`, `hwclock -r`, and the lock screen were one day behind the
+host. After HDC is available, sync system time and RTC from the build host:
+
+```bash
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py sync-time \
+  --wait-connected --connect-channel usb --connect-target 0123456789ABCDEF
+```
+
+Then run a normal reboot plus strict smoke and re-read `date`,
+`/proc/driver/rtc`, and `bootevent.boot.completed`. If the corrected RTC
+survives reboot, record it as a lab-device or automation time-sync issue rather
+than an OH6.1 source regression. Do not use a fresh HDC smoke result alone as
+proof that `bootevent.boot.completed` has already appeared; poll the boot
+parameters after the boot has settled.
+
 When HDC lists both USB and UART targets, select the concrete USB connect key
 before shell/smoke operations, or pass the connect options inline:
 

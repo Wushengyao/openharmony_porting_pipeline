@@ -231,6 +231,14 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py reboot --mode normal --wait --connect-channel usb --connect-target 0123456789ABCDEF
 ```
 
+If post-flash screenshots or test logs show a stale lock-screen date, verify the
+device RTC before assuming an OH6.1 source regression. After HDC is connected,
+use `oh_autoctl.py sync-time --wait-connected --connect-channel usb
+--connect-target 0123456789ABCDEF` to set the system clock and RTC from the
+build host, then reboot and confirm `date`, `/proc/driver/rtc`, and
+`bootevent.boot.completed`. A corrected RTC that survives reboot is lab-device
+state or automation setup debt, not a porting source blocker.
+
 For native HATS smoke runs on a live device, prefer the evidence-producing
 runner instead of repeating upload/push/chmod/run/pull commands by hand. Build
 the HATS binaries first with `test/xts/hats/build.py`, then point the runner at

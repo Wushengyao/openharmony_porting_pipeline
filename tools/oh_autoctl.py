@@ -9,6 +9,7 @@ import os
 import sys
 import time
 import uuid
+from datetime import datetime, timezone
 from http.client import HTTPConnection, HTTPSConnection
 from pathlib import Path
 from typing import Any
@@ -744,6 +745,59 @@ def command_smoke(client: OhAutoClient, args: argparse.Namespace) -> Any:
     }
 
 
+def command_sync_time(client: OhAutoClient, args: argparse.Namespace) -> Any:
+    wait_connected_result = None
+    if args.wait_connected:
+        wait_connected_result = wait_for_connected_hdc(
+            client,
+            args.device_id,
+            timeout_sec=args.wait_connected_timeout_sec,
+            interval_sec=args.wait_connected_interval_sec,
+            channel=args.connect_channel,
+            target=args.connect_target,
+            baudrate=args.connect_baudrate,
+            retry_connect=args.connect_retry,
+        )
+        if not wait_connected_result["ok"]:
+            return {
+                "ok": False,
+                "epoch_sec": None,
+                "host_utc": None,
+                "wait_connected": wait_connected_result,
+                "connect": None,
+                "result": None,
+            }
+    connect_result = connect_if_requested(client, args)
+    epoch_sec = args.epoch_sec if args.epoch_sec is not None else int(time.time())
+    host_utc = datetime.fromtimestamp(epoch_sec, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    write_rtc = "" if args.no_hwclock else "hwclock -u -w;"
+    command = (
+        "echo BEFORE; date; hwclock -r 2>&1 || true; "
+        "echo SET; "
+        f"date -u -s @{epoch_sec}; {write_rtc} "
+        "echo AFTER; date; hwclock -r 2>&1 || true; cat /proc/driver/rtc 2>/dev/null || true"
+    )
+    job = client.request_json(
+        "POST",
+        f"/devices/{args.device_id}/ops/shell",
+        {"command": command, "timeout_sec": args.command_timeout_sec},
+    )
+    result = wait_shell_and_collect(client, job, args)
+    ok = result["job"].get("status") == "succeeded" and result.get("stdout_valid") is True
+    return {
+        "ok": ok,
+        "epoch_sec": epoch_sec,
+        "host_utc": host_utc,
+        "write_rtc": not args.no_hwclock,
+        "wait_connected": wait_connected_result,
+        "connect": connect_result,
+        "result": {
+            "command": command,
+            **result,
+        },
+    }
+
+
 def normalized_text(value: Any) -> str:
     if value is None:
         return ""
@@ -1235,6 +1289,35 @@ def build_parser() -> argparse.ArgumentParser:
         default="startup.porting.boot_escape.ack",
         help="Parameter written by --set-boot-escape-ack.",
     )
+
+    sync_time = add_simple_command(subparsers, "sync-time", command_sync_time)
+    add_connect_arguments(sync_time)
+    sync_time.add_argument(
+        "--wait-connected",
+        action="store_true",
+        help="Wait for a real Connected/Online/Ready HDC target before setting time.",
+    )
+    sync_time.add_argument("--wait-connected-timeout-sec", type=float, default=180)
+    sync_time.add_argument("--wait-connected-interval-sec", type=float, default=2)
+    sync_time.add_argument(
+        "--connect-retry",
+        action="store_true",
+        help="Retry HDC target selection while --wait-connected polls status.",
+    )
+    sync_time.add_argument(
+        "--epoch-sec",
+        type=int,
+        default=None,
+        help="Unix epoch seconds to set on the device; defaults to this host's current time.",
+    )
+    sync_time.add_argument(
+        "--no-hwclock",
+        action="store_true",
+        help="Set only the system clock and skip writing the device RTC.",
+    )
+    sync_time.add_argument("--timeout-sec", type=float, default=60)
+    sync_time.add_argument("--command-timeout-sec", type=float, default=60)
+    sync_time.add_argument("--events", action="store_true")
 
     return parser
 
