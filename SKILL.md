@@ -255,6 +255,13 @@ MusePaper2 OH6.1 images from iteration255 onward install the helper as
 `/system/bin/muse_wifi_diag`, which is the default `oh_autoctl.py wifi-smoke`
 diagnostic path. For older images where the helper was pushed manually, override
 it with `--diag-path /data/local/tmp/muse_wifi_diag`.
+On oh-auto service revisions after the MusePaper2 iteration256 fix, prefer the
+`network_smoke_ok` field for the WiFi smoke gate. A result may still report
+`route_has_default=false` because the device does not expose a default route in
+the legacy `route -n` table, while gateway or external connectivity succeeds
+through the OpenHarmony networking path. In that case, use
+`route_default_observation` to classify the route evidence instead of treating
+`route_has_default=false` alone as a network failure.
 
 If post-flash screenshots or test logs show a stale lock-screen date, verify the
 device RTC before assuming an OH6.1 source regression. After HDC is connected,

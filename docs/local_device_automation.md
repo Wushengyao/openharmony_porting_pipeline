@@ -211,6 +211,12 @@ MusePaper2 porting convention:
   helper at `/system/bin/muse_wifi_diag`. `oh_autoctl.py wifi-smoke` defaults to
   this path. For older images where the helper was pushed into `/data/local/tmp`,
   pass `--diag-path /data/local/tmp/muse_wifi_diag`.
+- On oh-auto service revisions after the iteration256 WiFi smoke refinement,
+  use `network_smoke_ok` as the primary WiFi automation gate. Keep
+  `route_has_default` as raw legacy-route evidence only: MusePaper2 can report
+  `route_has_default=false` while gateway ping, DNS, and HTTP still work through
+  the OpenHarmony networking path. Record `route_default_observation` in the
+  iteration notes when this happens.
 
 On service `0.3.0+`, prefer querying the rig profile before flash/smoke loops:
 
