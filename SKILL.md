@@ -246,6 +246,11 @@ After any credentialed WiFi probe, assume device-side HDC logs may have echoed
 the submitted command even when the oh-auto job result is redacted. Run
 `hilog -r` before collecting broad hilog evidence, and always run a plaintext
 secret scan over new iteration records before commit.
+On oh-auto service revisions after the MusePaper2 iteration254 fix,
+`wifi-smoke` first checks whether the device-side diagnostic helper is present
+and executable. If it returns `diag_available=false` with
+`error=wifi_diag_helper_unavailable`, treat the result as an automation/helper
+coverage gap rather than a proved OpenHarmony WiFi association failure.
 
 If post-flash screenshots or test logs show a stale lock-screen date, verify the
 device RTC before assuming an OH6.1 source regression. After HDC is connected,
