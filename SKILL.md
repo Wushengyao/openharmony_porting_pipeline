@@ -231,6 +231,18 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py reboot --mode normal --wait --connect-channel usb --connect-target 0123456789ABCDEF
 ```
 
+When validating WiFi or other credentialed functions through oh-auto, do not
+place PSKs, tokens, or passwords directly in persisted iteration records. Be
+aware that raw `oh_autoctl.py shell "..."` jobs store the submitted command in
+the Windows-side job summary, so prefer a service/helper operation that redacts
+secret fields before persistence when available. If a live manual credential
+probe is unavoidable, record only non-secret evidence such as return codes,
+SSID, BSSID masking, IP/gateway, route table, NetConnManager state, and
+connectivity results. For MusePaper2 WiFi, validate in this order:
+framework-level add-config/connect status, `wlan0` address, local gateway ping,
+route/default-route state, then DNS/HTTP against a lab-approved endpoint; do
+not classify public ICMP loss alone as a WiFi porting failure.
+
 If post-flash screenshots or test logs show a stale lock-screen date, verify the
 device RTC before assuming an OH6.1 source regression. After HDC is connected,
 use `oh_autoctl.py sync-time --wait-connected --connect-channel usb
