@@ -560,6 +560,29 @@ def command_shell(client: OhAutoClient, args: argparse.Namespace) -> Any:
     return wait_shell_and_collect(client, job, args)
 
 
+def command_wifi_smoke(client: OhAutoClient, args: argparse.Namespace) -> Any:
+    connect_if_requested(client, args)
+    payload: dict[str, Any] = {
+        "ssid": args.ssid,
+        "psk": args.psk,
+        "diag_path": args.diag_path,
+        "connect_timeout_sec": args.connect_timeout_sec,
+        "command_timeout_sec": args.command_timeout_sec,
+        "gateway_ping_count": args.gateway_ping_count,
+        "gateway_ping_timeout_sec": args.gateway_ping_timeout_sec,
+        "external_ping_count": args.external_ping_count,
+        "external_ping_timeout_sec": args.external_ping_timeout_sec,
+    }
+    if args.external_host:
+        payload["external_host"] = args.external_host
+    job = client.request_json(
+        "POST",
+        f"/devices/{args.device_id}/ops/wifi-smoke",
+        payload,
+    )
+    return wait_if_requested(client, job, args)
+
+
 def command_serial(client: OhAutoClient, args: argparse.Namespace) -> Any:
     command = args.command if len(args.command) != 1 else args.command[0]
     if isinstance(command, list):
@@ -1189,6 +1212,19 @@ def build_parser() -> argparse.ArgumentParser:
     add_connect_arguments(shell)
     shell.add_argument("command", nargs="+")
     shell.add_argument("--command-timeout-sec", type=float, default=300)
+
+    wifi_smoke = add_job_command(subparsers, "wifi-smoke", command_wifi_smoke)
+    add_connect_arguments(wifi_smoke)
+    wifi_smoke.add_argument("--ssid", required=True)
+    wifi_smoke.add_argument("--psk", required=True)
+    wifi_smoke.add_argument("--diag-path", default="/data/local/tmp/muse_wifi_diag")
+    wifi_smoke.add_argument("--connect-timeout-sec", type=int, default=45)
+    wifi_smoke.add_argument("--command-timeout-sec", type=float, default=90)
+    wifi_smoke.add_argument("--gateway-ping-count", type=int, default=2)
+    wifi_smoke.add_argument("--gateway-ping-timeout-sec", type=int, default=3)
+    wifi_smoke.add_argument("--external-host")
+    wifi_smoke.add_argument("--external-ping-count", type=int, default=2)
+    wifi_smoke.add_argument("--external-ping-timeout-sec", type=int, default=3)
 
     serial = add_job_command(subparsers, "serial", command_serial)
     serial.add_argument("command", nargs="+")
