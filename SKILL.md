@@ -418,6 +418,18 @@ PowerManagerService, BatteryService, StorageManager, and HdfDeviceServiceManager
 are registered. Track those warnings in the iteration ledger, but move the
 main loop to failing user-visible functions or interfaces.
 
+For MusePaper2 OH6.1 identity/SoftBus smoke, verify `ohos.boot.sn` and
+`const.product.devUdid` before classifying LNN/Auth trusted-profile retries as a
+distributed subsystem failure. If `ohos.boot.sn` is missing but
+`/proc/device-tree/serial-number` or
+`/sys/firmware/devicetree/base/serial-number` exposes a stable serial, extend
+startup init's default SN source list in
+`base/startup/init/services/param/manager/param_server.c` instead of hard-coding
+a product UDID. A generated `const.product.devUdid` with an empty DeviceManager
+trusted list means local identity is present; remaining
+`GetAllAccessControlProfile` / `RecoveryTrustedDevInfoProcess` retries are
+non-blocking until a real distributed-device functional check fails.
+
 The current MusePaper2 panic-automation workaround is source-level plus
 product-param gated: `base/startup/init/services/modules/reboot/reboot.c`
 honors `startup.init.panic.reboot_target`, and
