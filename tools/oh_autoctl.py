@@ -523,6 +523,15 @@ def command_pull(client: OhAutoClient, args: argparse.Namespace) -> Any:
 
 def command_reboot(client: OhAutoClient, args: argparse.Namespace) -> Any:
     connect_if_requested(client, args)
+    if args.mode == "fastboot":
+        job = client.request_json(
+            "POST",
+            f"/devices/{args.device_id}/ops/shell",
+            {"command": "reboot fastboot", "timeout_sec": args.command_timeout_sec},
+        )
+        if not args.wait:
+            return job
+        return wait_shell_and_collect(client, job, args)
     job = client.request_json(
         "POST",
         f"/devices/{args.device_id}/ops/reboot",
@@ -1200,7 +1209,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     reboot = add_job_command(subparsers, "reboot", command_reboot)
     add_connect_arguments(reboot)
-    reboot.add_argument("--mode", choices=["normal", "bootloader", "recovery", "updater"], default="normal")
+    reboot.add_argument(
+        "--mode",
+        choices=["normal", "bootloader", "recovery", "updater", "fastboot"],
+        default="normal",
+        help="Use fastboot to send the literal device shell command 'reboot fastboot'.",
+    )
     reboot.add_argument("--command-timeout-sec", type=float, default=120)
 
     bugreport = add_job_command(subparsers, "bugreport", command_bugreport)
