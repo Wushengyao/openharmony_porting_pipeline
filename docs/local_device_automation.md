@@ -201,6 +201,14 @@ The promote operation is Windows-side, uses a temporary file plus atomic replace
 returns `dest_path`, `size`, `sha256`, and `mtime`, and rejects destinations
 outside `allowed_local_roots`.
 
+After promoting a test-team `rc0` candidate, immediately verify that
+`oh_autoctl.py profile musepaper2` reports the same artifact id and SHA256 as
+the promoted image. If the service revision has only read-only profile
+operations, update the profile metadata through trusted admin maintenance,
+run `admin-run-check py_compile`, restart the service, and re-run `version`,
+`profile musepaper2`, and `preflight --template-id musepaper2-titan`. Record
+both the promoted image hash and the profile hash in the active iteration notes.
+
 MusePaper2 porting convention:
 
 - Known-good OH6.0 control package:
