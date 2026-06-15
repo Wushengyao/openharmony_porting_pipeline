@@ -27,6 +27,13 @@ Use this pilot before allowing writer tasks in a new project:
 4. Read only their outputs and the evidence pack manifest.
 5. Produce a next-action plan or a patch-planner task.
 
+A pilot is not complete merely because subagents were spawned. Persist every
+subagent result under its task `outputs/` directory, validate each `task.yaml`
+against `schemas/agent_task.schema.json`, validate the evidence pack manifest
+against `schemas/evidence_pack.schema.json`, and write a merged main-Agent plan.
+Transient chat notifications are useful coordination signals, but they are not
+auditable project artifacts until copied into the task directory.
+
 Recommended directory shape:
 
 ```text
