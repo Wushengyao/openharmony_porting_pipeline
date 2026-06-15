@@ -317,6 +317,18 @@ can also exceed short per-binary timeouts. If it times out, do not immediately
 rerun on the same boot and classify a cascade of null manager/capture failures
 as product failure; reboot normally, restore `startup.porting.boot_escape.ack`,
 then rerun the binary with `--run-timeout-sec 600`.
+For MusePaper2 audio HATS failures after a long multi-binary batch, first
+rerun the failed filters from a clean state before changing product source.
+Clear or capture hilog around each filtered rerun; if `CreateRender` filters
+pass cleanly and logs show render open/set-params/close success, classify the
+earlier failure as stale audio resource or sequence-state evidence debt. When a
+capture attribute test expects failure but the device returns `HDF_SUCCESS`,
+compare the HATS `BUILD.gn` ALSA macros with product args: MusePaper2 may set
+`drivers_peripheral_audio_feature_alsa_lib=true` while an OH6.1 HATS target
+only checks `drivers_interface_audio_feature_alsa_lib`. In that case, align the
+test macro with the product's peripheral ALSA feature and validate by rebuilding
+through `test/xts/hats/build.py`, then rerun the failing filter and the full
+binary with `oh_hats_native_runner.py`.
 
 Serial console access is available through the same automation service. For the
 current MusePaper2 test setup, `/capabilities` reports `COM4` at `115200`, but
