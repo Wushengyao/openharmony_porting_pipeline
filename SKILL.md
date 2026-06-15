@@ -137,6 +137,11 @@ retrospectives, also read
 OH6.1 iteration run into reusable technical lessons, validation gates, and
 misclassification traps so later agents do not need to re-mine hundreds of
 iteration records before acting.
+For formal XTS, xDevice, ACTS, HATS, DCTS, SSTS, or official resource download
+work, also read `references/openharmony_xts_formal_workflow.md` before
+downloading packages or running suites. It captures the official compatibility
+document/API route, version/resource matching rules, and the MusePaper2
+Windows-side xDevice execution pattern.
 
 Aggregate multiple scenario outputs:
 
@@ -312,6 +317,12 @@ The runner writes per-binary artifact ids, push/chmod/run/pull JSON files,
 BINARY=GTEST_FILTER` for known test-expectation hazards, and repeated
 `--cleanup-path /data/local/tmp/path` for fixed temporary paths that should be
 removed before and after the batch.
+When the requested evidence is a formal xDevice report instead of native HDC
+smoke, use the official suite root under `out/<product>/suites/<suite>` and run
+xDevice from the Windows workbench that can see the HDC target. For MusePaper2,
+Linux-local HDC may not see `0123456789ABCDEF`; the Windows oh-auto side does.
+Read `references/openharmony_xts_formal_workflow.md` and start with a tiny
+module such as `HatsGetcwdTest` before widening to full HATS/ACTS/DCTS.
 For MusePaper2 HDF vibrator native HATS, do not use the default 180-second run
 timeout for `HatsHdfVibratorServiceTest`: the normal haptic-effect cases can
 run longer than three minutes. Use `--run-timeout-sec 600` and classify a

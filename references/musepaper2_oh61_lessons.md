@@ -257,6 +257,15 @@ targets, or no useful payload.
   host Python 3.8 is not a reliable OH6.1 HATS runner.
 - Use `oh_hats_native_runner.py` for upload, push, chmod, run, XML pull, and
   JSON/TSV summaries. Do not hand-roll the same sequence for every binary.
+- For formal xDevice evidence, use the generated suite root under
+  `out/musepaper2/suites/hats` and run from the Windows workbench because the
+  MusePaper2 HDC target is visible there. The first formal probe staged that
+  suite under `F:\images\PortingTest\6.1`, installed the suite xDevice packages
+  with the oh-auto Python 3.12 runtime, and passed `HatsGetcwdTest` through
+  xDevice with one test passed and zero failed.
+- Do not point `xdevice run -c` at the `config` directory. Use
+  `-c .\config\user_config.xml`; `-rp .\name` is reported under the suite's
+  `reports` directory.
 - Create and chmod remote directories before `push`; then verify with `ls -l`.
   A push job can appear successful when the nested target directory is not ready
   for the subsequent run.

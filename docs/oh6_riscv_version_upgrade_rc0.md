@@ -171,10 +171,13 @@ After rc0 handoff, continue in layers:
 | L1 | Launcher, Settings, Camera preview, basic input, screenshot |
 | L2 | Wi-Fi, Bluetooth, Audio, USB, Sensor, Power/Battery/Thermal, RTC, Camera capture/record |
 | L3 | representative native HATS/HDF/syscall subsets |
-| L4 | formal xdevice HATS/XTS/ACTS reports |
+| L4 | formal xDevice HATS/XTS/ACTS/DCTS/SSTS reports |
 
 Use native HATS expansion to find regressions, but do not block rc0 on full
 XTS/HATS/ACTS unless the user explicitly makes it a release gate.
+For L4, read `references/openharmony_xts_formal_workflow.md` first. Match suite
+and resource versions exactly; for MusePaper2 RISC-V, run formal xDevice on the
+Windows workbench visible to oh-auto rather than Linux-local HDC.
 
 ### MusePaper2 Camera Smoke Notes
 
