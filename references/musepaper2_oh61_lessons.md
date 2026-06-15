@@ -323,6 +323,13 @@ targets, or no useful payload.
   `ActsArrayTest` was correctly reduced to one stable failed case
   `ArrayCombinationTest4158` and 3357 blocked cases after fixing the parser and
   rerunning the module.
+- For ACTS expansion, inspect each module JSON before classifying it as
+  low-risk. AppInstallKit-only pure JS modules such as `ActsDateTest`,
+  `ActsRegExpTest`, `ActsSymbol1Test`, `ActsSymbol2Test`, `ActsMapTest`, and
+  `ActsProxyTest` passed in iteration343. A JS-looking module can still carry
+  `ShellKit` or system-state commands; `ActsJsonJSApiTest` includes
+  `power-shell wakeup` and `power-shell setmode 602`, so it was deferred from
+  the low-risk batch.
 - The first SSTS smoke reached OHYaraTest with `OpenHarmony-SA-2025-11` and
   produced `blocked=1`, not a runner failure. The block came from security patch
   `2026-02` being four months behind current month `2026-06`, exceeding the

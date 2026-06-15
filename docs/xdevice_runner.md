@@ -158,6 +158,12 @@ MusePaper2 OH6.1 has proven xDevice transport and selected modules:
   `HatsNanoSleepTest`, `HatsChdirTest`, `HatsDupTest`, `HatsDup3Test`,
   `HatsEventfd2Test`, `HatsEpollCreateTest`, and `HatsFaccessatTest` passed in
   iteration342.
+- HATS syscall/FS/FD expansion through xDevice continued in iteration343:
+  `HatsFchmodTest`, `HatsFtruncateTest`, `HatsGetcwdTest`,
+  `HatsGetdents64Test`, `HatsLseekTest`, `HatsPipe2Test`, `HatsReadvTest`,
+  `HatsWritevTest`, `HatsFcntlTest`, `HatsFdatasyncTest`, `HatsFsyncTest`,
+  `HatsFstatfsTest`, `HatsFlockTest`, `HatsLinkatTest`, `HatsMkdiratTest`,
+  and `HatsReadlinkatTest` passed.
 - ACTS `ActsStartupSysDeviceInfoTest`: 85/85 passed.
 - ACTS `ActsHilogNdkTest`: 64/64 passed after the RISC-V native assistant HAP
   and SDK libc++ ABI fixes. The rerun also pulled back XML/HTML/log evidence
@@ -166,6 +172,12 @@ MusePaper2 OH6.1 has proven xDevice transport and selected modules:
   and `ActsBaseSpecTest` passed in iteration342. `ActsArrayTest` is a stable
   partial failure: 489 passed, one real failed case
   `ArrayCombinationTest4158`, and 3357 blocked cases after rerun.
+- ACTS pure JS/AppInstallKit-only expansion continued in iteration343:
+  `ActsDateTest`, `ActsRegExpTest`, `ActsSymbol1Test`, `ActsSymbol2Test`,
+  `ActsMapTest`, and `ActsProxyTest` passed. Do not rely on module names alone:
+  inspect each `testcases/<module>.json` before running; for example,
+  `ActsJsonJSApiTest` is JS-related but includes `ShellKit` power-mode commands
+  and was intentionally deferred from the low-risk batch.
 - ACTS-Validator: dispatch reached xDevice, but generated validator resources
   were incomplete. A later probe showed `queryStandard` can be supplied by full
   suite staging and `--stdin-line Y` can remove the prompt EOF, but the module
