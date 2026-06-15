@@ -47,6 +47,29 @@ cd test/xts/hats
 ./build.sh product_name=<product> system_size=standard
 ```
 
+- On hosts where `/usr/bin/python3` is older than Python 3.10, run XTS build
+  wrappers with the OpenHarmony prebuilt Python first in `PATH`; the OH6.1 XTS
+  CI helpers use syntax such as `str | None`:
+
+```bash
+PATH="$PWD/prebuilts/python/linux-x86/3.11.4/bin:$PATH" \
+  ./test/xts/acts/build.sh product_name=musepaper2 system_size=standard \
+  target_arch=riscv64 xts_suitetype=bin,hap_dynamic
+```
+
+- For MusePaper2 OH6.1 RISC-V ACTS, if GN fails at
+  `test/xts/acts/commonlibrary/toolchain/BUILD.gn` with `rebase_path("")`,
+  compare the already-ported OH6.0 RISC-V tree. The expected fix is to add a
+  `target_cpu == "riscv64"` branch to `tar_dllib`, mirroring arm64/x86_64 and
+  generating `libc-test-lib.tar`; do not drop the commonlibrary/toolchain ACTS
+  coverage.
+- If Ninja then reports a missing SDK library under
+  `prebuilts/ohos-sdk/linux/<api>/native/sysroot/usr/lib//`, inspect
+  `build/ohos_var.gni`. OH6.1 original may lack the RISC-V branch for
+  `target_platform_triple`; add `target_platform_triple =
+  "riscv64-linux-ohos"` for `target_cpu == "riscv64"` so ACTS NDK tests use the
+  existing architecture-specific SDK libraries instead of flattening them into
+  `usr/lib`.
 - Generated suite roots are typically under `out/<product>/suites/<suite>` and
   contain `run.bat`, `run.sh`, `config/user_config.xml`, `testcases/`, and
   `tools/xdevice*.tar.gz`.
@@ -69,7 +92,8 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
 
 - If oh-auto has admin support, stage the suite zip to a Windows allowed root
   such as `F:\images\PortingTest\6.1`, expand it, and run xDevice from the
-  Windows side. Prefer a dedicated oh-auto xDevice runner when available; use
+  Windows side. Prefer `tools/oh_xts_xdevice_runner.py` for repeatable staging,
+  xDevice install, execution, report listing, and summary parsing; use raw
   `admin-shell` only for trusted lab maintenance.
 - Use the Python interpreter reported by oh-auto capabilities/admin status, not
   the Windows Store `python` shim. Confirm `hdc` resolves to the workbench HDC:
@@ -79,9 +103,30 @@ Get-Command hdc
 & 'D:\ohos_toolchains\hdc.exe' list targets
 ```
 
+The MusePaper2 workbench was validated with oh-auto `0.3.0`, Windows Python
+`C:\Users\sheng\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe`,
+HDC `D:\ohos_toolchains\hdc.exe`, and target `0123456789ABCDEF`.
+
 ## Minimal Formal Probe
 
 Start with one harmless module before a broad suite:
+
+```bash
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_xts_xdevice_runner.py \
+  --suite-dir /path/to/ohos/out/musepaper2/suites/hats \
+  --out /path/to/work/records/iterationNNN/runner_hats_getcwd \
+  --run-id iterationNNN_hats_getcwd \
+  --module HatsGetcwdTest \
+  --command-timeout-sec 600 \
+  --upload-timeout-sec 1200
+```
+
+The runner writes `xts_xdevice_manifest.json`, staged zip upload/promote
+evidence, `xdevice_run.json`, `xdevice_summary.json`, and
+`report_file_list.json`. Its default report path includes `run_id` so repeated
+probes do not reuse a non-empty xDevice report directory.
+
+Manual equivalent:
 
 ```powershell
 Set-Location 'F:\images\PortingTest\6.1\hats_suite_probe\hats'

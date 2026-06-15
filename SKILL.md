@@ -323,6 +323,33 @@ xDevice from the Windows workbench that can see the HDC target. For MusePaper2,
 Linux-local HDC may not see `0123456789ABCDEF`; the Windows oh-auto side does.
 Read `references/openharmony_xts_formal_workflow.md` and start with a tiny
 module such as `HatsGetcwdTest` before widening to full HATS/ACTS/DCTS.
+Prefer the evidence-producing formal runner for Windows-side xDevice staging
+and execution:
+
+```bash
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_xts_xdevice_runner.py \
+  --suite-dir /path/to/ohos/out/musepaper2/suites/hats \
+  --out /path/to/work/records/iterationNNN/runner_hats_getcwd \
+  --run-id iterationNNN_hats_getcwd \
+  --module HatsGetcwdTest \
+  --command-timeout-sec 600 \
+  --upload-timeout-sec 1200
+```
+
+The runner uses Windows PowerShell `-EncodedCommand`, installs suite-local
+xDevice tarballs when needed, writes `xdevice_summary.json`, and defaults the
+report name to include `run_id` so repeated probes do not accidentally reuse a
+non-empty xDevice report directory. For ACTS/HATS/DCTS suite builds on hosts
+where `/usr/bin/python3` is older than 3.10, prepend
+`prebuilts/python/linux-x86/3.11.4/bin` to `PATH`; OH6.1 XTS build helpers use
+Python 3.10+ type-union syntax. For MusePaper2 OH6.1 RISC-V ACTS, replay the
+OH6.0-RISC-V `target_cpu == "riscv64"` branch in
+`test/xts/acts/commonlibrary/toolchain/BUILD.gn` if GN fails on
+`rebase_path("")`. If Ninja then looks for an SDK library under
+`prebuilts/ohos-sdk/linux/<api>/native/sysroot/usr/lib//`, compare
+`build/ohos_var.gni` with the OH6.0-RISC-V tree and add the missing
+`target_platform_triple = "riscv64-linux-ohos"` branch instead of copying SDK
+libraries into the non-architecture directory.
 For MusePaper2 HDF vibrator native HATS, do not use the default 180-second run
 timeout for `HatsHdfVibratorServiceTest`: the normal haptic-effect cases can
 run longer than three minutes. Use `--run-timeout-sec 600` and classify a
