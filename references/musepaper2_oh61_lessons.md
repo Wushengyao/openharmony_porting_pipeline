@@ -364,6 +364,12 @@ targets, or no useful payload.
   suite under `F:\images\PortingTest\6.1`, installed the suite xDevice packages
   with the oh-auto Python 3.12 runtime, and passed `HatsGetcwdTest` through
   xDevice with one test passed and zero failed.
+- Broad low-risk HATS xDevice expansion can proceed in small independent
+  batches. By iteration346, syscall/memory/scheduler/file modules and
+  Light/Vibrator/Sensor/Input HDF modules reached 88/99 HATS modules passed
+  with 15574 cases passed. Keep the remaining HATS modules grouped by risk:
+  Audio HDF, Power/Battery/Thermal, DMA/Display/USB, and Startup partition slot
+  should not be mixed into the same unattended batch.
 - Do not point `xdevice run -c` at the `config` directory. Use
   `-c .\config\user_config.xml`; `-rp .\name` is reported under the suite's
   `reports` directory.

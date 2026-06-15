@@ -174,6 +174,12 @@ MusePaper2 OH6.1 has proven xDevice transport and selected modules:
   `HatsEpollPwaitTest`, `HatsFchmodatTest`, `HatsGetrlimitTest`,
   `HatsGetrusageTest`, `HatsSysinfoTest`, and `HatsTimesTest` passed with
   60/60 cases through Windows-side xDevice.
+- HATS xDevice expansion continued in iteration346. Memory/scheduler/file
+  syscall modules plus Light/Vibrator/Sensor/Input HDF modules passed in
+  batches 7-11: 28 additional modules, 454/454 cases. The HATS xDevice coverage
+  stood at 88/99 modules and 15574 passed cases after that iteration. Remaining
+  modules were concentrated in DMA/Display/USB/Startup partition slot, Audio
+  HDF, and Power/Battery/Thermal.
 - ACTS `ActsStartupSysDeviceInfoTest`: 85/85 passed.
 - ACTS `ActsHilogNdkTest`: 64/64 passed after the RISC-V native assistant HAP
   and SDK libc++ ABI fixes. The rerun also pulled back XML/HTML/log evidence
