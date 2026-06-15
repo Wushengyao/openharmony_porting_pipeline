@@ -125,3 +125,15 @@ Every meaningful iteration should end with:
 - validation command summary
 - skill-maintainer update when a new reusable rule, taxonomy, checklist, or
   tool behavior was learned
+
+When asked whether `OH_Agent_Subagent_TODO.md` is closed, run:
+
+```bash
+python3 tools/todo_closure_audit.py \
+  --work-record /path/to/musepaper2_oh61_porting_work \
+  --out /path/to/records/iterationNNN_todo_closure_audit/todo_closure_audit.yaml
+```
+
+Treat `complete_with_external_blockers` as file/tool/document closure with
+explicit outside-lab gates still open. Do not promote it to full OpenHarmony
+release acceptance or full XTS certification.

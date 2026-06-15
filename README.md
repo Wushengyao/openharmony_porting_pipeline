@@ -34,6 +34,8 @@ work as a main-Agent plus bounded subagent workflow:
 - `tools/evidence_pack_builder.py` creates compact evidence packs for the main
   Agent and subagents.
 - `examples/agent_tasks/` contains copyable read-heavy task examples.
+- `tools/todo_closure_audit.py` checks the `OH_Agent_Subagent_TODO.md` delivery
+  surface and separates file/tool closure from external lab blockers.
 
 The main Agent should consume evidence packs and structured subagent outputs
 instead of full raw build logs, serial logs, XML reports, or repository scans.
