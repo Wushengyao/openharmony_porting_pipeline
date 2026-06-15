@@ -329,6 +329,16 @@ only checks `drivers_interface_audio_feature_alsa_lib`. In that case, align the
 test macro with the product's peripheral ALSA feature and validate by rebuilding
 through `test/xts/hats/build.py`, then rerun the failing filter and the full
 binary with `oh_hats_native_runner.py`.
+Avoid consecutive full 9-binary MusePaper2 audio HDF HATS batches on the same
+boot. A single clean full batch with `--run-timeout-sec 600` can validate the
+current aggregate, but immediately running another full batch can pollute audio
+render/capture state and produce broad false failures in RenderAdditional,
+Capture, and CaptureAdditional. If a second aggregate or formal rerun is
+needed, reboot normally, wait for HDC, restore `startup.porting.boot_escape.ack`,
+and start from a clean boot. If adapter `CreateRender` failures appear in the
+first aggregate but the same filters and full adapter binaries pass afterward,
+record them as batch-order/state debt instead of immediately changing product
+audio code.
 
 Serial console access is available through the same automation service. For the
 current MusePaper2 test setup, `/capabilities` reports `COM4` at `115200`, but
