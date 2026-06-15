@@ -16,6 +16,7 @@ recoverability, boot evidence, screenshots, and a known-issue ledger.
 - [Boot Escape Policy](#boot-escape-policy)
 - [Runtime Triage](#runtime-triage)
 - [HATS Native Smoke Pattern](#hats-native-smoke-pattern)
+- [First-Run Lesson Ledger](#first-run-lesson-ledger)
 - [Time-Savings Estimate For Future Similar Ports](#time-savings-estimate-for-future-similar-ports)
 
 ## Inputs
@@ -310,6 +311,15 @@ Prefer fileio, syscall, HDF read-only, power/input/display smoke subsets early.
 Delay tests that change active slot, system time, suspend/lock state, sysctl,
 mount namespace, battery/thermal settings, network topology, or USB role until
 there is a recovery plan.
+
+## First-Run Lesson Ledger
+
+For MusePaper2 follow-up work or similar OH6.x RISC-V board/product migration,
+read `references/musepaper2_oh61_lessons.md` after this runbook. It captures
+the first MusePaper2 OH6.1 run's reusable traps: stale kernel actions, packaged
+input audits, oh-auto evidence boundaries, Camera hot-start and lighting
+misreads, Wi-Fi SSID/routing false negatives, audio HATS state pollution,
+Battery/Input/USB/HDF migration fixes, and the ten-iteration review cadence.
 
 ## Time-Savings Estimate For Future Similar Ports
 

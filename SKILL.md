@@ -131,6 +131,12 @@ Use that runbook to keep the loop ordered as recovery-first -> boot/UI ->
 rc0 freeze -> layered test expansion. Do not block a requested `rc0` on full
 XTS/HATS/ACTS unless the user explicitly makes formal test pass the release
 gate.
+For MusePaper2-style OH6.x RISC-V follow-up work, skill updates, or project
+retrospectives, also read
+`references/musepaper2_oh61_lessons.md`. It distills the first MusePaper2
+OH6.1 iteration run into reusable technical lessons, validation gates, and
+misclassification traps so later agents do not need to re-mine hundreds of
+iteration records before acting.
 
 Aggregate multiple scenario outputs:
 
