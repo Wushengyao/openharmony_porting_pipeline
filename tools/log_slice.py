@@ -36,7 +36,7 @@ BUILTIN_SIGNATURES = [
     },
     {
         "id": "hdf_runtime_error",
-        "regex": r"(HDF|hdf).*(failed|fail|error|bind|start|load|service)",
+        "regex": r"(HDF|hdf).*(failed|fail|error|bind failed|start failed|load failed|service failed)",
         "class": "hdf",
         "severity": "P1",
     },
@@ -46,6 +46,12 @@ BUILTIN_SIGNATURES = [
         "class": "permission",
         "severity": "P1",
     },
+]
+
+SUCCESS_PATTERNS = [
+    re.compile(r"build\s+success", re.IGNORECASE),
+    re.compile(r"=+\s*build\s+successful\s*=+", re.IGNORECASE),
+    re.compile(r"\bjob_status\b.*\bsucceeded\b", re.IGNORECASE),
 ]
 
 
@@ -169,6 +175,8 @@ def slice_logs(args):
     for raw_log in args.log:
         log_path = Path(raw_log)
         data, lines, offsets = read_log_bytes(log_path)
+        log_hits = []
+        success_lines = []
         log_entry = {
             "path": str(log_path),
             "size": len(data),
@@ -180,6 +188,8 @@ def slice_logs(args):
         per_sig_count = {}
         for idx, raw_line in enumerate(lines):
             text = decode_line(raw_line)
+            if any(pattern.search(text) for pattern in SUCCESS_PATTERNS):
+                success_lines.append({"line": idx + 1, "text": text.strip()[:300]})
             for sig, regex in signatures:
                 sig_id = sig["id"]
                 if per_sig_count.get(sig_id, 0) >= args.max_matches_per_signature:
@@ -209,7 +219,16 @@ def slice_logs(args):
                     hit["slice"] = str(slice_path.relative_to(out_dir))
                     summary["slices"].append(hit["slice"])
                     slice_index += 1
+                log_hits.append(hit)
                 summary["hits"].append(hit)
+        log_entry["signature_counts"] = dict(per_sig_count)
+        log_entry["success_markers"] = success_lines[: args.max_success_markers]
+        if log_hits:
+            log_entry["status"] = "failed_or_needs_triage"
+        elif success_lines:
+            log_entry["status"] = "passed_by_success_marker"
+        else:
+            log_entry["status"] = "no_signature_hits"
 
     if out_dir:
         (out_dir / "log_slice_summary.yaml").write_text(
@@ -246,6 +265,7 @@ def main():
     parser.add_argument("--max-matches-per-signature", type=int, default=20)
     parser.add_argument("--max-bytes-per-slice", type=int, default=120000)
     parser.add_argument("--max-markdown-hits", type=int, default=50)
+    parser.add_argument("--max-success-markers", type=int, default=20)
     args = parser.parse_args()
     return slice_logs(args)
 

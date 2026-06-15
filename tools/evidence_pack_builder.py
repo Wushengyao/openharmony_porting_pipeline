@@ -18,9 +18,15 @@ except Exception:  # pragma: no cover - fallback for minimal hosts
 ERROR_PATTERNS = [
     re.compile(r"(\berror:|\bFAILED:|ninja: build stopped)", re.I),
     re.compile(r"(Kernel panic|end Kernel panic|not syncing)", re.I),
-    re.compile(r"(HDF|hdf).*(failed|fail|error|bind|start|load)", re.I),
+    re.compile(r"(HDF|hdf).*(failed|fail|error|bind failed|start failed|load failed)", re.I),
     re.compile(r"(undefined reference to|multiple definition of|ld\.lld: error)", re.I),
     re.compile(r"(No such file or directory|No rule to make target|missing and no known rule)", re.I),
+]
+
+SUCCESS_PATTERNS = [
+    re.compile(r"build\s+success", re.I),
+    re.compile(r"=+\s*build\s+successful\s*=+", re.I),
+    re.compile(r"\bjob_status\b.*\bsucceeded\b", re.I),
 ]
 
 
@@ -87,6 +93,37 @@ def collect_error_lines(paths, max_hits):
                     if len(hits) >= max_hits:
                         return hits
     return hits
+
+
+def summarize_log(path, kind, max_hits=20):
+    if not path:
+        return {"kind": kind, "path": "", "status": "not_provided", "top_errors": [], "success_markers": []}
+    p = Path(path)
+    if not p.exists() or not p.is_file():
+        return {"kind": kind, "path": str(p), "status": "missing", "top_errors": [], "success_markers": []}
+    top_errors = []
+    success_markers = []
+    with p.open("rb") as f:
+        for line_no, raw_line in enumerate(f, 1):
+            text = raw_line.decode("utf-8", errors="replace").rstrip()
+            if len(top_errors) < max_hits and any(pattern.search(text) for pattern in ERROR_PATTERNS):
+                top_errors.append({"line": line_no, "text": text[:300]})
+            if len(success_markers) < max_hits and any(pattern.search(text) for pattern in SUCCESS_PATTERNS):
+                success_markers.append({"line": line_no, "text": text[:300]})
+    if top_errors:
+        status = "failed_or_needs_triage"
+    elif success_markers:
+        status = "passed_by_success_marker"
+    else:
+        status = "unknown"
+    return {
+        "kind": kind,
+        "path": str(p),
+        "sha256": sha256_file(p),
+        "status": status,
+        "top_errors": top_errors,
+        "success_markers": success_markers,
+    }
 
 
 def write_excerpt(src, dst, max_lines=240):
@@ -176,12 +213,23 @@ def main():
         args.max_error_hits,
     )
 
+    log_summaries = [
+        summarize_log(args.build_log, "build_log"),
+        summarize_log(args.package_log, "package_log"),
+    ]
+    if any(item["status"] == "failed_or_needs_triage" for item in log_summaries):
+        summary_status = "failed_or_partial"
+    elif any(item["status"] == "passed_by_success_marker" for item in log_summaries):
+        summary_status = "passed_by_success_marker"
+    else:
+        summary_status = "unknown"
     build_summary = {
-        "status": "unknown",
+        "status": summary_status,
         "build_log": str(args.build_log or ""),
         "package_log": str(args.package_log or ""),
         "build_log_sha256": sha256_file(args.build_log),
         "package_log_sha256": sha256_file(args.package_log),
+        "log_summaries": log_summaries,
         "top_error_count": len(top_hits),
         "top_errors": top_hits[:20],
     }

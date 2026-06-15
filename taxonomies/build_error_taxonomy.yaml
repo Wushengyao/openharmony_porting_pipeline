@@ -30,7 +30,7 @@ signatures:
       - host environment
       - prebuilt checkout status
   - id: riscv_arch_mismatch
-    regex: "(riscv|risc-v|rv64|unknown architecture|Relocations in generic ELF|file format not recognized)"
+    regex: "((riscv|risc-v|rv64).*(unknown architecture|Relocations in generic ELF|file format not recognized|incompatible|wrong ELF|unsupported)|(unknown architecture|Relocations in generic ELF|file format not recognized|wrong ELF|unsupported).*(riscv|risc-v|rv64))"
     class: architecture_mismatch
     likely_agents:
       - build-log-triager
@@ -59,7 +59,7 @@ signatures:
       - failing script
       - module requirement
   - id: packaging_image_missing
-    regex: "(image.*not found|mkimage|sparse|partition|vendor.img|system.img|userdata.img)"
+    regex: "(image.*not found|mkimage|sparse image|partition image|vendor\\.img|system\\.img|userdata\\.img)"
     class: packaging
     likely_agents:
       - build-log-triager

@@ -19,7 +19,7 @@ PATTERNS = [
     ("watchdog_or_lockup", "P0", re.compile(r"(watchdog|hard LOCKUP|soft lockup|RCU stall|hung task)", re.I)),
     ("bootloop_or_reboot", "P0", re.compile(r"(Restarting system|reboot: Restarting|init:.*reboot)", re.I)),
     ("hdc_offline", "P1", re.compile(r"(No any connected target|ExecuteCommand need connect-key|Offline)", re.I)),
-    ("hdf_failure", "P1", re.compile(r"(HDF|hdf).*(failed|fail|error|bind|start|load)", re.I)),
+    ("hdf_failure", "P1", re.compile(r"(HDF|hdf).*(failed|fail|error|bind failed|start failed|load failed)", re.I)),
     ("permission_denial", "P1", re.compile(r"(avc: denied|Permission denied|SELinux)", re.I)),
     ("ui_or_app_crash", "P2", re.compile(r"(FATAL EXCEPTION|Ability.*crash|appspawn.*failed|process.*died)", re.I)),
 ]

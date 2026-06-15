@@ -1,0 +1,7 @@
+case_id: iteration327_unknown_target
+taxonomy: ../../../taxonomies/build_error_taxonomy.yaml
+logs:
+  - build_unknown_target.txt
+expected_signatures:
+  - build_error
+  - gn_missing_label_or_target

@@ -17,7 +17,7 @@ signatures:
     severity: P0
     escalate: true
   - id: hdf_service_failure
-    regex: "(HDF|hdf).*(failed|fail|error|bind|start|load|service)"
+    regex: "(HDF|hdf).*(failed|fail|error|bind failed|start failed|load failed|service failed)"
     class: hdf
     severity: P1
     escalate: true

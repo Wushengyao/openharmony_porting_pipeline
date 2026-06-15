@@ -1,0 +1,5 @@
+Build args: --product-name musepaper2 --build-target HatsHdfAudioIdlCaptureTest
+[OHOS INFO] [GN] current_cpu = riscv64
+[OHOS INFO] [GN] ["//test/xts/hats/hdf:hatshdftest", "//test/xts/hats/startup:startup"]
+[OHOS ERROR] [NINJA] command failed: ninja -C out/musepaper2 HatsHdfAudioIdlCaptureTest
+[OHOS ERROR] [NINJA] ninja: error: unknown target 'HatsHdfAudioIdlCaptureTest'
