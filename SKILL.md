@@ -64,12 +64,12 @@ For the detailed operating rulebook, read
 | Run the extraction/audit pipeline | `references/pipeline_command_reference.md`, `references/stage_contract.md`, `references/evidence_rules.md` | `tools/run_pipeline.sh`, `tools/run_stage.sh`, validators |
 | Dispatch subagents | `docs/agent_architecture.md`, `docs/codex_subagent_playbook.md`, `AGENTS.md`, schemas, `policies/model_routing.yaml`, `policies/budget_policy.yaml` | role prompts under `agents/`, `tools/evidence_pack_builder.py`, `tools/log_slice.py` |
 | Review high-risk source or device operations | `policies/risk_policy.yaml`, `policies/path_whitelist.yaml`, `policies/operation_approval.md` | `tools/diff_risk_scanner.py`, `tools/secret_and_binary_scanner.py` |
-| Run four-tree OH version-upgrade analysis | `references/pipeline_command_reference.md`, `docs/oh6_riscv_version_upgrade_rc0.md` | `tools/run_version_upgrade_porting.sh` |
+| Run four-tree OH version-upgrade analysis | `references/pipeline_command_reference.md`, `docs/oh6_riscv_version_upgrade_rc0.md`, `docs/version_maintenance.md` | `tools/run_version_upgrade_porting.sh`, `tools/version_lane/diff_classifier.py` |
 | Apply reviewed base patches or dependency inventories | `references/porting_operating_rules.md`, `references/pipeline_command_reference.md` | `tools/apply_porting_base_patch.py` |
 | Triage RISC-V build failures | `references/porting_operating_rules.md`; search `README.md` and `tools/apply_porting_base_patch.py` for exact error text | `rg`, `build.sh`, `apply_porting_base_patch.py` |
-| Run local flash/HDC/serial/smoke loops | `docs/local_device_automation.md` | `tools/oh_autoctl.py` |
+| Run local flash/HDC/serial/smoke loops | `docs/local_device_automation.md`, `docs/rig_controller.md` when physical recovery is needed | `tools/oh_autoctl.py`, `tools/device_job_ledger.py`, `tools/recovery_plan_builder.py`, `tools/rig_controller.py` |
 | Continue MusePaper2 OH6.1 work | `references/musepaper2_oh61_lessons.md`, `docs/oh6_riscv_version_upgrade_rc0.md`, then query `oh_autoctl.py profile musepaper2` | build/package scripts, `oh_autoctl.py`, records under the project work dir |
-| Run formal XTS/HATS/ACTS/DCTS/SSTS | `references/openharmony_xts_formal_workflow.md` | `tools/oh_xts_xdevice_runner.py`, `tools/oh_hats_native_runner.py` |
+| Run formal XTS/HATS/ACTS/DCTS/SSTS | `references/openharmony_xts_formal_workflow.md`, `docs/xdevice_runner.md` | `tools/xts_xdevice_runner/run_xdevice_probe.py`, `tools/oh_xts_xdevice_runner.py`, `tools/oh_hats_native_runner.py` |
 | Aggregate cross-scenario knowledge | `references/pipeline_command_reference.md`, `docs/CROSS_SCENARIO_USAGE.md` | `tools/run_cross_scenario_aggregator.sh`, `tools/validate_meta_output.py` |
 | Update this skill | system `skill-creator`, then this file and the directly relevant references | `quick_validate.py`, forward-test if practical |
 
@@ -95,6 +95,8 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py profile musepaper2
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/evidence_pack_builder.py --help
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/log_slice.py --help
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/xts_xdevice_runner/run_xdevice_probe.py --help
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/recovery_plan_builder.py --help
 ```
 
 For device work, always run discovery before action:

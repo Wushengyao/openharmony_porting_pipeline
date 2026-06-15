@@ -78,6 +78,15 @@
         },
         "acceptance_state": {
           "type": "string"
+        },
+        "panic_summary": {
+          "type": "string"
+        },
+        "recovery_plan": {
+          "type": "string"
+        },
+        "device_job_ledger": {
+          "type": "string"
         }
       },
       "required": [

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "plan_id": { "type": "string" },
+    "created_at": { "type": "string" },
+    "trigger": { "type": "string" },
+    "classification": { "type": "string" },
+    "highest_severity": { "type": "string" },
+    "evidence_refs": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "order": { "type": "integer" },
+          "action": { "type": "string" },
+          "backend": { "type": "string" },
+          "command": { "type": "string" },
+          "allowed_unattended": { "type": "boolean" },
+          "notes": { "type": "string" }
+        },
+        "required": ["order", "action", "allowed_unattended", "notes"],
+        "additionalProperties": false
+      }
+    },
+    "blocked_conditions": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "required": [
+    "plan_id",
+    "created_at",
+    "trigger",
+    "classification",
+    "highest_severity",
+    "evidence_refs",
+    "actions",
+    "blocked_conditions"
+  ],
+  "additionalProperties": false
+}

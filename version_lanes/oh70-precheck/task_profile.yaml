@@ -1,0 +1,25 @@
+lane_id: oh70-precheck
+board: MusePaper2
+arch: riscv64
+upgrade_type: major_release_precheck
+inputs:
+  old_original: ''
+  old_ported: ''
+  new_original: ''
+  new_workspace: ''
+required_outputs:
+  - lane_diff_classification.yaml
+  - lane_binary_asset_audit.yaml
+  - uncertainty_ledger.yaml
+precheck_focus:
+  - riscv64 toolchain and prebuilts
+  - product config and subsystem selection
+  - BSP, firmware, and kernel module provenance
+  - HDF service startup contracts
+  - XTS/HATS suite layout changes
+acceptance:
+  migration_impact_report: required
+  source_patch: not_required
+  build_sh: not_claimed
+  boot: not_claimed
+  release: not_claimed

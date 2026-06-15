@@ -34,6 +34,8 @@ repository to coordinate OpenHarmony porting work.
 - Test tasks produce `test_summary.yaml`, `failures_by_subsystem.yaml`, and
   `rerun_plan.yaml`.
 - Regression tasks produce `regression_matrix.yaml` and `risk_items.yaml`.
+- Device tasks produce `device_job_ledger.yaml`, `device_state.yaml`, and
+  optional `recovery_plan.yaml`.
 - Writer tasks produce `patch_summary.md`, `changed_files.yaml`, and
   `validation_requested.yaml`.
 - Reports must link to evidence packs and acceptance state files.
@@ -63,8 +65,9 @@ Escalate before work involving:
 - Prefer deterministic tools for build/test/log/device operations.
 - Keep raw artifacts under artifact roots and expose compact evidence packs.
 - Use `tools/evidence_pack_builder.py`, `tools/log_slice.py`,
-  `tools/diff_risk_scanner.py`, and `tools/secret_and_binary_scanner.py`
-  before asking the main Agent to read noisy artifacts.
+  `tools/diff_risk_scanner.py`, `tools/secret_and_binary_scanner.py`,
+  `tools/device_job_ledger.py`, and `tools/recovery_plan_builder.py` before
+  asking the main Agent to read noisy artifacts.
 - Do not promote native HATS subset pass to formal xDevice pass.
 - Do not promote build pass to boot, runtime, test, or release pass.
 - Preserve unknowns instead of inventing status.

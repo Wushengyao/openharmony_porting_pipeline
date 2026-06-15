@@ -196,6 +196,9 @@ def main():
     parser.add_argument("--hdc-log")
     parser.add_argument("--diff-file")
     parser.add_argument("--test-report-root")
+    parser.add_argument("--panic-summary")
+    parser.add_argument("--recovery-plan")
+    parser.add_argument("--device-job-ledger")
     parser.add_argument("--build-command", default="")
     parser.add_argument("--package-command", default="")
     parser.add_argument("--flash-job-id", default="")
@@ -244,6 +247,9 @@ def main():
         "hdc_log": str(args.hdc_log or ""),
         "serial_excerpt": "serial_excerpt.log",
         "hdc_excerpt": "hdc_excerpt.log",
+        "panic_summary": str(args.panic_summary or ""),
+        "recovery_plan": str(args.recovery_plan or ""),
+        "device_job_ledger": str(args.device_job_ledger or ""),
     }
     write_data(out / "device_state.yaml", device_state)
     write_excerpt(args.serial_log, out / "serial_excerpt.log")
@@ -276,6 +282,9 @@ def main():
         (args.serial_log, "serial_log"),
         (args.hdc_log, "hdc_log"),
         (args.diff_file, "diff"),
+        (args.panic_summary, "panic_summary"),
+        (args.recovery_plan, "recovery_plan"),
+        (args.device_job_ledger, "device_job_ledger"),
     ]:
         if path:
             raw_artifacts.append(file_record(path, kind))
@@ -317,6 +326,12 @@ def main():
         "raw_artifacts": raw_artifacts,
         "known_debts": [],
     }
+    if args.panic_summary:
+        manifest["files"]["panic_summary"] = str(args.panic_summary)
+    if args.recovery_plan:
+        manifest["files"]["recovery_plan"] = str(args.recovery_plan)
+    if args.device_job_ledger:
+        manifest["files"]["device_job_ledger"] = str(args.device_job_ledger)
     write_data(out / "manifest.yaml", manifest)
     print(str(out / "manifest.yaml"))
     return 0

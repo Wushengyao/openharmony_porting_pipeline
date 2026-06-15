@@ -1,0 +1,29 @@
+lane_id: oh61-release-to-oh61-lts
+board: MusePaper2
+arch: riscv64
+upgrade_type: maintenance_release
+inputs:
+  old_original: ''
+  old_ported: ''
+  new_original: ''
+  new_workspace: ''
+required_outputs:
+  - lane_diff_classification.yaml
+  - four_tree/upgrade_porting_work_order.yaml
+  - four_tree/upgrade_patch_plan.yaml
+  - lane_binary_asset_audit.yaml
+  - agent_tasks/patch_planner_task_index.yaml
+risk_focus:
+  - vendor/spacemit
+  - device/board/spacemit
+  - device/soc/spacemit
+  - kernel/linux/spacemit_kernel-6.6
+  - build
+  - test/xts
+acceptance:
+  lane_classification: required
+  binary_asset_audit: required
+  patch_planner_tasks: required_for_manual_migration
+  build_sh: separate_gate
+  boot: separate_gate
+  xdevice: separate_gate
