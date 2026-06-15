@@ -35,6 +35,7 @@ def main() -> int:
     parser.add_argument("--device-id")
     parser.add_argument("--command-timeout-sec")
     parser.add_argument("--upload-timeout-sec")
+    parser.add_argument("--native-test-timeout-ms")
     parser.add_argument("--no-install", action="store_true")
     parser.add_argument("--stage-module-only", action="store_true")
     args = parser.parse_args()
@@ -57,6 +58,7 @@ def main() -> int:
         "device_id",
         "command_timeout_sec",
         "upload_timeout_sec",
+        "native_test_timeout_ms",
     ]:
         value = getattr(args, name)
         if value is not None:

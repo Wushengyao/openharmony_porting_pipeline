@@ -143,13 +143,21 @@ source-built suites contain both underscore and hyphen spellings of the same
 package, such as `xdevice_devicetest` and `xdevice-devicetest`; installing both
 causes pip `ResolutionImpossible`, so only one normalized package is selected.
 
-XML parsing treats `status=disable/disabled`, `status=blocked`, or messages
-containing `mark blocked` as blocked before looking at `result=false`. This
-matches xDevice reports that mark downstream cases blocked after the first real
-failure. For runnable cases, `result=true/false` is authoritative for case
-pass/fail. The parser does not promote `status=run` to pass, deduplicates cases
-that appear in both `summary_report.xml` and per-module XML, and keeps the
-failure list limited to real `failed`, `error`, or `timeout` cases.
+XML parsing treats `status=skip/skipped`, `status=ignored`, and unavailable
+cases as non-failures before looking at `result=false`; xDevice can emit
+`status="skip" result="false"` for intentional gtest skips. It also treats
+`status=disable/disabled`, `status=blocked`, XML `disabled` counters, or
+messages containing `mark blocked` as blocked. This matches reports that mark
+downstream cases blocked after the first real failure. For runnable cases,
+`result=true/false` is authoritative for case pass/fail. The parser does not
+promote `status=run` to pass, deduplicates cases that appear in both
+`summary_report.xml` and per-module XML, and keeps the failure list limited to
+real `failed`, `error`, or `timeout` cases.
+
+For long-running CppTest probes, pass `--native-test-timeout-ms <ms>` after the
+`run_xdevice_probe.py -- ...` separator. The runner patches only the staged
+module `Test.json`, records the patch in `module_staging_manifest.json`, and
+does not modify the OpenHarmony source tree.
 
 ## Current MusePaper2 Evidence Boundary
 
@@ -180,6 +188,15 @@ MusePaper2 OH6.1 has proven xDevice transport and selected modules:
   stood at 88/99 modules and 15574 passed cases after that iteration. Remaining
   modules were concentrated in DMA/Display/USB/Startup partition slot, Audio
   HDF, and Power/Battery/Thermal.
+- HATS Audio HDF expansion continued in iteration347. The nine remaining Audio
+  HDF modules gained xDevice pass evidence: 861 total cases, 860 passed, one
+  intentional ignored/skipped case, zero failed. Manager, ManagerAdditional,
+  and EffectAdditional passed as plain xDevice modules. Adapter, Render, and
+  Capture direct-HDI modules require stopping `audio_server`, restarting
+  `audio_host`, running the module, then restoring `audio_server`.
+  `HatsHdfAudioIdlCaptureAdditionalTest` additionally needs staged
+  `native-test-timeout=600000`; the default 120000 ms causes
+  `ShellCommandUnresponsiveException` and downstream blocked cases.
 - ACTS `ActsStartupSysDeviceInfoTest`: 85/85 passed.
 - ACTS `ActsHilogNdkTest`: 64/64 passed after the RISC-V native assistant HAP
   and SDK libc++ ABI fixes. The rerun also pulled back XML/HTML/log evidence

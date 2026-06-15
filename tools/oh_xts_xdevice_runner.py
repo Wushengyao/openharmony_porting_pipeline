@@ -146,6 +146,31 @@ def copy_tools_dir(args: argparse.Namespace, dst: Path, default_tools: Path) -> 
     shutil.copytree(tools_src, dst)
 
 
+def patch_staged_test_config(args: argparse.Namespace, path: Path) -> None:
+    if not args.native_test_timeout_ms:
+        return
+    if path.suffix.lower() != ".json":
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return
+    driver = data.get("driver")
+    if not isinstance(driver, dict) or "native-test-timeout" not in driver:
+        return
+    original = driver.get("native-test-timeout")
+    driver["native-test-timeout"] = str(args.native_test_timeout_ms)
+    path.write_text(json.dumps(data, indent=4, ensure_ascii=False) + "\n", encoding="utf-8")
+    patches = getattr(args, "module_config_patches", [])
+    patches.append({
+        "path": str(path),
+        "field": "driver.native-test-timeout",
+        "old": original,
+        "new": str(args.native_test_timeout_ms),
+    })
+    args.module_config_patches = patches
+
+
 def make_module_staging_dir(args: argparse.Namespace, suite_dir: Path) -> Path:
     if not args.module:
         raise ValueError("--stage-module-only requires --module")
@@ -164,7 +189,9 @@ def make_module_staging_dir(args: argparse.Namespace, suite_dir: Path) -> Path:
     testcase_dst.mkdir()
     staged_testcases: list[str] = []
     for src in collect_module_testcases(suite_dir, args.module):
-        shutil.copy2(src, testcase_dst / src.name)
+        dst = testcase_dst / src.name
+        shutil.copy2(src, dst)
+        patch_staged_test_config(args, dst)
         staged_testcases.append(src.name)
 
     args.module_staged_testcases = staged_testcases
@@ -175,6 +202,7 @@ def make_module_staging_dir(args: argparse.Namespace, suite_dir: Path) -> Path:
             "module": args.module,
             "stage_dir": str(stage_dir),
             "testcases": staged_testcases,
+            "config_patches": getattr(args, "module_config_patches", []),
         },
     )
     return stage_dir
@@ -363,6 +391,11 @@ def main() -> int:
     parser.add_argument("--command-timeout-sec", type=float, default=900)
     parser.add_argument("--upload-timeout-sec", type=float, default=1200)
     parser.add_argument("--no-install", action="store_true", help="Do not pip install xDevice tarballs")
+    parser.add_argument(
+        "--native-test-timeout-ms",
+        type=int,
+        help="Patch staged CppTest Test.json native-test-timeout for long-running module probes.",
+    )
     parser.add_argument(
         "--stage-module-only",
         action="store_true",

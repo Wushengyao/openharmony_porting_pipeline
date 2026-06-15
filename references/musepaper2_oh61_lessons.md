@@ -221,6 +221,14 @@ targets, or no useful payload.
 - For direct Audio HDI HATS, stale service ownership can create false
   `CreateRender` failures. Stop `audio_server`, restart `audio_host`, run the
   direct-HDI binary, then restart `audio_server` when that mode is needed.
+- The same rule applies to formal xDevice Audio HDF modules on MusePaper2:
+  Manager and Effect modules can pass as plain xDevice, but Adapter/Render/
+  Capture direct-HDI modules should be run under the controlled
+  `audio_server` stopped and `audio_host` restarted precondition, with
+  `audio_server` restored and oh-auto smoke checked after the batch.
+- `HatsHdfAudioIdlCaptureAdditionalTest` needs a longer xDevice native test
+  timeout. Use a staged `--native-test-timeout-ms 600000` patch; do not edit
+  the source `Test.json` just to change a local probe timeout.
 - For aggregate Audio HDF HATS, use clean boots and long timeouts. Rerun
   failed filters from a clean state before editing product audio code.
 
@@ -370,6 +378,11 @@ targets, or no useful payload.
   with 15574 cases passed. Keep the remaining HATS modules grouped by risk:
   Audio HDF, Power/Battery/Thermal, DMA/Display/USB, and Startup partition slot
   should not be mixed into the same unattended batch.
+- By iteration347, the Audio HDF group was closed through formal xDevice using
+  the direct-HDI isolation rule and one staged long-timeout patch: 9 modules,
+  861 total cases, 860 passed, 1 ignored/skipped, 0 failed. The remaining HATS
+  list by iteration346 delta is Power/Battery/Thermal, DMA, Display, USB auto
+  function, and Startup partition slot.
 - Do not point `xdevice run -c` at the `config` directory. Use
   `-c .\config\user_config.xml`; `-rp .\name` is reported under the suite's
   `reports` directory.

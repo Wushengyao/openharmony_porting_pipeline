@@ -300,6 +300,26 @@ When parsing xDevice XML, classify disabled and blocked cases before looking at
 failure. These cases are blocked debt, not individual testcase failures.
 Iteration342 showed this on `ActsArrayTest`: both the first run and rerun had
 one real failed case, `ArrayCombinationTest4158`, plus 3357 blocked cases.
+Also classify `status="skip"` or `status="ignored"` before `result=false`.
+HATS can emit `status="skip" result="false"` for an intentional gtest skip;
+this is non-failure coverage, not a failed testcase.
+
+For CppTest modules whose generated `Test.json` timeout is too short, use the
+runner's staged-only timeout patch instead of editing OpenHarmony source:
+
+```bash
+python3 tools/xts_xdevice_runner/run_xdevice_probe.py \
+  --suite-dir out/musepaper2/suites/hats \
+  --suite-name hats \
+  --module HatsHdfAudioIdlCaptureAdditionalTest \
+  --stage-module-only \
+  --out-dir /path/to/out \
+  -- --native-test-timeout-ms 600000
+```
+
+Iteration347 needed this for `HatsHdfAudioIdlCaptureAdditionalTest`; the
+default 120000 ms run timed out with `ShellCommandUnresponsiveException`, while
+the staged 600000 ms run completed 123/123.
 
 The first source-built DCTS probe on 2026-06-15 generated
 `out/musepaper2/suites/dcts` successfully for MusePaper2 RISC-V64 in about
