@@ -272,6 +272,14 @@ targets, or no useful payload.
   the first source-built ACTS probe passed 85/85. `ActsHilogNdkTest` completed
   the xDevice flow but had hilog assertion failures, so classify it as
   subsystem follow-up rather than runner bring-up failure.
+- DCTS can be source-built for MusePaper2 RISC-V64 with the same prebuilt
+  Python PATH pattern. It generated `out/musepaper2/suites/dcts` in the first
+  probe, but execution should wait for a distributed/two-device topology rather
+  than being treated as a single-device smoke test.
+- DCTS/Hvigor builds may leave generated `oh-package-lock.json5`, `.hvigor/`,
+  `build/`, `oh_modules/`, `local.properties`, and modified `hvigorw` files in
+  `test/xts/dcts`. Treat them as build byproducts unless a targeted diff proves
+  otherwise.
 - As of the first OH6.1 XTS closure pass, the official XTS page had no
   OpenHarmony 6.1 Release standard-system resource download. Record this as a
   resource gap and do not mix OH6.0 arm32 resources into OH6.1 RISC-V formal

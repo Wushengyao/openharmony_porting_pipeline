@@ -57,6 +57,16 @@ PATH="$PWD/prebuilts/python/linux-x86/3.11.4/bin:$PATH" \
   target_arch=riscv64 xts_suitetype=bin,hap_dynamic
 ```
 
+DCTS uses the same prebuilt-Python rule. Put Python 3.11 in `PATH` before
+invoking `test/xts/dcts/build.sh`; otherwise the wrapper can start under host
+Python 3.8 and fail before it updates `PATH` internally:
+
+```bash
+PATH="$PWD/prebuilts/python/linux-x86/3.11.4/bin:$PATH" \
+  ./test/xts/dcts/build.sh product_name=musepaper2 system_size=standard \
+  target_arch=riscv64 xts_suitetype=bin,hap_dynamic
+```
+
 - For MusePaper2 OH6.1 RISC-V ACTS, if GN fails at
   `test/xts/acts/commonlibrary/toolchain/BUILD.gn` with `rebase_path("")`,
   compare the already-ported OH6.0 RISC-V tree. The expected fix is to add a
@@ -85,6 +95,9 @@ PATH="$PWD/prebuilts/python/linux-x86/3.11.4/bin:$PATH" \
   RISC-V ACTS, the outer directory is `out/musepaper2/suites/acts`, while the
   actual xDevice roots are `out/musepaper2/suites/acts/acts` and
   `out/musepaper2/suites/acts/acts-validator`.
+- MusePaper2 OH6.1 RISC-V DCTS generated a direct xDevice root at
+  `out/musepaper2/suites/dcts`. It contains the standard
+  `run.bat/run.sh/config/testcases/tools` layout.
 - Full ACTS can be large. MusePaper2 OH6.1 RISC-V produced about 9.5 GB under
   `out/musepaper2/suites/acts`; avoid whole-suite upload for first probes.
 
@@ -180,6 +193,10 @@ Important details:
 - Do not start with broad audio, suspend, USB-role, network-topology, active
   slot, or distributed suites. Use clean boots and per-module reboot isolation
   for stateful modules.
+- Do not execute DCTS as a single-device smoke substitute. DCTS modules cover
+  distributed scheduling, SoftBus, distributed data, distributed hardware, and
+  paired client/server apps; prepare a two-device or lab-distributed topology
+  before treating failures as product regressions.
 
 ## Evidence To Preserve
 
@@ -207,3 +224,8 @@ The first source-built ACTS probe on 2026-06-15 used the nested ACTS suite root
 `failed=0`; an earlier `ActsHilogNdkTest` run completed the xDevice flow but
 reported 53 passed and 11 failed, so it should be treated as follow-up feature
 evidence rather than a runner failure.
+
+The first source-built DCTS probe on 2026-06-15 generated
+`out/musepaper2/suites/dcts` successfully for MusePaper2 RISC-V64 in about
+5.5 minutes. Record it as build/suite-layout evidence only until a distributed
+multi-device execution fixture is available.
