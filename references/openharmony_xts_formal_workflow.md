@@ -312,6 +312,13 @@ Also classify `status="skip"` or `status="ignored"` before `result=false`.
 HATS can emit `status="skip" result="false"` for an intentional gtest skip;
 this is non-failure coverage, not a failed testcase.
 
+When narrowing ACTS OHJSUnit/Hypium failures, do not stop after a single-case
+probe. On MusePaper2, `ArrayCombinationTest4158` passed alone and paired with
+`4153`, and all tested five-case subsets passed, but the full `4153-4158`
+window failed repeatedly at `4158`. Record both passing subsets and failing
+windows before classifying an Ark/ETS builtin assertion as a product-runtime
+defect.
+
 Do not blindly batch tests that mutate boot metadata. On MusePaper2,
 `HatsStartupPartitionSlotTest` calls `SetActiveSlot` and `SetSlotUnbootable`
 for slots 0-3. Treat it as a safety-gated module that requires proven physical

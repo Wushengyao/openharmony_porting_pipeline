@@ -239,8 +239,11 @@ MusePaper2 OH6.1 has proven xDevice transport and selected modules:
   partial full-module failure at `ArrayCombinationTest4158` with downstream
   blocked cases, but iteration349 narrowed it using `-ta class:` filters:
   `ArrayCombinationTest4158` alone passes, `4154-4158`/`4155-4158`/`4156-4158`
-  /`4157-4158` pass, while `4153-4158` and `4148-4158` fail at `4158`. Treat it
-  as a sequence/state/resource interaction around `ArrayCombinationTest4Js153`
+  /`4157-4158` pass, while `4153-4158` and `4148-4158` fail at `4158`.
+  Iteration350 confirmed that `4153,4158`, several 3-5 case subsets, and all
+  tested five-case subsets pass, but the complete `4153-4158` six-case window
+  fails again at `4158`. Treat it as a higher-order
+  sequence/state/resource interaction across `ArrayCombinationTest4Js153-158`
   before changing product runtime code or weakening the test.
 - ACTS pure JS/AppInstallKit-only expansion continued in iteration343:
   `ActsDateTest`, `ActsRegExpTest`, `ActsSymbol1Test`, `ActsSymbol2Test`,

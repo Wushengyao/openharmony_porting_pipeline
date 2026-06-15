@@ -331,6 +331,12 @@ targets, or no useful payload.
   `ActsArrayTest` was correctly reduced to one stable failed case
   `ArrayCombinationTest4158` and 3357 blocked cases after fixing the parser and
   rerunning the module.
+- For ACTS OHJSUnit/Hypium sequence triage, validate passing subsets as well as
+  failing windows. In iteration349-350, `ArrayCombinationTest4158` passed alone,
+  passed paired with `4153`, and passed in all tested five-case subsets, while
+  the full `4153-4158` six-case window failed repeatedly at `4158`. Treat this
+  as a higher-order sequence/state/resource interaction before changing product
+  runtime code or weakening the test.
 - Keep xDevice result counting tied to `summary/test_summary.yaml` and XML, not
   ad hoc wrapper fields. In iteration344 an external TSV helper initially read a
   nonexistent `totals` key and printed zero cases even though the module
