@@ -70,6 +70,20 @@ python3 tools/xts_xdevice_runner/run_suite.py \
   --out /path/to/out/runner
 ```
 
+For drivers that prompt on stdin, pass one line per prompt:
+
+```bash
+python3 tools/xts_xdevice_runner/run_suite.py \
+  --suite-dir /path/to/suite \
+  --suite-name acts-validator \
+  --module validator \
+  --stdin-line Y \
+  --out /path/to/out/runner
+```
+
+This only removes the non-interactive EOF failure. A module still needs real
+case XML or xDevice pass/fail counts before it can be considered passed.
+
 Collect/index reports:
 
 ```bash
@@ -141,7 +155,10 @@ MusePaper2 OH6.1 has proven xDevice transport and selected modules:
   and SDK libc++ ABI fixes. The rerun also pulled back XML/HTML/log evidence
   from the Windows xDevice report directory.
 - ACTS-Validator: dispatch reached xDevice, but generated validator resources
-  were incomplete.
+  were incomplete. A later probe showed `queryStandard` can be supplied by full
+  suite staging and `--stdin-line Y` can remove the prompt EOF, but the module
+  still reports `unavailable` with zero tests when the validator app does not
+  generate `Test.xml`.
 - DCTS: module executed on one device, but meaningful pass/fail likely requires
   distributed or dual-device topology.
 - SSTS: OHYaraTest executed, but the sample was blocked by security patch label

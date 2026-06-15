@@ -27,6 +27,7 @@ def main() -> int:
     parser.add_argument("--resource-dir")
     parser.add_argument("--tools-dir", type=Path)
     parser.add_argument("--extra", action="append", default=[])
+    parser.add_argument("--stdin-line", action="append", default=[])
     parser.add_argument("--windows-python")
     parser.add_argument("--hdc-path")
     parser.add_argument("--oh-autoctl", type=Path)
@@ -64,6 +65,8 @@ def main() -> int:
         argv.extend(["--tools-dir", str(args.tools_dir)])
     for extra in args.extra:
         argv.extend(["--extra", extra])
+    for stdin_line in args.stdin_line:
+        argv.extend(["--stdin-line", stdin_line])
     if args.no_install:
         argv.append("--no-install")
     if args.stage_module_only:

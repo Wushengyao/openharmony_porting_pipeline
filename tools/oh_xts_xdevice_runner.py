@@ -273,7 +273,11 @@ def build_run_command(args: argparse.Namespace, suite_name: str, suite_dir: str)
         parts.append(f"-respath {ps_quote(args.resource_dir)}")
     if args.extra:
         parts.extend(args.extra)
-    return " ".join(parts)
+    command = " ".join(parts)
+    if args.stdin_line:
+        stdin_lines = ", ".join(ps_quote(line) for line in args.stdin_line)
+        return f"@({stdin_lines}) | {command}"
+    return command
 
 
 def build_install_command(args: argparse.Namespace, suite_dir: str) -> str:
@@ -345,6 +349,12 @@ def main() -> int:
         help="Override suite tools/ with a known-good xDevice tool bundle before staging",
     )
     parser.add_argument("--extra", action="append", default=[], help="Raw extra argument for xDevice")
+    parser.add_argument(
+        "--stdin-line",
+        action="append",
+        default=[],
+        help="Line to pipe to python -m xdevice stdin; repeat for multiple prompts",
+    )
     parser.add_argument("--windows-python", default=DEFAULT_WINDOWS_PYTHON)
     parser.add_argument("--hdc-path", default=DEFAULT_HDC)
     parser.add_argument("--oh-autoctl", type=Path, default=DEFAULT_OH_AUTOCTL)
