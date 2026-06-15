@@ -22,6 +22,21 @@ repository to coordinate OpenHarmony porting work.
 - Write structured outputs first; Markdown summaries are secondary.
 - Cite evidence paths and offsets instead of copying full raw logs.
 - Stop and escalate to the main Agent on high-risk paths or operations.
+- Route model and budget choices through `policies/model_routing.yaml` and
+  `policies/budget_policy.yaml`.
+
+## Output Formats
+
+- Survey tasks produce `repo_survey.yaml`, `file_candidates.md`, and
+  `evidence_refs.md`.
+- Log/runtime triage tasks produce structured findings plus `top_errors.md` or
+  `runtime_review.md`.
+- Test tasks produce `test_summary.yaml`, `failures_by_subsystem.yaml`, and
+  `rerun_plan.yaml`.
+- Regression tasks produce `regression_matrix.yaml` and `risk_items.yaml`.
+- Writer tasks produce `patch_summary.md`, `changed_files.yaml`, and
+  `validation_requested.yaml`.
+- Reports must link to evidence packs and acceptance state files.
 
 ## Writer Policy
 
@@ -47,6 +62,9 @@ Escalate before work involving:
 
 - Prefer deterministic tools for build/test/log/device operations.
 - Keep raw artifacts under artifact roots and expose compact evidence packs.
+- Use `tools/evidence_pack_builder.py`, `tools/log_slice.py`,
+  `tools/diff_risk_scanner.py`, and `tools/secret_and_binary_scanner.py`
+  before asking the main Agent to read noisy artifacts.
 - Do not promote native HATS subset pass to formal xDevice pass.
 - Do not promote build pass to boot, runtime, test, or release pass.
 - Preserve unknowns instead of inventing status.

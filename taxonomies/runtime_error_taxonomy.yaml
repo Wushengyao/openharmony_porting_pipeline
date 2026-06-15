@@ -1,0 +1,43 @@
+version: "0.2"
+scope: OpenHarmony serial/HDC/runtime logs
+signatures:
+  - id: kernel_panic
+    regex: "(Kernel panic|end Kernel panic|not syncing|sysrq triggered crash)"
+    class: boot_blocker
+    severity: P0
+    escalate: true
+  - id: watchdog_or_hard_lockup
+    regex: "(watchdog|hard LOCKUP|soft lockup|RCU stall|hung task)"
+    class: boot_or_runtime_blocker
+    severity: P0
+    escalate: true
+  - id: bootloop_reboot
+    regex: "(Restarting system|reboot: Restarting|init:.*reboot|boot reason)"
+    class: recovery_or_bootloop
+    severity: P0
+    escalate: true
+  - id: hdf_service_failure
+    regex: "(HDF|hdf).*(failed|fail|error|bind|start|load|service)"
+    class: hdf
+    severity: P1
+    escalate: true
+  - id: init_service_failure
+    regex: "(init:|param_service|samgr).*(failed|fail|error|cannot start|permission denied)"
+    class: init_or_service
+    severity: P1
+    escalate: true
+  - id: permission_denial
+    regex: "(avc: denied|Permission denied|SELinux|capability=.*denied)"
+    class: permission_policy
+    severity: P1
+    escalate: true
+  - id: hdc_unavailable
+    regex: "(No any connected target|ExecuteCommand need connect-key|Offline|HDC.*disconnect)"
+    class: device_connectivity
+    severity: P1
+    escalate: false
+  - id: app_or_ability_crash
+    regex: "(FATAL EXCEPTION|Ability.*crash|appspawn.*failed|process.*died)"
+    class: app_runtime
+    severity: P2
+    escalate: false

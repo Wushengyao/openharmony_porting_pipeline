@@ -44,6 +44,31 @@ role_budgets:
     max_runtime_sec: 1800
     max_tokens_label: high-focused
     max_log_bytes: 0
+  patch-planner:
+    max_runtime_sec: 1200
+    max_tokens_label: high-focused
+    max_log_bytes: 50000
+  patch-writer:
+    max_runtime_sec: 1800
+    max_tokens_label: high-focused
+    max_log_bytes: 50000
+  runtime-hdf-reviewer:
+    max_runtime_sec: 1200
+    max_tokens_label: high-focused
+    max_log_bytes: 200000
+  device-automation-steward:
+    max_runtime_sec: 3600
+    max_tokens_label: mini-medium
+    max_log_bytes: 100000
+    max_device_actions: 3
+  binary-asset-auditor:
+    max_runtime_sec: 1200
+    max_tokens_label: high-focused
+    max_log_bytes: 0
+  version-lane-maintainer:
+    max_runtime_sec: 1800
+    max_tokens_label: high-focused
+    max_log_bytes: 0
 
 practice_limits:
   max_flash_attempts_per_iteration_without_review: 1

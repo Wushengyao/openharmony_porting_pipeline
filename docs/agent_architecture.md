@@ -1,6 +1,6 @@
 # Codex Subagent Architecture
 
-This document defines the v0.1 operating model for evolving the OpenHarmony
+This document defines the v0.2 operating model for evolving the OpenHarmony
 porting pipeline from a single long-running Agent loop into a main-Agent plus
 bounded subagent workflow. It is a contract layer: it can be used with Codex
 native subagents, the Codex SDK, or a manual dispatcher as long as the task and
@@ -25,7 +25,9 @@ L0 deterministic tools execute repeatable actions:
 - flash and reconnect runners
 - HDC, serial, screenshot, and bugreport collectors
 - HATS native and xDevice runners
-- log slicers, XML parsers, baseline comparators, and risk scanners
+- `tools/evidence_pack_builder.py`, `tools/log_slice.py`,
+  `tools/panic_classifier.py`, XML parsers, baseline comparators, and risk
+  scanners
 - oh-auto and future rig-controller clients
 
 L1 subagents perform bounded tasks:
@@ -38,6 +40,12 @@ L1 subagents perform bounded tasks:
 - `regression-reviewer` compares current evidence against a baseline.
 - `reporter` drafts status, RC, and handoff reports from structured inputs.
 - `skill-maintainer` updates this skill repository after an iteration.
+- `patch-planner` prepares risk-scoped patch plans.
+- `patch-writer` applies approved edits while holding the writer lock.
+- `runtime-hdf-reviewer` reviews boot/init/HDF/runtime evidence.
+- `device-automation-steward` operates approved device automation.
+- `binary-asset-auditor` inventories prebuilts, firmware, and closed assets.
+- `version-lane-maintainer` maintains reusable upgrade lanes.
 
 L2 main Agent owns judgment:
 
@@ -174,3 +182,5 @@ iteration:
 
 The main Agent should merge only their structured outputs into a next-action
 plan. It should not read full logs unless a cited excerpt is insufficient.
+
+For the v0.2 practical playbook, read `docs/codex_subagent_playbook.md`.

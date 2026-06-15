@@ -66,7 +66,7 @@ roles:
       - source_workspace_write_requested
       - universal_rule_not_evidence_backed
 
-future_roles:
+enhanced_roles:
   patch-planner:
     model: gpt-5.5
     reasoning_effort: high
@@ -84,6 +84,11 @@ future_roles:
     model: gpt-5.4-mini
     reasoning_effort: medium
     sandbox: device_tool_only
+    tool_first: true
+  binary-asset-auditor:
+    model: gpt-5.5
+    reasoning_effort: high
+    sandbox: read_only
   version-lane-maintainer:
     model: gpt-5.5
     reasoning_effort: high

@@ -1,0 +1,102 @@
+version: "0.2"
+owner: main_agent
+default_action: escalate_to_main_agent
+
+high_risk_operations:
+  - id: boot_chain
+    examples:
+      - bootloader
+      - signing
+      - fastboot
+      - partition layout
+    required_before_action:
+      - evidence_refs
+      - rollback_plan
+      - explicit_main_agent_approval
+  - id: flashing_or_power
+    examples:
+      - flash image
+      - physical reset
+      - USB reconnect
+      - rig-controller action
+    required_before_action:
+      - device_profile
+      - job_budget
+      - job_ledger_path
+      - explicit_main_agent_approval
+  - id: hdf_init_permission
+    examples:
+      - HDF service startup
+      - init rc files
+      - SELinux policy
+      - permission policy
+    required_before_action:
+      - log_excerpt
+      - source_owner_paths
+      - validation_plan
+  - id: binary_or_firmware
+    examples:
+      - firmware blob
+      - kernel module
+      - closed prebuilt
+      - vendor BSP binary
+    required_before_action:
+      - path
+      - sha256
+      - provenance_or_debt
+      - replacement_conditions
+  - id: deletion_or_mass_rewrite
+    examples:
+      - delete tree
+      - broad formatting
+      - generated output rewrite
+    required_before_action:
+      - exact_path_scope
+      - diff_risk_scan
+      - explicit_main_agent_approval
+
+high_risk_path_patterns:
+  - "kernel/**"
+  - "drivers/hdf_core/**"
+  - "drivers/peripheral/**"
+  - "base/startup/init/**"
+  - "base/security/**"
+  - "base/accesscontrol/**"
+  - "foundation/**/hdf*/**"
+  - "device/**/boot/**"
+  - "device/**/kernel/**"
+  - "device/**/firmware/**"
+  - "device/**/hdf_config/**"
+  - "vendor/**/hdf_config/**"
+  - "vendor/**/etc/init/**"
+  - "vendor/**/etc/param/**"
+  - "vendor/**/firmware/**"
+  - "vendor/**/*.ko"
+  - "vendor/**/*.bin"
+  - "vendor/**/*.fw"
+  - "vendor/**/*.img"
+  - "vendor/**/*.so"
+  - "third_party/**/prebuilt/**"
+
+high_risk_diff_markers:
+  - "deleted file mode"
+  - "Binary files"
+  - "GIT binary patch"
+  - "reboot fastboot"
+  - "setenforce"
+  - "chmod 777"
+  - "allow * *:* *"
+  - "critical"
+  - "class core"
+
+escalation_reasons:
+  - boot_related
+  - partition_related
+  - firmware_or_bootloader_related
+  - hdf_service_startup_related
+  - init_or_permission_policy_related
+  - binary_replacement_related
+  - flash_or_power_operation_related
+  - delete_or_mass_rewrite_requested
+  - repeated_failure_count_gte_2
+  - acceptance_or_waiver_decision_needed

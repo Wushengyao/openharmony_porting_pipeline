@@ -1,0 +1,50 @@
+version: "0.2"
+purpose: >
+  Low-cost HATS/native smoke set for early OpenHarmony porting iterations. A
+  pass here never equals formal xDevice pass; it only guides widening.
+
+safe_modules:
+  - id: startup_partition_slot
+    suite: HATS
+    reason: verifies boot-slot visibility with limited hardware dependency
+    gate: subsystem_smoke
+  - id: input
+    suite: HATS
+    reason: catches basic HDF input registration and event path regressions
+    gate: hats_native_subset
+  - id: usb
+    suite: HATS
+    reason: validates host/device plumbing used by HDC and peripherals
+    gate: hats_native_subset
+  - id: sensor
+    suite: HATS
+    reason: low-cost board sensor stack check
+    gate: hats_native_subset
+  - id: battery
+    suite: HATS
+    reason: stable power-service visibility check on tablet-like boards
+    gate: hats_native_subset
+  - id: thermal
+    suite: HATS
+    reason: basic thermal zone and service smoke
+    gate: hats_native_subset
+  - id: light
+    suite: HATS
+    reason: simple sensor/display-adjacent smoke when hardware exists
+    gate: hats_native_subset
+  - id: vibrator
+    suite: HATS
+    reason: peripheral service smoke with narrow blast radius
+    gate: hats_native_subset
+  - id: audio_hdf
+    suite: HATS
+    reason: early audio HDF registration check; may need board-specific routing
+    gate: hats_native_subset
+
+excluded_without_manual_setup:
+  - id: dcts_special_hardware
+    reason: may require external devices or lab fixtures
+  - id: full_camera_certification
+    reason: needs lighting, scene, and result interpretation
+  - id: network_external_dependencies
+    reason: requires controlled WiFi/router/internet credentials

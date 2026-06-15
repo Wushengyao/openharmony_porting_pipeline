@@ -25,6 +25,9 @@ only when the task needs them.
   workflows.
 - `agents/`: subagent role prompts for survey, triage, reporting, validation,
   skill maintenance, and XTS/HATS work.
+- `policies/`, `taxonomies/`, `workflows/`, `templates/`, and
+  `version_lanes/`: routing, budget, risk, safe-set, handoff, and upgrade-lane
+  assets used by subagents and the main Agent.
 
 ## Core Rules
 
@@ -59,7 +62,8 @@ For the detailed operating rulebook, read
 | Task | Read First | Primary Tools |
 | --- | --- | --- |
 | Run the extraction/audit pipeline | `references/pipeline_command_reference.md`, `references/stage_contract.md`, `references/evidence_rules.md` | `tools/run_pipeline.sh`, `tools/run_stage.sh`, validators |
-| Dispatch subagents | `docs/agent_architecture.md`, `AGENTS.md`, `schemas/agent_task.schema.json`, `schemas/evidence_pack.schema.json`, `schemas/acceptance_state.schema.json` | role prompts under `agents/` |
+| Dispatch subagents | `docs/agent_architecture.md`, `docs/codex_subagent_playbook.md`, `AGENTS.md`, schemas, `policies/model_routing.yaml`, `policies/budget_policy.yaml` | role prompts under `agents/`, `tools/evidence_pack_builder.py`, `tools/log_slice.py` |
+| Review high-risk source or device operations | `policies/risk_policy.yaml`, `policies/path_whitelist.yaml`, `policies/operation_approval.md` | `tools/diff_risk_scanner.py`, `tools/secret_and_binary_scanner.py` |
 | Run four-tree OH version-upgrade analysis | `references/pipeline_command_reference.md`, `docs/oh6_riscv_version_upgrade_rc0.md` | `tools/run_version_upgrade_porting.sh` |
 | Apply reviewed base patches or dependency inventories | `references/porting_operating_rules.md`, `references/pipeline_command_reference.md` | `tools/apply_porting_base_patch.py` |
 | Triage RISC-V build failures | `references/porting_operating_rules.md`; search `README.md` and `tools/apply_porting_base_patch.py` for exact error text | `rg`, `build.sh`, `apply_porting_base_patch.py` |
@@ -89,6 +93,8 @@ bash /home/ve/.codex/skills/openharmony_porting_pipeline/tools/run_version_upgra
   --new-workspace /path/to/new_unported_ohos
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py capabilities
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py profile musepaper2
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/evidence_pack_builder.py --help
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/log_slice.py --help
 ```
 
 For device work, always run discovery before action:

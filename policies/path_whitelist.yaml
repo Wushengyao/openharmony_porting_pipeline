@@ -1,0 +1,69 @@
+version: "0.2"
+owner: main_agent
+description: >
+  Default patch-writer path boundaries. A task may narrow these roots. It must
+  not widen them without a main-Agent approval record.
+
+roles:
+  patch-writer:
+    requires_writer_lock: true
+    default_allowed_write_patterns:
+      - "vendor/<vendor>/<product>/**"
+      - "device/<vendor>/<board>/**"
+      - "productdefine/common/products/<product>.json"
+      - "build/subsystem_config.json"
+      - "build/ohos/images/**"
+      - "test/**/<product>/**"
+    default_denied_patterns:
+      - ".repo/**"
+      - "out/**"
+      - "prebuilts/**"
+      - "third_party/**"
+      - "kernel/**"
+      - "base/security/**"
+      - "base/startup/init/**"
+      - "**/*.bin"
+      - "**/*.fw"
+      - "**/*.img"
+      - "**/*.ko"
+      - "**/*.so"
+    may_write_high_risk_only_with:
+      - explicit_main_agent_approval
+      - risk_items_yaml
+      - validation_plan
+      - rollback_plan
+
+  skill-maintainer:
+    requires_writer_lock: false
+    allowed_write_patterns:
+      - "SKILL.md"
+      - "README.md"
+      - "AGENTS.md"
+      - "agents/**"
+      - "docs/**"
+      - "examples/**"
+      - "policies/**"
+      - "schemas/**"
+      - "taxonomies/**"
+      - "templates/**"
+      - "tools/**"
+      - "workflows/**"
+      - "version_lanes/**"
+    denied_patterns:
+      - "/data1/**/ohos/**"
+      - "**/*.zip"
+      - "**/*.img"
+      - "**/*.bin"
+      - "**/*.ko"
+
+  device-automation-steward:
+    requires_writer_lock: false
+    allowed_artifact_patterns:
+      - "outputs/**"
+      - "logs/**"
+      - "evidence/**"
+      - "device_runs/**"
+    denied_actions:
+      - source_edit
+      - unbounded_flash_loop
+      - blind_resubmit_after_timeout

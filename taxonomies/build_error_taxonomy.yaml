@@ -1,0 +1,70 @@
+version: "0.2"
+scope: OpenHarmony build/package logs
+signatures:
+  - id: gn_missing_label_or_target
+    regex: "(Unknown target|Label not found|does not exist|not found in BUILD.gn)"
+    class: source_graph
+    likely_agents:
+      - repo-surveyor
+      - build-log-triager
+    next_evidence:
+      - surrounding BUILD.gn lines
+      - bundle.json or subsystem_config references
+  - id: ninja_missing_input
+    regex: "(missing and no known rule to make it|No rule to make target)"
+    class: generated_or_missing_file
+    likely_agents:
+      - build-log-triager
+      - binary-asset-auditor
+    next_evidence:
+      - producer target
+      - expected generated file path
+      - binary/provenance audit if asset-like
+  - id: toolchain_or_prebuilt_missing
+    regex: "(No such file or directory.*(clang|gcc|ld|python|node|java|rust|llvm)|prebuilts?.*not found)"
+    class: host_or_prebuilt_dependency
+    likely_agents:
+      - build-log-triager
+    next_evidence:
+      - tool path
+      - host environment
+      - prebuilt checkout status
+  - id: riscv_arch_mismatch
+    regex: "(riscv|risc-v|rv64|unknown architecture|Relocations in generic ELF|file format not recognized)"
+    class: architecture_mismatch
+    likely_agents:
+      - build-log-triager
+      - binary-asset-auditor
+    next_evidence:
+      - file output
+      - readelf header
+      - target_cpu and product config
+  - id: duplicate_symbol_or_link_conflict
+    regex: "(multiple definition of|duplicate symbol|undefined reference to|ld.lld: error)"
+    class: link
+    likely_agents:
+      - build-log-triager
+      - repo-surveyor
+    next_evidence:
+      - failing link command
+      - object/library list
+      - symbol owner candidates
+  - id: python_import_or_version
+    regex: "(ModuleNotFoundError|ImportError|SyntaxError|No module named|requires Python)"
+    class: host_tool_python
+    likely_agents:
+      - build-log-triager
+    next_evidence:
+      - python executable
+      - failing script
+      - module requirement
+  - id: packaging_image_missing
+    regex: "(image.*not found|mkimage|sparse|partition|vendor.img|system.img|userdata.img)"
+    class: packaging
+    likely_agents:
+      - build-log-triager
+      - patch-planner
+    next_evidence:
+      - build output image directory
+      - package script
+      - partition config

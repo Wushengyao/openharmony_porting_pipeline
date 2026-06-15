@@ -12,21 +12,27 @@ The design goal is **stage isolation**: each stage has its own Codex context and
 
 ## Codex Subagent Workflow
 
-This repository now includes a v0.1 contract for running OpenHarmony porting
+This repository now includes a v0.2 contract for running OpenHarmony porting
 work as a main-Agent plus bounded subagent workflow:
 
 - `docs/agent_architecture.md` defines the L0 deterministic tool, L1 subagent,
   L2 main-Agent, and L3 supervision layers.
+- `docs/codex_subagent_playbook.md` gives the practical dispatch flow.
 - `AGENTS.md` records the default read-only subagent policy, writer-lock rule,
   high-risk escalation rule, and evidence discipline.
 - `schemas/agent_task.schema.json`, `schemas/evidence_pack.schema.json`, and
   `schemas/acceptance_state.schema.json` define the task, evidence, and gate
   contracts.
-- `agents/` contains the first role specs:
-  `repo-surveyor`, `build-log-triager`, `xts-hats-runner`,
-  `regression-reviewer`, `reporter`, and `skill-maintainer`.
+- `agents/` contains role specs for read-only survey/triage/test/regression
+  work plus patch planning, controlled writing, runtime/HDF review, device
+  automation, binary audit, reporting, skill maintenance, and version lanes.
 - `policies/model_routing.yaml` and `policies/budget_policy.yaml` keep model
   choice, escalation, token, test, and device-action budgets explicit.
+- `policies/risk_policy.yaml`, `policies/path_whitelist.yaml`, and
+  `policies/operation_approval.md` define high-risk gates.
+- `taxonomies/` and `tools/log_slice.py` keep repeated log triage compact.
+- `tools/evidence_pack_builder.py` creates compact evidence packs for the main
+  Agent and subagents.
 - `examples/agent_tasks/` contains copyable read-heavy task examples.
 
 The main Agent should consume evidence packs and structured subagent outputs
