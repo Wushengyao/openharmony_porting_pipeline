@@ -141,19 +141,31 @@ source-built suites contain both underscore and hyphen spellings of the same
 package, such as `xdevice_devicetest` and `xdevice-devicetest`; installing both
 causes pip `ResolutionImpossible`, so only one normalized package is selected.
 
-XML parsing treats `result=true/false` as authoritative for case pass/fail,
-does not promote `status=run` to pass, and deduplicates cases that appear in
-both `summary_report.xml` and per-module XML.
+XML parsing treats `status=disable/disabled`, `status=blocked`, or messages
+containing `mark blocked` as blocked before looking at `result=false`. This
+matches xDevice reports that mark downstream cases blocked after the first real
+failure. For runnable cases, `result=true/false` is authoritative for case
+pass/fail. The parser does not promote `status=run` to pass, deduplicates cases
+that appear in both `summary_report.xml` and per-module XML, and keeps the
+failure list limited to real `failed`, `error`, or `timeout` cases.
 
 ## Current MusePaper2 Evidence Boundary
 
 MusePaper2 OH6.1 has proven xDevice transport and selected modules:
 
 - HATS `HatsGetcwdTest`: 1/1 passed.
+- HATS syscall expansion through xDevice: `HatsClockGetresTest`,
+  `HatsNanoSleepTest`, `HatsChdirTest`, `HatsDupTest`, `HatsDup3Test`,
+  `HatsEventfd2Test`, `HatsEpollCreateTest`, and `HatsFaccessatTest` passed in
+  iteration342.
 - ACTS `ActsStartupSysDeviceInfoTest`: 85/85 passed.
 - ACTS `ActsHilogNdkTest`: 64/64 passed after the RISC-V native assistant HAP
   and SDK libc++ ABI fixes. The rerun also pulled back XML/HTML/log evidence
   from the Windows xDevice report directory.
+- ACTS pure JS expansion through xDevice: `ActsPromiseTest`, `ActsDataViewTest`,
+  and `ActsBaseSpecTest` passed in iteration342. `ActsArrayTest` is a stable
+  partial failure: 489 passed, one real failed case
+  `ArrayCombinationTest4158`, and 3357 blocked cases after rerun.
 - ACTS-Validator: dispatch reached xDevice, but generated validator resources
   were incomplete. A later probe showed `queryStandard` can be supplied by full
   suite staging and `--stdin-line Y` can remove the prompt EOF, but the module

@@ -24,6 +24,33 @@ def load_runner_summary(runner_dir: Path) -> dict[str, object]:
     return {"summary_found": False}
 
 
+def compact_xml_summary(parsed_xml: object) -> object:
+    if not isinstance(parsed_xml, dict):
+        return parsed_xml
+    reports = parsed_xml.get("reports")
+    compact = {
+        "status": parsed_xml.get("status"),
+        "report_root": parsed_xml.get("report_root"),
+        "xml_files": parsed_xml.get("xml_files"),
+        "parsed_xml_files": parsed_xml.get("parsed_xml_files"),
+        "counts": parsed_xml.get("counts"),
+        "failure_count": len(parsed_xml.get("failures") or []),
+        "failures": parsed_xml.get("failures") or [],
+    }
+    if isinstance(reports, list):
+        compact["reports"] = [
+            {
+                "path": item.get("path"),
+                "parsed": item.get("parsed"),
+                "counts": item.get("counts"),
+                "error_count": len(item.get("errors") or []),
+            }
+            for item in reports
+            if isinstance(item, dict)
+        ]
+    return compact
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runner-dir", type=Path)
@@ -35,8 +62,9 @@ def main() -> int:
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     runner_summary = load_runner_summary(args.runner_dir) if args.runner_dir else {"summary_found": False}
-    parsed_xml = load_data(args.parsed_xml) if args.parsed_xml and args.parsed_xml.exists() else {}
-    counts = parsed_xml.get("counts") if isinstance(parsed_xml, dict) else None
+    parsed_xml_raw = load_data(args.parsed_xml) if args.parsed_xml and args.parsed_xml.exists() else {}
+    parsed_xml = compact_xml_summary(parsed_xml_raw)
+    counts = parsed_xml_raw.get("counts") if isinstance(parsed_xml_raw, dict) else None
     status = derive_status(counts) if isinstance(counts, dict) else "unknown"
     if status == "unknown" and isinstance(runner_summary, dict):
         runner_counts = {

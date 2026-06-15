@@ -9,7 +9,7 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
-from common import COUNT_KEYS, derive_status, parse_xml_report, write_json  # noqa: E402
+from common import COUNT_KEYS, FAILURE_STATUSES, derive_status, parse_xml_report, write_json  # noqa: E402
 
 
 def merge_unique_cases(reports):
@@ -59,7 +59,7 @@ def main() -> int:
                 counts[key] += value
     failures = [
         case for case in unique_cases
-        if case.get("status") not in {"passed", "skipped", "ignored"}
+        if case.get("status") in FAILURE_STATUSES
     ]
     result = {
         "status": derive_status(counts),

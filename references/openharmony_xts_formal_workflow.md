@@ -294,6 +294,13 @@ rebuilt through `build.sh`, `ActsHilogNdkOtherTest.hap` contained
 `libs/riscv64/libhilogndk.so`, and the xDevice module-only retry reported
 `modules=1`, `total=64`, `passed=64`, `failed=0`.
 
+When parsing xDevice XML, classify disabled and blocked cases before looking at
+`result=false`. ACTS reports can emit `status="disable" result="false"` with a
+`mark blocked` message for cases that were skipped after the first real
+failure. These cases are blocked debt, not individual testcase failures.
+Iteration342 showed this on `ActsArrayTest`: both the first run and rerun had
+one real failed case, `ArrayCombinationTest4158`, plus 3357 blocked cases.
+
 The first source-built DCTS probe on 2026-06-15 generated
 `out/musepaper2/suites/dcts` successfully for MusePaper2 RISC-V64 in about
 5.5 minutes. The first execution smoke used `DctsFileioClientTest`; xDevice

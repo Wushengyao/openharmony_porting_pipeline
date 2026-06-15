@@ -31,6 +31,9 @@ COUNT_KEYS = [
     "unavailable",
 ]
 
+FAILURE_STATUSES = {"failed", "error", "timeout"}
+BLOCKED_STATUSES = {"blocked", "disable", "disabled"}
+
 
 def dump_data(data: Any) -> str:
     if yaml is not None:
@@ -97,6 +100,8 @@ def normalize_status(value: str | None) -> str:
         "timeout": "timeout",
         "blocked": "blocked",
         "block": "blocked",
+        "disable": "blocked",
+        "disabled": "blocked",
         "skip": "skipped",
         "skipped": "skipped",
         "ignored": "ignored",
@@ -107,6 +112,15 @@ def normalize_status(value: str | None) -> str:
 
 
 def normalize_case_status(attrs: dict[str, str], child_tags: set[str]) -> str:
+    status = normalize_status(
+        attrs.get("status")
+        or attrs.get("verdict")
+        or attrs.get("outcome")
+    )
+    message = (attrs.get("message") or attrs.get("msg") or "").strip().lower()
+    if status in BLOCKED_STATUSES or "mark blocked" in message:
+        return "blocked"
+
     result = attrs.get("result")
     if result is not None:
         normalized_result = result.strip().lower()
@@ -115,11 +129,6 @@ def normalize_case_status(attrs: dict[str, str], child_tags: set[str]) -> str:
         if normalized_result in {"false", "fail", "failed", "failure"}:
             return "failed"
 
-    status = normalize_status(
-        attrs.get("status")
-        or attrs.get("verdict")
-        or attrs.get("outcome")
-    )
     if status == "run":
         status = "unknown"
     if status == "unknown":

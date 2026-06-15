@@ -316,6 +316,13 @@ targets, or no useful payload.
   `xdevice-devicetest-0.0.0.tar.gz`. Normalize names and install only one copy
   per package, otherwise pip can fail with `ResolutionImpossible` before the
   test reaches the device.
+- xDevice XML may set `status="disable"` and `result="false"` for cases that
+  were not actually run after an earlier failure. Treat `status=disable`,
+  `status=disabled`, `status=blocked`, or `message="...mark blocked..."` as
+  blocked before counting `result=false` as a real failure. In iteration342,
+  `ActsArrayTest` was correctly reduced to one stable failed case
+  `ArrayCombinationTest4158` and 3357 blocked cases after fixing the parser and
+  rerunning the module.
 - The first SSTS smoke reached OHYaraTest with `OpenHarmony-SA-2025-11` and
   produced `blocked=1`, not a runner failure. The block came from security patch
   `2026-02` being four months behind current month `2026-06`, exceeding the
