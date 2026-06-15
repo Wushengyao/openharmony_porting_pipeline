@@ -326,6 +326,15 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
 Do not accept a shell job as successful until stdout has been inspected for the
 expected payload and does not contain `[Fail]`, `ExecuteCommand need
 connect-key`, `Offline`, or `No any connected target`.
+For bounded stability or soak probes, keep each HDC shell job's stdout compact.
+Long loops that print repeated `hidumper`, `dmesg`, or service dumps can
+produce a successful job while returned/logged stdout is truncated by the
+automation service capture path. Prefer one short shell job per sample with the
+Linux side sleeping between samples, or write detailed sample output to a
+device-side file under `/data/local/tmp` and `pull` it as an artifact. If a long
+job is unavoidable, query `oh_autoctl.py job JOB_ID` after waiting and treat
+missing sample markers or a stale embedded `job.status=running` as incomplete
+evidence even when the final job status later reports `succeeded`.
 Do not accept template `wait_hdc` or template smoke as proof of boot when its
 event payload contains `[Empty]`; rerun `wait-connected` and strict smoke from
 this CLI.
