@@ -19,6 +19,7 @@ from common import load_data, write_json  # noqa: E402
 
 DEFAULT_OH_AUTOCTL = SCRIPT_DIR.parent / "oh_autoctl.py"
 TEXT_REPORT_SUFFIXES = {".xml", ".ini", ".log", ".txt", ".record", ".html", ".htm"}
+COMPRESSED_REPORT_SUFFIXES = {".gz"}
 
 
 def copy_reports(src: Path, dst: Path) -> list[dict[str, object]]:
@@ -84,10 +85,10 @@ def windows_common_dir(files: list[dict[str, object]]) -> str:
         return ntpath.dirname(paths[0])
 
 
-def should_pull_text(item: dict[str, object], max_bytes: int) -> bool:
+def should_pull_report(item: dict[str, object], max_bytes: int) -> bool:
     path = str(item.get("path", ""))
     suffix = Path(path.replace("\\", "/")).suffix.lower()
-    if suffix not in TEXT_REPORT_SUFFIXES:
+    if suffix not in TEXT_REPORT_SUFFIXES and suffix not in COMPRESSED_REPORT_SUFFIXES:
         return False
     try:
         return int(item.get("size", 0)) <= max_bytes
@@ -121,29 +122,58 @@ def read_windows_text(args: argparse.Namespace, win_path: str) -> subprocess.Com
     return subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
+def read_windows_base64(args: argparse.Namespace, win_path: str) -> subprocess.CompletedProcess[str]:
+    script = (
+        "$ErrorActionPreference='Stop'; "
+        "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
+        f"[Convert]::ToBase64String([System.IO.File]::ReadAllBytes({ps_quote(win_path)}))"
+    )
+    command = [
+        sys.executable,
+        str(args.oh_autoctl),
+        "admin-shell",
+        "--command-timeout-sec",
+        "120",
+        powershell(script),
+    ]
+    return subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+
+def admin_stdout(text: str) -> str:
+    try:
+        payload = json.loads(text)
+        if isinstance(payload, dict):
+            return str(payload.get("stdout", ""))
+    except json.JSONDecodeError:
+        pass
+    return text
+
+
 def pull_text_reports(args: argparse.Namespace, files: list[dict[str, object]]) -> list[dict[str, object]]:
     report_base = windows_common_dir(files)
     pulled: list[dict[str, object]] = []
     for item in files:
-        if not should_pull_text(item, args.max_pull_bytes):
+        if not should_pull_report(item, args.max_pull_bytes):
             continue
         win_path = str(item.get("path", ""))
         rel = ntpath.relpath(win_path, report_base) if report_base else ntpath.basename(win_path)
         local = args.out_dir / "reports" / Path(rel.replace("\\", "/"))
         local.parent.mkdir(parents=True, exist_ok=True)
-        proc = read_windows_text(args, win_path)
+        suffix = Path(win_path.replace("\\", "/")).suffix.lower()
+        binary_pull = suffix in COMPRESSED_REPORT_SUFFIXES
+        proc = read_windows_base64(args, win_path) if binary_pull else read_windows_text(args, win_path)
         record: dict[str, object] = {
             "windows_path": win_path,
             "local_path": str(local),
             "returncode": proc.returncode,
+            "mode": "binary_base64" if binary_pull else "text_utf8",
         }
         if proc.returncode == 0:
-            try:
-                payload = json.loads(proc.stdout)
-                content = payload.get("stdout", "") if isinstance(payload, dict) else ""
-            except json.JSONDecodeError:
-                content = proc.stdout
-            local.write_text(content, encoding="utf-8")
+            content = admin_stdout(proc.stdout)
+            if binary_pull:
+                local.write_bytes(base64.b64decode(content.strip()))
+            else:
+                local.write_text(content, encoding="utf-8")
             record["size"] = local.stat().st_size
         else:
             record["stderr"] = proc.stderr
@@ -199,7 +229,11 @@ def main() -> int:
 
     xml_files = [item for item in files if str(item.get("path", "")).lower().endswith(".xml")]
     html_files = [item for item in files if str(item.get("path", "")).lower().endswith((".html", ".htm"))]
-    logs = [item for item in files if str(item.get("path", "")).lower().endswith((".log", ".txt"))]
+    logs = [
+        item
+        for item in files
+        if str(item.get("path", "")).lower().endswith((".log", ".txt", ".log.gz", ".txt.gz"))
+    ]
     result = {
         "status": status,
         "report_root": report_root,

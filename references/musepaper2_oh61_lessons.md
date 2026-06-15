@@ -328,6 +328,11 @@ targets, or no useful payload.
   nonexistent `totals` key and printed zero cases even though the module
   summaries and XML reported real pass counts; regenerate derived summaries from
   `runner_summary` or `xml_summary.counts`.
+- When xDevice report collection indexes Windows-side `.gz` hilog or kmsg
+  artifacts, pull them as bytes rather than text before classifying an ACTS
+  failure. `collect_reports.py --pull-text-from-runner` now preserves small
+  `.gz` files through PowerShell `ReadAllBytes` plus base64; validate with
+  `gzip -t` when the compressed log is central evidence.
 - For ACTS expansion, inspect each module JSON before classifying it as
   low-risk. AppInstallKit-only pure JS modules such as `ActsDateTest`,
   `ActsRegExpTest`, `ActsSymbol1Test`, `ActsSymbol2Test`, `ActsMapTest`, and
@@ -336,10 +341,12 @@ targets, or no useful payload.
   `power-shell wakeup` and `power-shell setmode 602`, so it was deferred from
   the low-risk batch.
 - A module that stages and returns from xDevice can still expose a real ACTS
-  semantic failure. `ActsObjectTest` returned a proper report with
-  `Object1Test036` failed and downstream cases blocked; record this as test
-  debt and triage the exact source assertion rather than treating it as a
-  transport problem.
+  partial failure. Do not assume the first observed failed case is stable:
+  `ActsObjectTest` first reported `Object1Test036`, but immediate reruns moved
+  the first failed case to `Object1Test037` and `Object1Test041` after earlier
+  cases passed. Classify this as suspected runner/app early termination or
+  flake until rerun evidence stabilizes; only then spend source-debug effort on
+  a fixed Ark/ETS semantics assertion.
 - The first SSTS smoke reached OHYaraTest with `OpenHarmony-SA-2025-11` and
   produced `blocked=1`, not a runner failure. The block came from security patch
   `2026-02` being four months behind current month `2026-06`, exceeding the

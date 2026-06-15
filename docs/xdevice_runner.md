@@ -96,7 +96,9 @@ python3 tools/xts_xdevice_runner/collect_reports.py \
 When `--pull-text-from-runner` is set, the collector reads the Windows
 `report_file_list.json` produced by the transport runner and pulls small text
 artifacts back through oh-auto admin shell. This covers XML, HTML, INI, log,
-TXT, and RECORD files; binary or oversized artifacts stay indexed by path only.
+TXT, and RECORD files. Small `.gz` log artifacts are pulled as bytes through
+PowerShell `ReadAllBytes` plus base64 so compressed hilog is preserved. Other
+binary or oversized artifacts stay indexed by path only.
 
 Parse local XML reports when they are available:
 
@@ -186,13 +188,12 @@ MusePaper2 OH6.1 has proven xDevice transport and selected modules:
   inspect each `testcases/<module>.json` before running; for example,
   `ActsJsonJSApiTest` is JS-related but includes `ShellKit` power-mode commands
   and was intentionally deferred from the low-risk batch.
-- ACTS `ActsObjectTest` in iteration344 is a real partial failure, not a
-  transport failure: runner summary reported 34 passed, one failed case
-  `Object1Test036`, and downstream blocked cases. The failing source assertion
-  is in `Object1.test.ets` and checks `Object(3.1415)` number wrapper behavior.
-  Treat this as an Ark/ETS builtins or test semantics investigation candidate;
-  do not mark it passed merely because module staging and report collection
-  succeeded.
+- ACTS `ActsObjectTest` is a real partial xDevice result, not a transport
+  failure. Iteration344 reported one failed case at `Object1Test036`, but
+  iteration345 reruns drifted to later cases after earlier cases passed, which
+  points to test process, runner early-end, or flaky execution before treating
+  the source assertion as a fixed Ark/ETS builtins failure. Keep it open until
+  rerun evidence stabilizes or a runner/app-side cause is isolated.
 - ACTS-Validator: dispatch reached xDevice, but generated validator resources
   were incomplete. A later probe showed `queryStandard` can be supplied by full
   suite staging and `--stdin-line Y` can remove the prompt EOF, but the module
