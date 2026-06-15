@@ -306,6 +306,12 @@ The runner writes per-binary artifact ids, push/chmod/run/pull JSON files,
 BINARY=GTEST_FILTER` for known test-expectation hazards, and repeated
 `--cleanup-path /data/local/tmp/path` for fixed temporary paths that should be
 removed before and after the batch.
+For MusePaper2 HDF vibrator native HATS, do not use the default 180-second run
+timeout for `HatsHdfVibratorServiceTest`: the normal haptic-effect cases can
+run longer than three minutes. Use `--run-timeout-sec 600` and classify a
+short-timeout run that shows only already-passing gtest cases before timeout as
+automation evidence debt, then rerun with the longer timeout before calling it a
+porting failure.
 
 Serial console access is available through the same automation service. For the
 current MusePaper2 test setup, `/capabilities` reports `COM4` at `115200`, but
