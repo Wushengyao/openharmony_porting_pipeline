@@ -323,6 +323,11 @@ targets, or no useful payload.
   `ActsArrayTest` was correctly reduced to one stable failed case
   `ArrayCombinationTest4158` and 3357 blocked cases after fixing the parser and
   rerunning the module.
+- Keep xDevice result counting tied to `summary/test_summary.yaml` and XML, not
+  ad hoc wrapper fields. In iteration344 an external TSV helper initially read a
+  nonexistent `totals` key and printed zero cases even though the module
+  summaries and XML reported real pass counts; regenerate derived summaries from
+  `runner_summary` or `xml_summary.counts`.
 - For ACTS expansion, inspect each module JSON before classifying it as
   low-risk. AppInstallKit-only pure JS modules such as `ActsDateTest`,
   `ActsRegExpTest`, `ActsSymbol1Test`, `ActsSymbol2Test`, `ActsMapTest`, and
@@ -330,6 +335,11 @@ targets, or no useful payload.
   `ShellKit` or system-state commands; `ActsJsonJSApiTest` includes
   `power-shell wakeup` and `power-shell setmode 602`, so it was deferred from
   the low-risk batch.
+- A module that stages and returns from xDevice can still expose a real ACTS
+  semantic failure. `ActsObjectTest` returned a proper report with
+  `Object1Test036` failed and downstream cases blocked; record this as test
+  debt and triage the exact source assertion rather than treating it as a
+  transport problem.
 - The first SSTS smoke reached OHYaraTest with `OpenHarmony-SA-2025-11` and
   produced `blocked=1`, not a runner failure. The block came from security patch
   `2026-02` being four months behind current month `2026-06`, exceeding the

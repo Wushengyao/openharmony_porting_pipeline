@@ -164,6 +164,14 @@ MusePaper2 OH6.1 has proven xDevice transport and selected modules:
   `HatsWritevTest`, `HatsFcntlTest`, `HatsFdatasyncTest`, `HatsFsyncTest`,
   `HatsFstatfsTest`, `HatsFlockTest`, `HatsLinkatTest`, `HatsMkdiratTest`,
   and `HatsReadlinkatTest` passed.
+- HATS syscall/FS/process expansion continued in iteration344:
+  `HatsPread64Test`, `HatsPwrite64Test`, `HatsPselectTest`, `HatsPpollTest`,
+  `HatsRenameatTest`, `HatsSymlinkatTest`, `HatsUnlinkatTest`,
+  `HatsPreadvTest`, `HatsPwritevTest`, `HatsCapGetTest`,
+  `HatsClockNanoSleepTest`, `HatsCopyFileRangeTest`, `HatsEpollCtlTest`,
+  `HatsEpollPwaitTest`, `HatsFchmodatTest`, `HatsGetrlimitTest`,
+  `HatsGetrusageTest`, `HatsSysinfoTest`, and `HatsTimesTest` passed with
+  60/60 cases through Windows-side xDevice.
 - ACTS `ActsStartupSysDeviceInfoTest`: 85/85 passed.
 - ACTS `ActsHilogNdkTest`: 64/64 passed after the RISC-V native assistant HAP
   and SDK libc++ ABI fixes. The rerun also pulled back XML/HTML/log evidence
@@ -178,6 +186,13 @@ MusePaper2 OH6.1 has proven xDevice transport and selected modules:
   inspect each `testcases/<module>.json` before running; for example,
   `ActsJsonJSApiTest` is JS-related but includes `ShellKit` power-mode commands
   and was intentionally deferred from the low-risk batch.
+- ACTS `ActsObjectTest` in iteration344 is a real partial failure, not a
+  transport failure: runner summary reported 34 passed, one failed case
+  `Object1Test036`, and downstream blocked cases. The failing source assertion
+  is in `Object1.test.ets` and checks `Object(3.1415)` number wrapper behavior.
+  Treat this as an Ark/ETS builtins or test semantics investigation candidate;
+  do not mark it passed merely because module staging and report collection
+  succeeded.
 - ACTS-Validator: dispatch reached xDevice, but generated validator resources
   were incomplete. A later probe showed `queryStandard` can be supplied by full
   suite staging and `--stdin-line Y` can remove the prompt EOF, but the module
