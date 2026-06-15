@@ -151,6 +151,14 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
   suite through the transport runner, parses the runner summary, pulls small
   XML/HTML/INI/log text reports from the Windows report directory, parses local
   XML, and emits `summary/test_summary.yaml`.
+- For ACTS OHJSUnit/Hypium HAP-internal case triage, use xDevice testargs:
+  `--extra=-ta --extra='class:<Class#Case>'` after the
+  `run_xdevice_probe.py --` separator. Do not use
+  `--extra=-tc --extra='<Class#Case>'` for this purpose; in xDevice 5.0.6.100
+  `-tc/--testcase` selects a test source or JSON entry, so HAP-internal cases
+  become `unavailable` instead of running. If a driver genuinely needs
+  `-tc/--testcase`, remember xDevice treats it as mutually exclusive with
+  `-l/--testlist`.
 - Use the Python interpreter reported by oh-auto capabilities/admin status, not
   the Windows Store `python` shim. Confirm `hdc` resolves to the workbench HDC:
 

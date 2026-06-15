@@ -289,10 +289,11 @@ def build_run_command(args: argparse.Namespace, suite_name: str, suite_dir: str)
     config = ps_quote(suite_dir + r"\config\user_config.xml")
     tcpath = ps_quote(suite_dir + r"\testcases")
     report = ps_quote(args.report_name)
+    testcase_filter = any(extra == "-tc" or extra == "--testcase" for extra in args.extra)
     parts = [
         f"& {py} -m xdevice run",
     ]
-    if args.module:
+    if args.module and not testcase_filter:
         parts.append(f"-l {ps_quote(args.module)}")
     else:
         parts.append(ps_quote(suite_name))

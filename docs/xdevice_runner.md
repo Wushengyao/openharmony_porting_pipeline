@@ -41,6 +41,32 @@ The output directory contains:
 wrapper strips that separator before forwarding arguments to the transport
 runner.
 
+When forwarding native xDevice flags that begin with `-`, use the equals form
+so the wrapper treats the value as data rather than as its own option. For
+OHJSUnit/Hypium cases inside an ACTS HAP, filter through xDevice testargs with
+`-ta class:<Class#Case>`:
+
+```bash
+python3 tools/xts_xdevice_runner/run_xdevice_probe.py \
+  --suite-dir /path/to/out/musepaper2/suites/acts/acts \
+  --suite-name acts \
+  --module ActsArrayTest \
+  --stage-module-only \
+  --out-dir /path/to/records/acts_array_4158 \
+  -- --extra=-ta --extra='class:ArrayCombinationTest4#ArrayCombinationTest4158'
+```
+
+This can still use `--module` and `--stage-module-only` to keep the upload
+small. The resulting xDevice command keeps `-l <module>` and passes the class
+filter to the OHJSUnit driver, which then runs `aa test ... -s class ...`.
+
+Do not use `-tc <Class#Case>` for OHJSUnit/Hypium HAP-internal case filters.
+In this xDevice version `-tc/--testcase` selects a test source or JSON entry,
+so `ArrayCombinationTest4#ArrayCombinationTest4158` becomes unavailable instead
+of running the case. When `-tc/--testcase` is forwarded for drivers that really
+use it, the transport runner omits the module `-l` option because xDevice
+treats `-l` and `-tc` as mutually exclusive.
+
 ## Step-by-step Commands
 
 Check environment:
@@ -210,8 +236,12 @@ MusePaper2 OH6.1 has proven xDevice transport and selected modules:
   from the Windows xDevice report directory.
 - ACTS pure JS expansion through xDevice: `ActsPromiseTest`, `ActsDataViewTest`,
   and `ActsBaseSpecTest` passed in iteration342. `ActsArrayTest` is a stable
-  partial failure: 489 passed, one real failed case
-  `ArrayCombinationTest4158`, and 3357 blocked cases after rerun.
+  partial full-module failure at `ArrayCombinationTest4158` with downstream
+  blocked cases, but iteration349 narrowed it using `-ta class:` filters:
+  `ArrayCombinationTest4158` alone passes, `4154-4158`/`4155-4158`/`4156-4158`
+  /`4157-4158` pass, while `4153-4158` and `4148-4158` fail at `4158`. Treat it
+  as a sequence/state/resource interaction around `ArrayCombinationTest4Js153`
+  before changing product runtime code or weakening the test.
 - ACTS pure JS/AppInstallKit-only expansion continued in iteration343:
   `ActsDateTest`, `ActsRegExpTest`, `ActsSymbol1Test`, `ActsSymbol2Test`,
   `ActsMapTest`, and `ActsProxyTest` passed. Do not rely on module names alone:

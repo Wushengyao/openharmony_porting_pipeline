@@ -66,7 +66,8 @@ def main() -> int:
     if args.tools_dir is not None:
         argv.extend(["--tools-dir", str(args.tools_dir)])
     for extra in args.extra:
-        argv.extend(["--extra", extra])
+        # Preserve values such as "-tc" for the transport runner's argparse.
+        argv.append(f"--extra={extra}")
     for stdin_line in args.stdin_line:
         argv.extend(["--stdin-line", stdin_line])
     if args.no_install:
