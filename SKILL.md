@@ -312,6 +312,11 @@ run longer than three minutes. Use `--run-timeout-sec 600` and classify a
 short-timeout run that shows only already-passing gtest cases before timeout as
 automation evidence debt, then rerun with the longer timeout before calling it a
 porting failure.
+For MusePaper2 HDF audio native HATS, `HatsHdfAudioIdlCaptureAdditionalTest`
+can also exceed short per-binary timeouts. If it times out, do not immediately
+rerun on the same boot and classify a cascade of null manager/capture failures
+as product failure; reboot normally, restore `startup.porting.boot_escape.ack`,
+then rerun the binary with `--run-timeout-sec 600`.
 
 Serial console access is available through the same automation service. For the
 current MusePaper2 test setup, `/capabilities` reports `COM4` at `115200`, but
