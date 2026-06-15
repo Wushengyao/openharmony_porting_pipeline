@@ -228,7 +228,9 @@ def derive_status(counts: dict[str, int]) -> str:
         return "blocked_or_unavailable"
     if counts.get("total", 0) and counts.get("passed", 0) >= counts.get("total", 0):
         return "passed"
-    non_failure_total = counts.get("passed", 0) + counts.get("ignored", 0) + counts.get("skipped", 0)
+    # xDevice may report the same gtest skip both as suite-level ignored and
+    # testcase-level skipped. Treat them as one non-failure bucket for status.
+    non_failure_total = counts.get("passed", 0) + max(counts.get("ignored", 0), counts.get("skipped", 0))
     if counts.get("total", 0) and non_failure_total >= counts.get("total", 0):
         return "passed"
     if counts.get("passed", 0):

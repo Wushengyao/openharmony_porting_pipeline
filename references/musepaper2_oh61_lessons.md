@@ -383,6 +383,16 @@ targets, or no useful payload.
   861 total cases, 860 passed, 1 ignored/skipped, 0 failed. The remaining HATS
   list by iteration346 delta is Power/Battery/Thermal, DMA, Display, USB auto
   function, and Startup partition slot.
+- By iteration348, the non-Audio HATS remaining group was almost closed through
+  formal xDevice: DMA buffer, Display buffer UT, USB auto function, Power,
+  Battery, and Thermal modules passed with 232 total cases, 230 passed, 2
+  ignored/skipped, and 0 failed.
+- `HatsStartupPartitionSlotTest` is a safety-gated exception. It calls
+  `SetActiveSlot` and `SetSlotUnbootable` for slots 0-3. On MusePaper2, a
+  read-only probe showed `slots=2,current=0`, and suffix probes were not
+  intuitive enough to trust unattended mutation. Do not run this full module
+  until a physical recovery backend or dedicated fixture is proven, or run only
+  a clearly labeled read-only/filter probe without claiming full pass.
 - Do not point `xdevice run -c` at the `config` directory. Use
   `-c .\config\user_config.xml`; `-rp .\name` is reported under the suite's
   `reports` directory.

@@ -197,6 +197,13 @@ MusePaper2 OH6.1 has proven xDevice transport and selected modules:
   `HatsHdfAudioIdlCaptureAdditionalTest` additionally needs staged
   `native-test-timeout=600000`; the default 120000 ms causes
   `ShellCommandUnresponsiveException` and downstream blocked cases.
+- HATS remaining-module expansion continued in iteration348. Ten non-Audio
+  modules passed through formal xDevice: DMA buffer, Display buffer UT, USB auto
+  function, Power, Battery, and Thermal groups. Best result: 232 total cases,
+  230 passed, 2 ignored/skipped, zero failed. Do not run
+  `HatsStartupPartitionSlotTest` unattended: it mutates active and unbootable
+  boot slot state, and requires a proven physical recovery backend or dedicated
+  fixture before full-module execution.
 - ACTS `ActsStartupSysDeviceInfoTest`: 85/85 passed.
 - ACTS `ActsHilogNdkTest`: 64/64 passed after the RISC-V native assistant HAP
   and SDK libc++ ABI fixes. The rerun also pulled back XML/HTML/log evidence

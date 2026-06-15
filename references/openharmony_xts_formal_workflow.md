@@ -304,6 +304,12 @@ Also classify `status="skip"` or `status="ignored"` before `result=false`.
 HATS can emit `status="skip" result="false"` for an intentional gtest skip;
 this is non-failure coverage, not a failed testcase.
 
+Do not blindly batch tests that mutate boot metadata. On MusePaper2,
+`HatsStartupPartitionSlotTest` calls `SetActiveSlot` and `SetSlotUnbootable`
+for slots 0-3. Treat it as a safety-gated module that requires proven physical
+recovery, a dedicated fixture, or a clearly labeled read-only/filter probe
+before unattended execution.
+
 For CppTest modules whose generated `Test.json` timeout is too short, use the
 runner's staged-only timeout patch instead of editing OpenHarmony source:
 
