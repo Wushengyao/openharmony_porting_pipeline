@@ -18,6 +18,7 @@ when a later result conflicts with the summary here.
 - [Device Automation And Recovery](#device-automation-and-recovery)
 - [Runtime Triage Rules](#runtime-triage-rules)
 - [Subsystem Lessons](#subsystem-lessons)
+- [XTS And ACTS Lessons](#xts-and-acts-lessons)
 - [HATS Execution Lessons](#hats-execution-lessons)
 - [Review Cadence](#review-cadence)
 
@@ -250,6 +251,31 @@ targets, or no useful payload.
   all cases pass if executed from `/`.
 - For vibrator preset fixes, keep UHDF and KHDF HCS aligned and prove the
   presets landed in `boot.img`, not just in userspace HCB.
+
+## XTS And ACTS Lessons
+
+- For OH6.1 XTS builds, put `prebuilts/python/linux-x86/3.11.4/bin` before the
+  host Python. The ACTS/HATS helper scripts use Python 3.10+ type syntax.
+- For ACTS on MusePaper2 RISC-V64, keep fixes additive and coverage-preserving:
+  add the missing `target_cpu == "riscv64"` branch for
+  `commonlibrary/toolchain` `tar_dllib`, add `riscv64-linux-ohos` in
+  `build/ohos_var.gni`, add dEQP riscv64 target macros in `vk_gl_cts.gni`, and
+  route multimedia AV codec 64-bit library paths to `/system/lib64`.
+- ACTS generated a nested suite root: use
+  `out/musepaper2/suites/acts/acts` for xDevice ACTS, not the outer
+  `out/musepaper2/suites/acts` directory.
+- Do not upload the full ACTS suite for first probes. The MusePaper2 ACTS
+  output was about 9.5 GB. Use `oh_xts_xdevice_runner.py --stage-module-only`
+  for single-module xDevice checks; it stages only config/tools/run scripts and
+  testcase files referenced by the selected module JSON.
+- `ActsStartupSysDeviceInfoTest` is a good low-risk ACTS smoke on MusePaper2:
+  the first source-built ACTS probe passed 85/85. `ActsHilogNdkTest` completed
+  the xDevice flow but had hilog assertion failures, so classify it as
+  subsystem follow-up rather than runner bring-up failure.
+- As of the first OH6.1 XTS closure pass, the official XTS page had no
+  OpenHarmony 6.1 Release standard-system resource download. Record this as a
+  resource gap and do not mix OH6.0 arm32 resources into OH6.1 RISC-V formal
+  evidence.
 
 ## HATS Execution Lessons
 

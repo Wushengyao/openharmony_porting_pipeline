@@ -23,6 +23,10 @@ DEFAULT_WINDOWS_PYTHON = (
 DEFAULT_HDC = r"D:\ohos_toolchains\hdc.exe"
 
 
+def write_json(path: Path, payload: Any) -> None:
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
 def run_oh_auto(args: argparse.Namespace, argv: list[str]) -> subprocess.CompletedProcess[str]:
     command = [sys.executable, str(args.oh_autoctl)]
     if args.base_url:
@@ -44,7 +48,7 @@ def write_proc(path: Path, proc: subprocess.CompletedProcess[str]) -> Any | None
             payload = {"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr}
     else:
         payload = {"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr}
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    write_json(path, payload)
     return parsed
 
 
@@ -86,6 +90,89 @@ def admin_shell(args: argparse.Namespace, script: str, name: str, timeout: float
     return parsed
 
 
+def safe_testcase_name(value: str) -> str | None:
+    normalized = value.replace("\\", "/")
+    if not normalized or "/" in normalized or normalized in {".", ".."}:
+        return None
+    return normalized
+
+
+def collect_strings(payload: Any) -> list[str]:
+    strings: list[str] = []
+    if isinstance(payload, str):
+        strings.append(payload)
+    elif isinstance(payload, list):
+        for item in payload:
+            strings.extend(collect_strings(item))
+    elif isinstance(payload, dict):
+        for item in payload.values():
+            strings.extend(collect_strings(item))
+    return strings
+
+
+def collect_module_testcases(suite_dir: Path, module: str) -> list[Path]:
+    testcase_dir = suite_dir / "testcases"
+    candidates = [module, f"{module}.hap", f"{module}.hsp", f"{module}.json", f"{module}.moduleInfo"]
+    module_json = testcase_dir / f"{module}.json"
+    if module_json.exists():
+        try:
+            candidates.extend(collect_strings(json.loads(module_json.read_text(encoding="utf-8"))))
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"failed to parse module json: {module_json}") from exc
+
+    selected: set[Path] = set()
+    for candidate in candidates:
+        name = safe_testcase_name(candidate)
+        if not name:
+            continue
+        path = testcase_dir / name
+        if path.is_file():
+            selected.add(path)
+    if not selected:
+        raise FileNotFoundError(f"no testcase files found for module: {module}")
+    return sorted(selected)
+
+
+def copy_optional_file(src: Path, dst: Path) -> None:
+    if src.is_file():
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+
+
+def make_module_staging_dir(args: argparse.Namespace, suite_dir: Path) -> Path:
+    if not args.module:
+        raise ValueError("--stage-module-only requires --module")
+    stage_parent = args.out / "_module_stage"
+    stage_dir = stage_parent / suite_dir.name
+    if stage_parent.exists():
+        shutil.rmtree(stage_parent)
+    stage_dir.mkdir(parents=True)
+
+    shutil.copytree(suite_dir / "config", stage_dir / "config")
+    shutil.copytree(suite_dir / "tools", stage_dir / "tools")
+    copy_optional_file(suite_dir / "run.sh", stage_dir / "run.sh")
+    copy_optional_file(suite_dir / "run.bat", stage_dir / "run.bat")
+
+    testcase_dst = stage_dir / "testcases"
+    testcase_dst.mkdir()
+    staged_testcases: list[str] = []
+    for src in collect_module_testcases(suite_dir, args.module):
+        shutil.copy2(src, testcase_dst / src.name)
+        staged_testcases.append(src.name)
+
+    args.module_staged_testcases = staged_testcases
+    write_json(
+        args.out / "module_staging_manifest.json",
+        {
+            "suite_dir": str(suite_dir),
+            "module": args.module,
+            "stage_dir": str(stage_dir),
+            "testcases": staged_testcases,
+        },
+    )
+    return stage_dir
+
+
 def make_zip(args: argparse.Namespace) -> Path:
     suite_dir = args.suite_dir.resolve()
     if not suite_dir.is_dir():
@@ -94,11 +181,16 @@ def make_zip(args: argparse.Namespace) -> Path:
     missing = [item for item in required if not (suite_dir / item).exists()]
     if missing:
         raise FileNotFoundError(f"suite dir is missing xDevice entries: {', '.join(missing)}")
+    zip_root = suite_dir.parent
+    zip_dir = suite_dir
+    if args.stage_module_only:
+        zip_dir = make_module_staging_dir(args, suite_dir)
+        zip_root = zip_dir.parent
     zip_base = args.out / f"{suite_dir.name}_{args.run_id}"
     zip_path = zip_base.with_suffix(".zip")
     if zip_path.exists():
         zip_path.unlink()
-    shutil.make_archive(str(zip_base), "zip", root_dir=suite_dir.parent, base_dir=suite_dir.name)
+    shutil.make_archive(str(zip_base), "zip", root_dir=zip_root, base_dir=zip_dir.name)
     return zip_path
 
 
@@ -186,10 +278,7 @@ def summarize_xdevice(args: argparse.Namespace, parsed: Any | None) -> None:
             match = re.search(rf"{re.escape(key)}:\s*(\d+)", line)
             if match:
                 summary[key.replace(" ", "_")] = int(match.group(1))
-    (args.out / "xdevice_summary.json").write_text(
-        json.dumps(summary, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
+    write_json(args.out / "xdevice_summary.json", summary)
     if not summary["summary_found"] and ("[ERROR]" in stdout or "ERROR]" in stdout):
         raise RuntimeError("xDevice run did not produce Test Summary and logged an error")
 
@@ -215,6 +304,11 @@ def main() -> int:
     parser.add_argument("--command-timeout-sec", type=float, default=900)
     parser.add_argument("--upload-timeout-sec", type=float, default=1200)
     parser.add_argument("--no-install", action="store_true", help="Do not pip install xDevice tarballs")
+    parser.add_argument(
+        "--stage-module-only",
+        action="store_true",
+        help="Stage only config/tools/run scripts and testcase files referenced by --module",
+    )
     args = parser.parse_args()
 
     args.out.mkdir(parents=True, exist_ok=True)
@@ -241,10 +335,7 @@ def main() -> int:
         "windows_python": args.windows_python,
         "hdc_path": args.hdc_path,
     }
-    (args.out / "xts_xdevice_manifest.json").write_text(
-        json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
+    write_json(args.out / "xts_xdevice_manifest.json", manifest)
 
     admin_shell(
         args,
@@ -257,6 +348,9 @@ def main() -> int:
         zip_path = make_zip(args)
         manifest["suite_zip"] = str(zip_path)
         manifest["suite_zip_bytes"] = zip_path.stat().st_size
+        manifest["stage_module_only"] = args.stage_module_only
+        manifest["staged_testcases"] = getattr(args, "module_staged_testcases", [])
+        write_json(args.out / "xts_xdevice_manifest.json", manifest)
         win_zip = run_root + "\\" + zip_path.name
         upload_and_promote(args, zip_path, win_zip)
         extract_script = (
