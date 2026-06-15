@@ -75,8 +75,14 @@ Collect/index reports:
 ```bash
 python3 tools/xts_xdevice_runner/collect_reports.py \
   --runner-dir /path/to/out/runner \
-  --out-dir /path/to/out/reports
+  --out-dir /path/to/out/reports \
+  --pull-text-from-runner
 ```
+
+When `--pull-text-from-runner` is set, the collector reads the Windows
+`report_file_list.json` produced by the transport runner and pulls small text
+artifacts back through oh-auto admin shell. This covers XML, HTML, INI, log,
+TXT, and RECORD files; binary or oversized artifacts stay indexed by path only.
 
 Parse local XML reports when they are available:
 
@@ -132,7 +138,8 @@ MusePaper2 OH6.1 has proven xDevice transport and selected modules:
 - HATS `HatsGetcwdTest`: 1/1 passed.
 - ACTS `ActsStartupSysDeviceInfoTest`: 85/85 passed.
 - ACTS `ActsHilogNdkTest`: 64/64 passed after the RISC-V native assistant HAP
-  and SDK libc++ ABI fixes.
+  and SDK libc++ ABI fixes. The rerun also pulled back XML/HTML/log evidence
+  from the Windows xDevice report directory.
 - ACTS-Validator: dispatch reached xDevice, but generated validator resources
   were incomplete.
 - DCTS: module executed on one device, but meaningful pass/fail likely requires

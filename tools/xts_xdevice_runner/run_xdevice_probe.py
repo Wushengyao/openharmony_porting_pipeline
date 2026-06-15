@@ -62,7 +62,17 @@ def main() -> int:
     rc = run(run_argv)
 
     collect_dir = args.out_dir / "reports"
-    run([sys.executable, str(SCRIPT_DIR / "collect_reports.py"), "--runner-dir", str(runner_dir), "--out-dir", str(collect_dir)])
+    run(
+        [
+            sys.executable,
+            str(SCRIPT_DIR / "collect_reports.py"),
+            "--runner-dir",
+            str(runner_dir),
+            "--out-dir",
+            str(collect_dir),
+            "--pull-text-from-runner",
+        ]
+    )
     parsed = args.out_dir / "parsed_xml.json"
     if (collect_dir / "reports").exists():
         run([sys.executable, str(SCRIPT_DIR / "parse_xml.py"), "--report-root", str(collect_dir / "reports"), "--out", str(parsed)])

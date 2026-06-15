@@ -133,6 +133,11 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
   Windows side. Prefer `tools/oh_xts_xdevice_runner.py` for repeatable staging,
   xDevice install, execution, report listing, and summary parsing; use raw
   `admin-shell` only for trusted lab maintenance.
+- For closed-loop evidence, prefer the modular
+  `tools/xts_xdevice_runner/run_xdevice_probe.py` wrapper. It stages/runs the
+  suite through the transport runner, parses the runner summary, pulls small
+  XML/HTML/INI/log text reports from the Windows report directory, parses local
+  XML, and emits `summary/test_summary.yaml`.
 - Use the Python interpreter reported by oh-auto capabilities/admin status, not
   the Windows Store `python` shim. Confirm `hdc` resolves to the workbench HDC:
 
@@ -163,6 +168,10 @@ The runner writes `xts_xdevice_manifest.json`, staged zip upload/promote
 evidence, `xdevice_run.json`, `xdevice_summary.json`, and
 `report_file_list.json`. Its default report path includes `run_id` so repeated
 probes do not reuse a non-empty xDevice report directory.
+If the run was launched through `tools/xts_xdevice_runner/run_xdevice_probe.py`,
+also preserve `reports/collected_reports.json`,
+`reports/pulled_reports.json`, local `reports/reports/**` files,
+`parsed_xml.json`, and `summary/test_summary.yaml`.
 
 For large suites such as ACTS, run a module-only staging probe first. The runner
 copies `config/`, `tools/`, optional `run.bat/run.sh`, and testcase files
@@ -251,7 +260,8 @@ For each formal XTS/xDevice run, keep:
 - oh-auto capabilities/status/profile before and after the run;
 - xDevice install/help output when bootstrapping a workbench;
 - xDevice command line, stdout/stderr, report directory, `summary.ini`,
-  `summary_report.xml`, module result XMLs, and report zip hash;
+  `summary_report.xml`, module result XMLs, module/task logs, and report zip
+  hash;
 - device version and architecture evidence such as `uname -m` and
   `param get const.product.software.version`.
 
