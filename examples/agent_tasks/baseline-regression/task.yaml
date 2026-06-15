@@ -1,0 +1,58 @@
+task_id: example-baseline-regression
+role: regression-reviewer
+model: gpt-5.5
+model_reasoning_effort: high
+workspace: /path/to/read_only_ohos
+sandbox: read_only
+priority: P0
+allowed_tools:
+  - rg
+  - python tools/validate_stage.py
+  - python tools/validate_meta_output.py
+forbidden:
+  - edit_source
+  - approve_waiver
+  - flash_device
+  - read_full_raw_logs_without_need
+path_permissions:
+  read_roots:
+    - /path/to/baselines/musepaper2-oh6.1-rc0
+    - /path/to/evidence_packs/iteration327
+  write_roots:
+    - outputs
+  must_not_touch:
+    - /path/to/read_only_ohos
+inputs:
+  - inputs/current_manifest.yaml
+  - inputs/baseline_manifest.yaml
+  - inputs/current_acceptance_state.yaml
+  - inputs/baseline_acceptance_state.yaml
+  - inputs/diff_summary.md
+outputs:
+  - outputs/regression_review.md
+  - outputs/regression_matrix.yaml
+  - outputs/risk_items.yaml
+budget:
+  max_runtime_sec: 1200
+  max_log_bytes: 50000
+  max_tokens_label: high-focused
+  max_device_actions: 0
+stop_conditions:
+  no_source_write: true
+  must_return_structured_summary: true
+  stop_on_high_risk: true
+  stop_on_budget_exceeded: true
+risk_policy:
+  escalate_to_main_agent_when:
+    - release_gate_affected
+    - evidence_conflict
+    - waiver_required
+    - xdevice_formal_missing_for_release_claim
+  high_risk_paths: []
+  requires_writer_lock: false
+evidence_requirements:
+  require_file_paths: true
+  require_command_lines: true
+  require_log_offsets: false
+  require_hashes_for_images: true
+  raw_artifact_root: /path/to/raw_artifacts/iteration327

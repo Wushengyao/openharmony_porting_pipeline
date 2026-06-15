@@ -1,0 +1,60 @@
+task_id: example-hats-summary
+role: xts-hats-runner
+model: gpt-5.4-mini
+model_reasoning_effort: medium
+workspace: /path/to/read_only_ohos
+sandbox: device_tool_only
+priority: P1
+allowed_tools:
+  - python tools/oh_hats_native_runner.py
+  - python tools/oh_xts_xdevice_runner.py
+  - python tools/oh_autoctl.py
+forbidden:
+  - edit_source
+  - widen_to_full_xts_without_approval
+  - flash_device
+  - delete_files
+path_permissions:
+  read_roots:
+    - /path/to/read_only_ohos/out/musepaper2/suites
+    - /path/to/evidence_packs/iteration327
+  write_roots:
+    - outputs
+    - /path/to/test_runs/iteration327_hats_smoke
+  must_not_touch:
+    - /path/to/read_only_ohos/base
+    - /path/to/read_only_ohos/device
+    - /path/to/read_only_ohos/vendor
+inputs:
+  - inputs/suite_dir.txt
+  - inputs/device_profile.yaml
+  - inputs/baseline_test_summary.yaml
+outputs:
+  - outputs/test_summary.yaml
+  - outputs/failures_by_subsystem.yaml
+  - outputs/rerun_plan.yaml
+  - outputs/summary.md
+budget:
+  max_runtime_sec: 3600
+  max_log_bytes: 100000
+  max_tokens_label: mini-medium
+  max_device_actions: 3
+stop_conditions:
+  no_source_write: true
+  must_return_structured_summary: true
+  stop_on_high_risk: true
+  stop_on_budget_exceeded: true
+risk_policy:
+  escalate_to_main_agent_when:
+    - formal_acceptance_decision_needed
+    - rerun_would_exceed_budget
+    - hdc_unavailable_after_retry
+    - boot_or_power_operation_needed
+  high_risk_paths: []
+  requires_writer_lock: false
+evidence_requirements:
+  require_file_paths: true
+  require_command_lines: true
+  require_log_offsets: false
+  require_hashes_for_images: false
+  raw_artifact_root: /path/to/test_runs/iteration327_hats_smoke

@@ -10,6 +10,28 @@ This project is not T113-only. T113/T113-S3 rules are guardrails for a common AR
 
 The design goal is **stage isolation**: each stage has its own Codex context and passes only files, summaries and stage results to the next stage.
 
+## Codex Subagent Workflow
+
+This repository now includes a v0.1 contract for running OpenHarmony porting
+work as a main-Agent plus bounded subagent workflow:
+
+- `docs/agent_architecture.md` defines the L0 deterministic tool, L1 subagent,
+  L2 main-Agent, and L3 supervision layers.
+- `AGENTS.md` records the default read-only subagent policy, writer-lock rule,
+  high-risk escalation rule, and evidence discipline.
+- `schemas/agent_task.schema.json`, `schemas/evidence_pack.schema.json`, and
+  `schemas/acceptance_state.schema.json` define the task, evidence, and gate
+  contracts.
+- `agents/` contains the first role specs:
+  `repo-surveyor`, `build-log-triager`, `xts-hats-runner`,
+  `regression-reviewer`, `reporter`, and `skill-maintainer`.
+- `policies/model_routing.yaml` and `policies/budget_policy.yaml` keep model
+  choice, escalation, token, test, and device-action budgets explicit.
+- `examples/agent_tasks/` contains copyable read-heavy task examples.
+
+The main Agent should consume evidence packs and structured subagent outputs
+instead of full raw build logs, serial logs, XML reports, or repository scans.
+
 ## Typical Usage
 
 ```bash

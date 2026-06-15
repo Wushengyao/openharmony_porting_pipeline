@@ -1,0 +1,210 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "gate": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "passed",
+            "failed",
+            "blocked",
+            "partial",
+            "not_run",
+            "unknown"
+          ]
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "checked_at": {
+          "type": "string"
+        },
+        "checked_by": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "debt_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "waiver_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "status",
+        "evidence_refs",
+        "notes"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "properties": {
+    "acceptance_id": {
+      "type": "string"
+    },
+    "board": {
+      "type": "string"
+    },
+    "os_version": {
+      "type": "string"
+    },
+    "arch": {
+      "type": "string"
+    },
+    "source_revision": {
+      "type": "string"
+    },
+    "patch_revision": {
+      "type": "string"
+    },
+    "image_sha256": {
+      "type": "string",
+      "pattern": "^$|^[a-fA-F0-9]{64}$"
+    },
+    "gates": {
+      "type": "object",
+      "properties": {
+        "build": {
+          "$ref": "#/$defs/gate"
+        },
+        "package": {
+          "$ref": "#/$defs/gate"
+        },
+        "flash": {
+          "$ref": "#/$defs/gate"
+        },
+        "boot": {
+          "$ref": "#/$defs/gate"
+        },
+        "hdc": {
+          "$ref": "#/$defs/gate"
+        },
+        "ui": {
+          "$ref": "#/$defs/gate"
+        },
+        "subsystem_smoke": {
+          "$ref": "#/$defs/gate"
+        },
+        "hats_native_subset": {
+          "$ref": "#/$defs/gate"
+        },
+        "xdevice_formal": {
+          "$ref": "#/$defs/gate"
+        },
+        "release": {
+          "$ref": "#/$defs/gate"
+        }
+      },
+      "required": [
+        "build",
+        "package",
+        "flash",
+        "boot",
+        "hdc",
+        "ui",
+        "subsystem_smoke",
+        "hats_native_subset",
+        "xdevice_formal",
+        "release"
+      ],
+      "additionalProperties": false
+    },
+    "known_debts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "P0",
+              "P1",
+              "P2",
+              "P3"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "severity",
+          "summary",
+          "evidence_refs"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "waivers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "gate": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "approved_by": {
+            "type": "string"
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "gate",
+          "reason",
+          "approved_by",
+          "evidence_refs"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "acceptance_id",
+    "board",
+    "os_version",
+    "arch",
+    "source_revision",
+    "patch_revision",
+    "image_sha256",
+    "gates",
+    "known_debts",
+    "waivers"
+  ],
+  "additionalProperties": false
+}

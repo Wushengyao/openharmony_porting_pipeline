@@ -1,0 +1,228 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$"
+    },
+    "role": {
+      "type": "string",
+      "enum": [
+        "repo-surveyor",
+        "build-log-triager",
+        "xts-hats-runner",
+        "regression-reviewer",
+        "reporter",
+        "skill-maintainer",
+        "patch-planner",
+        "patch-writer",
+        "runtime-hdf-reviewer",
+        "device-automation-steward",
+        "binary-asset-auditor",
+        "version-lane-maintainer"
+      ]
+    },
+    "model": {
+      "type": "string"
+    },
+    "model_reasoning_effort": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "workspace": {
+      "type": "string"
+    },
+    "sandbox": {
+      "type": "string",
+      "enum": [
+        "read_only",
+        "workspace_write",
+        "skill_repo_write",
+        "plan_only",
+        "device_tool_only"
+      ]
+    },
+    "priority": {
+      "type": "string",
+      "enum": [
+        "P0",
+        "P1",
+        "P2",
+        "P3"
+      ]
+    },
+    "allowed_tools": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "forbidden": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "path_permissions": {
+      "type": "object",
+      "properties": {
+        "read_roots": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "write_roots": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "must_not_touch": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "read_roots",
+        "write_roots",
+        "must_not_touch"
+      ],
+      "additionalProperties": false
+    },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "outputs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "budget": {
+      "type": "object",
+      "properties": {
+        "max_runtime_sec": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_log_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_tokens_label": {
+          "type": "string"
+        },
+        "max_device_actions": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "max_runtime_sec",
+        "max_log_bytes",
+        "max_tokens_label"
+      ],
+      "additionalProperties": false
+    },
+    "stop_conditions": {
+      "type": "object",
+      "properties": {
+        "no_source_write": {
+          "type": "boolean"
+        },
+        "must_return_structured_summary": {
+          "type": "boolean"
+        },
+        "stop_on_high_risk": {
+          "type": "boolean"
+        },
+        "stop_on_budget_exceeded": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "must_return_structured_summary",
+        "stop_on_high_risk"
+      ],
+      "additionalProperties": false
+    },
+    "risk_policy": {
+      "type": "object",
+      "properties": {
+        "escalate_to_main_agent_when": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "high_risk_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "requires_writer_lock": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "escalate_to_main_agent_when"
+      ],
+      "additionalProperties": false
+    },
+    "evidence_requirements": {
+      "type": "object",
+      "properties": {
+        "require_file_paths": {
+          "type": "boolean"
+        },
+        "require_command_lines": {
+          "type": "boolean"
+        },
+        "require_log_offsets": {
+          "type": "boolean"
+        },
+        "require_hashes_for_images": {
+          "type": "boolean"
+        },
+        "raw_artifact_root": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "require_file_paths",
+        "require_command_lines"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "task_id",
+    "role",
+    "model",
+    "model_reasoning_effort",
+    "workspace",
+    "sandbox",
+    "priority",
+    "allowed_tools",
+    "forbidden",
+    "inputs",
+    "outputs",
+    "budget",
+    "stop_conditions",
+    "risk_policy",
+    "evidence_requirements"
+  ],
+  "additionalProperties": false
+}

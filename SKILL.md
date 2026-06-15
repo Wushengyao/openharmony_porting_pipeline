@@ -17,6 +17,22 @@ This skill directory contains the upstream repository:
 
 ## Common Commands
 
+For Codex subagent-oriented OpenHarmony porting work, read the coordination
+contract before creating or dispatching tasks:
+
+```bash
+cat /home/ve/.codex/skills/openharmony_porting_pipeline/docs/agent_architecture.md
+cat /home/ve/.codex/skills/openharmony_porting_pipeline/AGENTS.md
+```
+
+Use these contracts for structured task, evidence, and acceptance files:
+
+```text
+schemas/agent_task.schema.json
+schemas/evidence_pack.schema.json
+schemas/acceptance_state.schema.json
+```
+
 Run the full pipeline on an OpenHarmony workspace:
 
 ```bash
@@ -536,6 +552,19 @@ Never blindly resubmit a flash after a network timeout. Query the known job with
 ## Operating Rules
 
 - Keep stage isolation: pass files and stage results between stages, not full chat history.
+- For subagent workflows, the main Agent owns task decomposition, evidence
+  judgment, risk decisions, writer-lock ownership, patch merge, and final
+  acceptance claims.
+- Default subagent tasks are read-only and must use
+  `schemas/agent_task.schema.json`; task outputs should be structured before
+  narrative summaries.
+- The main Agent should consume evidence packs and structured subagent outputs
+  instead of raw full logs, full XML reports, or full repository scans.
+- Keep a single writer Agent per OpenHarmony source workspace. Skill repository
+  updates by `skill-maintainer` do not authorize OpenHarmony source edits.
+- Escalate boot, partition, firmware, HDF startup, init, permission, binary
+  replacement, flash, physical-device, waiver, RC, and release decisions to the
+  main Agent.
 - Treat repository records, diffs, manifests, binary hashes, dirty workspace records, and logs as evidence.
 - Keep operator context as user-supplied hints; if it conflicts with repository evidence, record the conflict and prefer verifiable evidence.
 - Preserve unknowns instead of inventing build, boot, runtime, provenance, or validation status.

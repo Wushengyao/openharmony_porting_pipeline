@@ -1,0 +1,61 @@
+task_id: example-build-log-triage
+role: build-log-triager
+model: gpt-5.4-mini
+model_reasoning_effort: medium
+workspace: /path/to/read_only_ohos
+sandbox: read_only
+priority: P1
+allowed_tools:
+  - rg
+  - sed
+  - python tools/log_slice.py
+forbidden:
+  - edit_source
+  - flash_device
+  - delete_files
+  - modify_binary_assets
+path_permissions:
+  read_roots:
+    - /path/to/read_only_ohos
+    - /path/to/evidence_packs/iteration327
+  write_roots:
+    - outputs
+  must_not_touch:
+    - /path/to/read_only_ohos
+inputs:
+  - inputs/build.log
+  - inputs/previous_patch_summary.md
+  - inputs/build_error_taxonomy.yaml
+outputs:
+  - outputs/build_triage.yaml
+  - outputs/top_errors.md
+  - outputs/known_signature_hits.yaml
+budget:
+  max_runtime_sec: 900
+  max_log_bytes: 200000
+  max_tokens_label: mini-medium
+  max_device_actions: 0
+stop_conditions:
+  no_source_write: true
+  must_return_structured_summary: true
+  stop_on_high_risk: true
+  stop_on_budget_exceeded: true
+risk_policy:
+  escalate_to_main_agent_when:
+    - boot_related
+    - partition_related
+    - hdf_service_startup_related
+    - binary_replacement_related
+    - repeated_failure_count_gte_2
+  high_risk_paths:
+    - kernel/
+    - base/startup/init/
+    - drivers/hdf_core/
+    - vendor/*/*/etc/param/
+  requires_writer_lock: false
+evidence_requirements:
+  require_file_paths: true
+  require_command_lines: true
+  require_log_offsets: true
+  require_hashes_for_images: false
+  raw_artifact_root: /path/to/raw_artifacts/iteration327

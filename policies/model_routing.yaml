@@ -1,0 +1,103 @@
+version: "0.1"
+default_main_agent:
+  model: gpt-5.5
+  reasoning_effort: high
+  responsibilities:
+    - task_decomposition
+    - evidence_judgment
+    - risk_decision
+    - patch_merge_decision
+    - final_acceptance
+
+roles:
+  repo-surveyor:
+    model: gpt-5.4-mini
+    reasoning_effort: medium
+    sandbox: read_only
+    upgrade_to: gpt-5.5
+    upgrade_when:
+      - module_ownership_conflict
+      - high_risk_path_detected
+      - missing_evidence_blocks_next_step
+  build-log-triager:
+    model: gpt-5.4-mini
+    reasoning_effort: medium
+    sandbox: read_only
+    upgrade_to: gpt-5.5
+    upgrade_when:
+      - repeated_failure_count_gte_2
+      - cross_subsystem_link_or_runtime_failure
+      - boot_or_hdf_service_related
+      - root_cause_confidence_low
+  xts-hats-runner:
+    model: gpt-5.4-mini
+    reasoning_effort: medium
+    sandbox: device_tool_only
+    tool_first: true
+    upgrade_to: gpt-5.5
+    upgrade_when:
+      - formal_acceptance_decision_needed
+      - broad_regression_detected
+      - rerun_would_exceed_budget
+  regression-reviewer:
+    model: gpt-5.5
+    reasoning_effort: high
+    sandbox: read_only
+    upgrade_to: main_agent
+    upgrade_when:
+      - waiver_required
+      - release_gate_affected
+      - evidence_conflict
+  reporter:
+    draft_model: gpt-5.4-mini
+    final_model: gpt-5.5
+    reasoning_effort: medium
+    sandbox: read_only
+    upgrade_when:
+      - customer_facing_release_claim
+      - waiver_or_known_debt_needs_wording
+  skill-maintainer:
+    model: gpt-5.5
+    reasoning_effort: high
+    sandbox: skill_repo_write
+    upgrade_to: main_agent
+    upgrade_when:
+      - breaking_contract_change
+      - source_workspace_write_requested
+      - universal_rule_not_evidence_backed
+
+future_roles:
+  patch-planner:
+    model: gpt-5.5
+    reasoning_effort: high
+    sandbox: plan_only
+  patch-writer:
+    model: gpt-5.5
+    reasoning_effort: high
+    sandbox: workspace_write
+    requires_writer_lock: true
+  runtime-hdf-reviewer:
+    model: gpt-5.5
+    reasoning_effort: high
+    sandbox: read_only
+  device-automation-steward:
+    model: gpt-5.4-mini
+    reasoning_effort: medium
+    sandbox: device_tool_only
+  version-lane-maintainer:
+    model: gpt-5.5
+    reasoning_effort: high
+    sandbox: read_only
+
+global_escalation:
+  to_main_agent:
+    - boot_related
+    - partition_related
+    - firmware_or_bootloader_related
+    - hdf_service_startup_related
+    - init_or_permission_policy_related
+    - binary_replacement_related
+    - flash_or_power_operation_related
+    - delete_or_mass_rewrite_requested
+    - repeated_failure_count_gte_2
+    - acceptance_or_waiver_decision_needed

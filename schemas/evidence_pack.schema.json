@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "job_id": {
+      "type": "string"
+    },
+    "iteration": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "board": {
+      "type": "string"
+    },
+    "os_version": {
+      "type": "string"
+    },
+    "arch": {
+      "type": "string"
+    },
+    "image_sha256": {
+      "type": "string",
+      "pattern": "^$|^[a-fA-F0-9]{64}$"
+    },
+    "source_revision": {
+      "type": "string"
+    },
+    "patch_revision": {
+      "type": "string"
+    },
+    "build_command": {
+      "type": "string"
+    },
+    "package_command": {
+      "type": "string"
+    },
+    "flash_job_id": {
+      "type": "string"
+    },
+    "hats_or_xts_run_id": {
+      "type": "string"
+    },
+    "raw_artifact_root": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string"
+    },
+    "created_by": {
+      "type": "string"
+    },
+    "files": {
+      "type": "object",
+      "properties": {
+        "build_summary": {
+          "type": "string"
+        },
+        "test_summary": {
+          "type": "string"
+        },
+        "device_state": {
+          "type": "string"
+        },
+        "diff_summary": {
+          "type": "string"
+        },
+        "top_errors": {
+          "type": "string"
+        },
+        "serial_excerpt": {
+          "type": "string"
+        },
+        "hdc_excerpt": {
+          "type": "string"
+        },
+        "links_to_raw_artifacts": {
+          "type": "string"
+        },
+        "acceptance_state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "build_summary",
+        "test_summary",
+        "device_state",
+        "diff_summary",
+        "top_errors",
+        "links_to_raw_artifacts"
+      ],
+      "additionalProperties": false
+    },
+    "screenshots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^$|^[a-fA-F0-9]{64}$"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "label"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "raw_artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^$|^[a-fA-F0-9]{64}$"
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "kind"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "known_debts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "job_id",
+    "iteration",
+    "board",
+    "os_version",
+    "arch",
+    "image_sha256",
+    "source_revision",
+    "patch_revision",
+    "build_command",
+    "package_command",
+    "flash_job_id",
+    "hats_or_xts_run_id",
+    "raw_artifact_root",
+    "created_at",
+    "created_by",
+    "files"
+  ],
+  "additionalProperties": false
+}

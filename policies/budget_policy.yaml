@@ -1,0 +1,61 @@
+version: "0.1"
+principles:
+  - main_agent_consumes_evidence_pack_not_raw_noise
+  - deterministic_tools_before_model_summarization
+  - small_stable_tests_before_broad_formal_suites
+  - no_unbounded_flash_or_device_retry_loops
+
+main_agent:
+  max_raw_log_bytes_direct: 0
+  preferred_inputs:
+    - evidence_pack_manifest
+    - structured_subagent_outputs
+    - diff_summary
+    - acceptance_state
+    - risk_items
+  may_request_raw_excerpt_when:
+    - evidence_refs_are_ambiguous
+    - suspected_parser_or_summary_error
+    - high_risk_decision_needs_exact_text
+
+role_budgets:
+  repo-surveyor:
+    max_runtime_sec: 900
+    max_tokens_label: mini-medium
+    max_log_bytes: 0
+  build-log-triager:
+    max_runtime_sec: 900
+    max_tokens_label: mini-medium
+    max_log_bytes: 200000
+  xts-hats-runner:
+    max_runtime_sec: 3600
+    max_tokens_label: mini-medium
+    max_log_bytes: 100000
+    max_device_actions_without_main_agent_review: 3
+  regression-reviewer:
+    max_runtime_sec: 1200
+    max_tokens_label: high-focused
+    max_log_bytes: 50000
+  reporter:
+    max_runtime_sec: 900
+    max_tokens_label: mini-medium
+    max_log_bytes: 0
+  skill-maintainer:
+    max_runtime_sec: 1800
+    max_tokens_label: high-focused
+    max_log_bytes: 0
+
+practice_limits:
+  max_flash_attempts_per_iteration_without_review: 1
+  max_reboot_attempts_per_iteration_without_review: 2
+  max_xdevice_modules_without_review: 3
+  require_baseline_compare_before_rc_claim: true
+  require_image_hash_before_flash_evidence_claim: true
+  require_hdc_or_serial_evidence_before_boot_claim: true
+
+stop_conditions:
+  stop_on_high_risk_operation_without_approval: true
+  stop_on_writer_lock_conflict: true
+  stop_on_missing_task_schema: true
+  stop_on_missing_evidence_pack_manifest_for_acceptance: true
+  stop_on_repeated_same_failure_without_new_evidence: true
