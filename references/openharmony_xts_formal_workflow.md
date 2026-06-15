@@ -106,6 +106,9 @@ PATH="$PWD/prebuilts/python/linux-x86/3.11.4/bin:$PATH" \
 - The official workflow assumes a Windows workbench connected to the standard
   system device by USB. For the MusePaper2 rig, Windows oh-auto sees HDC target
   `0123456789ABCDEF`; Linux-local `hdc` may not see the target.
+- Keep one xDevice tool bundle active per run. Different suites may ship
+  different `xdevice-0.0.0` contents under the same package name, so stale
+  installs can mix a new plugin with an old base package.
 - Query oh-auto before a formal run:
 
 ```bash
@@ -169,10 +172,34 @@ Module-only staging keeps the Windows transfer small while still exercising the
 official xDevice driver/config/testcase path. Keep the manifest's
 `staged_testcases` list with the run evidence.
 
+For external resource suites such as SSTS, the downloaded suite may include an
+older xDevice bundle than the one generated from the target source tree. If
+`python -m xdevice` fails with `pkg_resources` or `cannot import name
+'CaseEnd'`, run the same suite content with a known-good same-release tool
+bundle by overriding `tools/`:
+
+```bash
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_xts_xdevice_runner.py \
+  --suite-dir /path/to/unpacked/ssts \
+  --tools-dir /path/to/ohos/out/musepaper2/suites/acts/acts/tools \
+  --out /path/to/work/records/iterationNNN/runner_ssts_probe \
+  --run-id iterationNNN_ssts_probe \
+  --module OpenHarmony-SA-2025-11 \
+  --resource-dir 'F:\images\PortingTest\6.1\xts_runs\iterationNNN_ssts_probe\ssts\resource'
+```
+
+The runner uninstalls stale `xdevice*` packages before each install, pins
+`setuptools<81` for legacy `pkg_resources` imports under Windows Python 3.12,
+then installs every `tools/xdevice*.tar.gz` in name order.
+
 Manual equivalent:
 
 ```powershell
 Set-Location 'F:\images\PortingTest\6.1\hats_suite_probe\hats'
+& 'C:\Users\sheng\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' `
+  -m pip uninstall -y xdevice xdevice-extension xdevice-ohos xdevice-devicetest
+& 'C:\Users\sheng\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' `
+  -m pip install --user --force-reinstall 'setuptools<81'
 & 'C:\Users\sheng\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' `
   -m pip install --user .\tools\xdevice-0.0.0.tar.gz `
   .\tools\xdevice_devicetest-0.0.0.tar.gz `
@@ -193,10 +220,11 @@ Important details:
 - Do not start with broad audio, suspend, USB-role, network-topology, active
   slot, or distributed suites. Use clean boots and per-module reboot isolation
   for stateful modules.
-- Do not execute DCTS as a single-device smoke substitute. DCTS modules cover
+- A single low-risk DCTS module can be used to prove that xDevice can stage and
+  launch DCTS. Do not treat DCTS failures as product regressions until a
+  two-device or lab-distributed topology is prepared; DCTS modules cover
   distributed scheduling, SoftBus, distributed data, distributed hardware, and
-  paired client/server apps; prepare a two-device or lab-distributed topology
-  before treating failures as product regressions.
+  paired client/server apps.
 
 ## Evidence To Preserve
 
@@ -227,5 +255,24 @@ evidence rather than a runner failure.
 
 The first source-built DCTS probe on 2026-06-15 generated
 `out/musepaper2/suites/dcts` successfully for MusePaper2 RISC-V64 in about
-5.5 minutes. Record it as build/suite-layout evidence only until a distributed
-multi-device execution fixture is available.
+5.5 minutes. The first execution smoke used `DctsFileioClientTest`; xDevice
+ran the module and reported `total=121`, `failed=121`. Record this as DCTS
+launch evidence only until a distributed multi-device execution fixture is
+available.
+
+The first ACTS-Validator smoke on 2026-06-15 staged
+`out/musepaper2/suites/acts/acts-validator` and ran module `validator`.
+xDevice produced a report with `modules=1`, `run_modules=0`,
+`unavailable=1`; logs showed missing `testcases/queryStandard` and an
+`EOF when reading a line` driver error. Treat this as an incomplete generated
+validator package/resource issue, not an HDC or runner failure.
+
+The first SSTS smoke on 2026-06-15 used the user-provided SSTS zip
+`68a8d025-8787-4222-ba58-447c1ef7a957.zip`, SHA256
+`58692752699ed40fc3dd0b3e7b20b4e551b5f79362546d50bd14192852be74c4`.
+The package's own xDevice tool pair installed `VERSION 2.30.0.1104` and failed
+under Windows Python 3.12 with missing `pkg_resources`, then a `CaseEnd`
+import mismatch. Re-running the same SSTS content with the source-built ACTS
+xDevice 5.0.6.100 tool bundle reached OHYaraTest and produced `modules=1`,
+`run_modules=1`, `total=1`, `blocked=1`; the block reason was security patch
+`2026-02` versus current month `2026-06`.

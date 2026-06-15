@@ -272,10 +272,16 @@ targets, or no useful payload.
   the first source-built ACTS probe passed 85/85. `ActsHilogNdkTest` completed
   the xDevice flow but had hilog assertion failures, so classify it as
   subsystem follow-up rather than runner bring-up failure.
+- ACTS-Validator can build into `out/musepaper2/suites/acts/acts-validator`,
+  but the first xDevice smoke reported `unavailable=1` because
+  `testcases/queryStandard` and related validator resources were missing. Treat
+  that as an incomplete package/resource issue before investigating product
+  behavior.
 - DCTS can be source-built for MusePaper2 RISC-V64 with the same prebuilt
   Python PATH pattern. It generated `out/musepaper2/suites/dcts` in the first
-  probe, but execution should wait for a distributed/two-device topology rather
-  than being treated as a single-device smoke test.
+  probe. A single-module smoke of `DctsFileioClientTest` proved xDevice launch
+  but failed 121/121 cases, which is expected until a distributed/two-device
+  topology is available.
 - DCTS/Hvigor builds may leave generated `oh-package-lock.json5`, `.hvigor/`,
   `build/`, `oh_modules/`, `local.properties`, and modified `hvigorw` files in
   `test/xts/dcts`. Treat them as build byproducts unless a targeted diff proves
@@ -284,6 +290,19 @@ targets, or no useful payload.
   OpenHarmony 6.1 Release standard-system resource download. Record this as a
   resource gap and do not mix OH6.0 arm32 resources into OH6.1 RISC-V formal
   evidence.
+- External SSTS packages may ship stale xDevice packages even when their
+  testcase/resource structure is valid. The 2026-06-15 SSTS package carried an
+  xDevice `2.30.0.1104` base that failed with missing `pkg_resources` and then
+  `cannot import name 'CaseEnd'`. Use
+  `oh_xts_xdevice_runner.py --tools-dir out/musepaper2/suites/acts/acts/tools`
+  to run SSTS content with the source-built xDevice 5.0.6.100 tool bundle.
+- For Windows Python 3.12 xDevice runs, uninstall stale `xdevice*` packages
+  before each suite tool install and force `setuptools<81`; otherwise legacy
+  suites that import `pkg_resources` can fail before reaching the device.
+- The first SSTS smoke reached OHYaraTest with `OpenHarmony-SA-2025-11` and
+  produced `blocked=1`, not a runner failure. The block came from security patch
+  `2026-02` being four months behind current month `2026-06`, exceeding the
+  SSTS two-month patch-label policy.
 
 ## HATS Execution Lessons
 

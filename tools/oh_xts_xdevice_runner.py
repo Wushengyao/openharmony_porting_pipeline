@@ -139,6 +139,13 @@ def copy_optional_file(src: Path, dst: Path) -> None:
         shutil.copy2(src, dst)
 
 
+def copy_tools_dir(args: argparse.Namespace, dst: Path, default_tools: Path) -> None:
+    tools_src = args.tools_dir.resolve() if args.tools_dir else default_tools
+    if not tools_src.is_dir():
+        raise FileNotFoundError(f"xDevice tools dir not found: {tools_src}")
+    shutil.copytree(tools_src, dst)
+
+
 def make_module_staging_dir(args: argparse.Namespace, suite_dir: Path) -> Path:
     if not args.module:
         raise ValueError("--stage-module-only requires --module")
@@ -149,7 +156,7 @@ def make_module_staging_dir(args: argparse.Namespace, suite_dir: Path) -> Path:
     stage_dir.mkdir(parents=True)
 
     shutil.copytree(suite_dir / "config", stage_dir / "config")
-    shutil.copytree(suite_dir / "tools", stage_dir / "tools")
+    copy_tools_dir(args, stage_dir / "tools", suite_dir / "tools")
     copy_optional_file(suite_dir / "run.sh", stage_dir / "run.sh")
     copy_optional_file(suite_dir / "run.bat", stage_dir / "run.bat")
 
@@ -173,6 +180,17 @@ def make_module_staging_dir(args: argparse.Namespace, suite_dir: Path) -> Path:
     return stage_dir
 
 
+def make_tools_staging_dir(args: argparse.Namespace, suite_dir: Path) -> Path:
+    stage_parent = args.out / "_tools_stage"
+    stage_dir = stage_parent / suite_dir.name
+    if stage_parent.exists():
+        shutil.rmtree(stage_parent)
+    ignore = shutil.ignore_patterns("tools")
+    shutil.copytree(suite_dir, stage_dir, ignore=ignore)
+    copy_tools_dir(args, stage_dir / "tools", suite_dir / "tools")
+    return stage_dir
+
+
 def make_zip(args: argparse.Namespace) -> Path:
     suite_dir = args.suite_dir.resolve()
     if not suite_dir.is_dir():
@@ -185,6 +203,9 @@ def make_zip(args: argparse.Namespace) -> Path:
     zip_dir = suite_dir
     if args.stage_module_only:
         zip_dir = make_module_staging_dir(args, suite_dir)
+        zip_root = zip_dir.parent
+    elif args.tools_dir:
+        zip_dir = make_tools_staging_dir(args, suite_dir)
         zip_root = zip_dir.parent
     zip_base = args.out / f"{suite_dir.name}_{args.run_id}"
     zip_path = zip_base.with_suffix(".zip")
@@ -255,6 +276,23 @@ def build_run_command(args: argparse.Namespace, suite_name: str, suite_dir: str)
     return " ".join(parts)
 
 
+def build_install_command(args: argparse.Namespace, suite_dir: str) -> str:
+    py = ps_quote(args.windows_python)
+    script = (
+        "$ErrorActionPreference='Stop'; "
+        f"Set-Location {ps_quote(suite_dir)}; "
+        "$packages = Get-ChildItem -Path .\\tools -Filter 'xdevice*.tar.gz' | "
+        "Sort-Object Name | ForEach-Object { $_.FullName }; "
+        "if (-not $packages -or $packages.Count -eq 0) { "
+        "throw 'no xdevice*.tar.gz packages found under suite tools directory' "
+        "}; "
+        f"& {py} -m pip uninstall -y xdevice xdevice-extension xdevice-ohos xdevice-devicetest; "
+        f"& {py} -m pip install --user --force-reinstall 'setuptools<81'; "
+        f"& {py} -m pip install --user @packages"
+    )
+    return script
+
+
 def summarize_xdevice(args: argparse.Namespace, parsed: Any | None) -> None:
     stdout = parsed.get("stdout", "") if isinstance(parsed, dict) else ""
     summary = {
@@ -295,6 +333,11 @@ def main() -> int:
     parser.add_argument("--module", help="Single module for a first probe, e.g. HatsGetcwdTest")
     parser.add_argument("--report-name", default=None)
     parser.add_argument("--resource-dir", help="Windows resource directory passed to xDevice -respath")
+    parser.add_argument(
+        "--tools-dir",
+        type=Path,
+        help="Override suite tools/ with a known-good xDevice tool bundle before staging",
+    )
     parser.add_argument("--extra", action="append", default=[], help="Raw extra argument for xDevice")
     parser.add_argument("--windows-python", default=DEFAULT_WINDOWS_PYTHON)
     parser.add_argument("--hdc-path", default=DEFAULT_HDC)
@@ -332,6 +375,7 @@ def main() -> int:
         "module": args.module or "",
         "report_name": args.report_name,
         "resource_dir": args.resource_dir or "",
+        "tools_dir": str(args.tools_dir) if args.tools_dir else "",
         "windows_python": args.windows_python,
         "hdc_path": args.hdc_path,
     }
@@ -363,14 +407,7 @@ def main() -> int:
         admin_shell(args, extract_script, "stage_extract", args.command_timeout_sec)
 
     if not args.no_install:
-        install_script = (
-            f"$ErrorActionPreference='Stop'; Set-Location {ps_quote(suite_dir)}; "
-            f"& {ps_quote(args.windows_python)} -m pip install --user "
-            ".\\tools\\xdevice-0.0.0.tar.gz "
-            ".\\tools\\xdevice_devicetest-0.0.0.tar.gz "
-            ".\\tools\\xdevice_ohos-0.0.0.tar.gz"
-        )
-        admin_shell(args, install_script, "pip_install_xdevice", args.command_timeout_sec)
+        admin_shell(args, build_install_command(args, suite_dir), "pip_install_xdevice", args.command_timeout_sec)
 
     run_script = (
         f"$ErrorActionPreference='Continue'; Set-Location {ps_quote(suite_dir)}; "
