@@ -80,6 +80,17 @@ PATH="$PWD/prebuilts/python/linux-x86/3.11.4/bin:$PATH" \
   "riscv64-linux-ohos"` for `target_cpu == "riscv64"` so ACTS NDK tests use the
   existing architecture-specific SDK libraries instead of flattening them into
   `usr/lib`.
+- If a source-built ACTS HAP lacks `libs/riscv64`, first add `riscv64` to the
+  HAP `abiFilters`, then make the SDK/Hvigor chain accept and link
+  `riscv64-linux-ohos`. The minimum shape observed on MusePaper2 included
+  Hvigor ABI enum/schema entries, a CMake toolchain branch, RISC-V musl sysroot
+  startup files and headers, compiler-rt crt/builtins, `libunwind.a`, and NDK
+  libc++ libraries.
+- For RISC-V libc++, verify the ABI namespace with `llvm-nm -C`. In the
+  MusePaper2 OH6.1 workspace, the LLVM `libc++.so` exported `std::__h`, while
+  the HAP object and device `libc++_shared.so` used `std::__n1`; using the
+  NDK `libc++_shared.so/libc++_static.a` for SDK RISC-V resolved
+  `std::__n1::basic_string` link failures.
 - If `third_party/vk-gl-cts` fails for RISC-V with missing or wrong dEQP target
   defines, add the riscv64 target branch in `vk_gl_cts.gni`: `DE_PTR_SIZE=8`
   and `DE_CPU=DE_CPU_RISCV_64`. Keep the Vulkan/GLES test coverage; do not
@@ -190,7 +201,9 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_xts_xdevice
 
 The runner uninstalls stale `xdevice*` packages before each install, pins
 `setuptools<81` for legacy `pkg_resources` imports under Windows Python 3.12,
-then installs every `tools/xdevice*.tar.gz` in name order.
+normalizes underscore and hyphen package spellings, and installs only one
+tarball per normalized xDevice package name. This avoids pip conflicts when a
+suite ships both `xdevice_devicetest` and `xdevice-devicetest`.
 
 Manual equivalent:
 
@@ -252,6 +265,11 @@ The first source-built ACTS probe on 2026-06-15 used the nested ACTS suite root
 `failed=0`; an earlier `ActsHilogNdkTest` run completed the xDevice flow but
 reported 53 passed and 11 failed, so it should be treated as follow-up feature
 evidence rather than a runner failure.
+
+After the RISC-V native HAP SDK fixes on 2026-06-16, `ActsHilogNdkTest`
+rebuilt through `build.sh`, `ActsHilogNdkOtherTest.hap` contained
+`libs/riscv64/libhilogndk.so`, and the xDevice module-only retry reported
+`modules=1`, `total=64`, `passed=64`, `failed=0`.
 
 The first source-built DCTS probe on 2026-06-15 generated
 `out/musepaper2/suites/dcts` successfully for MusePaper2 RISC-V64 in about

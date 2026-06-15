@@ -37,6 +37,10 @@ The output directory contains:
 - `summary/summary.md`
 - optional `regression_matrix.yaml`
 
+`run_xdevice_probe.py` accepts runner arguments after a literal `--`; the
+wrapper strips that separator before forwarding arguments to the transport
+runner.
+
 ## Step-by-step Commands
 
 Check environment:
@@ -109,12 +113,26 @@ python3 tools/xts_xdevice_runner/flaky_detector.py \
   --out rerun_plan.yaml
 ```
 
+## Tool Package Handling
+
+The Windows transport runner uninstalls stale `xdevice*` packages, pins
+`setuptools<81`, and normalizes xDevice tarball names before pip install. Some
+source-built suites contain both underscore and hyphen spellings of the same
+package, such as `xdevice_devicetest` and `xdevice-devicetest`; installing both
+causes pip `ResolutionImpossible`, so only one normalized package is selected.
+
+XML parsing treats `result=true/false` as authoritative for case pass/fail,
+does not promote `status=run` to pass, and deduplicates cases that appear in
+both `summary_report.xml` and per-module XML.
+
 ## Current MusePaper2 Evidence Boundary
 
 MusePaper2 OH6.1 has proven xDevice transport and selected modules:
 
 - HATS `HatsGetcwdTest`: 1/1 passed.
 - ACTS `ActsStartupSysDeviceInfoTest`: 85/85 passed.
+- ACTS `ActsHilogNdkTest`: 64/64 passed after the RISC-V native assistant HAP
+  and SDK libc++ ABI fixes.
 - ACTS-Validator: dispatch reached xDevice, but generated validator resources
   were incomplete.
 - DCTS: module executed on one device, but meaningful pass/fail likely requires

@@ -272,6 +272,18 @@ targets, or no useful payload.
   the first source-built ACTS probe passed 85/85. `ActsHilogNdkTest` completed
   the xDevice flow but had hilog assertion failures, so classify it as
   subsystem follow-up rather than runner bring-up failure.
+- If an ACTS native HAP fails on RISC-V while the module runs on other ABIs,
+  inspect the HAP for `libs/riscv64/*` before debugging the subsystem. For
+  `ActsHilogNdkTest`, the missing RISC-V assistant HAP library caused 11 hilog
+  assertion failures; after adding `riscv64` to the HAP build profile and
+  completing the RISC-V NDK SDK layout, the module passed 64/64 through
+  xDevice.
+- OH6.1 RISC-V NDK HAP builds may require a complete SDK shape, not only a
+  target-cpu GN branch: Hvigor ABI enum/schema support, CMake
+  `OHOS_ARCH=riscv64`, sysroot startup files and architecture headers from
+  OH musl, compiler-rt crt/builtins, `libunwind.a`, and NDK libc++ with the
+  same `std::__n1` ABI as `libc++_shared.so`. Do not mix the LLVM
+  `std::__h` libc++ into HAP builds that compile against `std::__n1` headers.
 - ACTS-Validator can build into `out/musepaper2/suites/acts/acts-validator`,
   but the first xDevice smoke reported `unavailable=1` because
   `testcases/queryStandard` and related validator resources were missing. Treat
@@ -299,6 +311,11 @@ targets, or no useful payload.
 - For Windows Python 3.12 xDevice runs, uninstall stale `xdevice*` packages
   before each suite tool install and force `setuptools<81`; otherwise legacy
   suites that import `pkg_resources` can fail before reaching the device.
+- Source-built suites may include both underscore and hyphen spellings of the
+  same xDevice package, for example `xdevice_devicetest-0.0.0.tar.gz` and
+  `xdevice-devicetest-0.0.0.tar.gz`. Normalize names and install only one copy
+  per package, otherwise pip can fail with `ResolutionImpossible` before the
+  test reaches the device.
 - The first SSTS smoke reached OHYaraTest with `OpenHarmony-SA-2025-11` and
   produced `blocked=1`, not a runner failure. The block came from security patch
   `2026-02` being four months behind current month `2026-06`, exceeding the

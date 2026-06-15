@@ -9,7 +9,37 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
-from common import derive_status, merge_counts, parse_xml_report, write_json  # noqa: E402
+from common import COUNT_KEYS, derive_status, parse_xml_report, write_json  # noqa: E402
+
+
+def merge_unique_cases(reports):
+    cases = {}
+    for report in reports:
+        for case in report.get("cases", []):
+            key = (
+                case.get("classname") or "",
+                case.get("name") or "",
+            )
+            if key == ("", ""):
+                key = (report.get("path", ""), str(len(cases)))
+            previous = cases.get(key)
+            if previous is None or previous.get("status") == "passed":
+                cases[key] = {"report": report["path"], **case}
+    return list(cases.values())
+
+
+def counts_from_cases(cases):
+    counts = {key: 0 for key in COUNT_KEYS}
+    counts["total"] = len(cases)
+    for case in cases:
+        status = case.get("status")
+        if status in counts:
+            counts[status] += 1
+        elif status == "passed":
+            counts["passed"] += 1
+        else:
+            counts["failed"] += 1
+    return counts
 
 
 def main() -> int:
@@ -20,12 +50,17 @@ def main() -> int:
 
     xml_files = sorted(args.report_root.rglob("*.xml")) if args.report_root.exists() else []
     reports = [parse_xml_report(path) for path in xml_files]
-    counts = merge_counts([item["counts"] for item in reports])
-    failures = []
-    for report in reports:
-        for case in report.get("cases", []):
-            if case.get("status") not in {"passed", "skipped", "ignored"}:
-                failures.append({"report": report["path"], **case})
+    unique_cases = merge_unique_cases(reports)
+    counts = counts_from_cases(unique_cases)
+    if not unique_cases:
+        counts = {key: 0 for key in COUNT_KEYS}
+        for item in reports:
+            for key, value in item["counts"].items():
+                counts[key] += value
+    failures = [
+        case for case in unique_cases
+        if case.get("status") not in {"passed", "skipped", "ignored"}
+    ]
     result = {
         "status": derive_status(counts),
         "report_root": str(args.report_root),

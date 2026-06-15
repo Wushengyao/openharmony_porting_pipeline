@@ -106,6 +106,33 @@ def normalize_status(value: str | None) -> str:
     return aliases.get(normalized, normalized)
 
 
+def normalize_case_status(attrs: dict[str, str], child_tags: set[str]) -> str:
+    result = attrs.get("result")
+    if result is not None:
+        normalized_result = result.strip().lower()
+        if normalized_result in {"true", "pass", "passed", "success", "ok"}:
+            return "passed"
+        if normalized_result in {"false", "fail", "failed", "failure"}:
+            return "failed"
+
+    status = normalize_status(
+        attrs.get("status")
+        or attrs.get("verdict")
+        or attrs.get("outcome")
+    )
+    if status == "run":
+        status = "unknown"
+    if status == "unknown":
+        if "failure" in child_tags:
+            return "failed"
+        if "error" in child_tags:
+            return "error"
+        if "skipped" in child_tags:
+            return "skipped"
+        return "passed"
+    return status
+
+
 def xml_attr_int(attrs: dict[str, str], *names: str) -> int:
     for name in names:
         if name in attrs:
@@ -147,24 +174,12 @@ def parse_xml_report(path: Path) -> dict[str, Any]:
         tag = elem.tag.rsplit("}", 1)[-1].lower()
         if tag not in {"testcase", "case", "test"}:
             continue
-        name = elem.attrib.get("name") or elem.attrib.get("test") or elem.attrib.get("classname") or ""
-        status = normalize_status(
-            elem.attrib.get("status")
-            or elem.attrib.get("result")
-            or elem.attrib.get("verdict")
-            or elem.attrib.get("outcome")
-        )
+        attrs = dict(elem.attrib)
+        name = attrs.get("name") or attrs.get("test") or attrs.get("classname") or ""
+        classname = attrs.get("classname") or ""
         child_tags = {child.tag.rsplit("}", 1)[-1].lower() for child in elem}
-        if status == "unknown":
-            if "failure" in child_tags:
-                status = "failed"
-            elif "error" in child_tags:
-                status = "error"
-            elif "skipped" in child_tags:
-                status = "skipped"
-            else:
-                status = "passed"
-        result["cases"].append({"name": name, "status": status})
+        status = normalize_case_status(attrs, child_tags)
+        result["cases"].append({"name": name, "classname": classname, "status": status})
 
     if result["cases"]:
         case_counts = {key: 0 for key in COUNT_KEYS}

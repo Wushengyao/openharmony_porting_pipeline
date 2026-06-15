@@ -28,6 +28,9 @@ def main() -> int:
     parser.add_argument("--stage-module-only", action="store_true")
     parser.add_argument("runner_args", nargs=argparse.REMAINDER)
     args = parser.parse_args()
+    runner_args = args.runner_args
+    if runner_args and runner_args[0] == "--":
+        runner_args = runner_args[1:]
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     prepare = args.out_dir / "prepare_env.json"
@@ -55,7 +58,7 @@ def main() -> int:
         run_argv.extend(["--module", args.module])
     if args.stage_module_only:
         run_argv.append("--stage-module-only")
-    run_argv.extend(args.runner_args)
+    run_argv.extend(runner_args)
     rc = run(run_argv)
 
     collect_dir = args.out_dir / "reports"
