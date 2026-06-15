@@ -86,6 +86,19 @@ PATH="$PWD/prebuilts/python/linux-x86/3.11.4/bin:$PATH" \
   Hvigor ABI enum/schema entries, a CMake toolchain branch, RISC-V musl sysroot
   startup files and headers, compiler-rt crt/builtins, `libunwind.a`, and NDK
   libc++ libraries.
+- If the cleaned Hvigor RISC-V HAP build then fails with
+  `libunwind.a(libunwind.cpp.o): unable to find library from dependent library
+  specifier: dl`, inspect the SDK sysroot before changing test code. On
+  MusePaper2, `libunwind.a` carried `.deplibs = dl` while
+  `prebuilts/ohos-sdk/linux/<api>/native/sysroot/usr/lib/riscv64-linux-ohos/`
+  had `libm.a` but lacked `libdl.a` and `libpthread.a`. Copying the same-release
+  musl empty archives from
+  `out/<product>/obj/third_party/musl/usr/lib/riscv64-linux-ohos/` into the SDK
+  sysroot let the required `build.sh` HAP target complete and converted
+  `ActsPreferencesNdkTest` from 0/67 to 67/67 through xDevice. Record this as an
+  SDK/sysroot completeness fix, not a product feature reduction.
+  The skill helper can perform this reproducibly:
+  `python3 tools/sync_riscv_sdk_sysroot_libs.py --workspace /path/to/ohos --product musepaper2 --api 23 --apply`.
 - For RISC-V libc++, verify the ABI namespace with `llvm-nm -C`. In the
   MusePaper2 OH6.1 workspace, the LLVM `libc++.so` exported `std::__h`, while
   the HAP object and device `libc++_shared.so` used `std::__n1`; using the
