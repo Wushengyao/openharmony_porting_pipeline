@@ -205,6 +205,16 @@ batches are useful for discovery only. Treat these outcomes conservatively:
   classifying it as a test registration problem;
 - full-module pass is still required before marking the module formally closed.
 
+When a single class and small adjacent windows pass but the full module fails,
+use missing-middle windows before editing source. An all-class OHJSUnit filtered
+run can be a useful bridge between class shards and a full module: if all-class
+filtered reproduces while every tested subset missing one middle class passes,
+classify the issue as cumulative module sequence/lifecycle/resource cleanup
+until a smaller reproducible trigger is proven. Judge execution order and case
+counts from XML/report files, not only from the command log's displayed class
+argument order; xDevice or the OHJSUnit driver may normalize class argument
+display independently of the registered test order.
+
 Do not use `-tc <Class#Case>` for OHJSUnit/Hypium HAP-internal case filters.
 In this xDevice version `-tc/--testcase` selects a test source or JSON entry,
 so `ArrayCombinationTest4#ArrayCombinationTest4158` becomes unavailable instead
