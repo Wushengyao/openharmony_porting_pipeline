@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -81,7 +82,12 @@ def normalize_csv_values(values: list[str] | None) -> list[str]:
 
 
 def build_semantic_runner_args(args: argparse.Namespace, runner_args: list[str]) -> list[str]:
-    if any(item in {"-class", "--class"} or item.startswith("--extra=-class") for item in runner_args):
+    if any(
+        item in {"-class", "--class"}
+        or item.startswith("--extra=-class")
+        or item.startswith("--extra=--class")
+        for item in runner_args
+    ):
         raise SystemExit("Use --ohjsunit-class/--ohjsunit-case, or xDevice '-ta class:<...>'; '-class' is not a valid xDevice CLI filter here.")
 
     ohjsunit_filters = normalize_csv_values(args.ohjsunit_class) + normalize_csv_values(args.ohjsunit_case)
@@ -128,6 +134,11 @@ def main() -> int:
     parser.add_argument("--appfreeze-filter-connect-target")
     parser.add_argument("--appfreeze-filter-connect-baudrate", type=int)
     parser.add_argument("--appfreeze-filter-command-timeout-sec", type=float, default=60)
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate options and write planned_command.json without running xDevice or touching the device.",
+    )
     parser.add_argument("runner_args", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     runner_args = args.runner_args
@@ -162,6 +173,30 @@ def main() -> int:
     if args.stage_module_only:
         run_argv.append("--stage-module-only")
     run_argv.extend(runner_args)
+    if args.dry_run:
+        plan = {
+            "prepare": prep_argv,
+            "run_suite": run_argv,
+            "collect_reports": [
+                sys.executable,
+                str(SCRIPT_DIR / "collect_reports.py"),
+                "--runner-dir",
+                str(runner_dir),
+                "--out-dir",
+                str(args.out_dir / "reports"),
+                "--pull-text-from-runner",
+            ],
+            "semantic_filters": {
+                "ohjsunit_class": normalize_csv_values(args.ohjsunit_class),
+                "ohjsunit_case": normalize_csv_values(args.ohjsunit_case),
+            },
+        }
+        (args.out_dir / "planned_command.json").write_text(
+            json.dumps(plan, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        print(str(args.out_dir / "planned_command.json"))
+        return 0
     if args.appfreeze_filter_bundle:
         set_rc = set_appfreeze_filter(args)
         if set_rc != 0:

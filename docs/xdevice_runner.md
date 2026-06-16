@@ -14,6 +14,26 @@ flake planning, and baseline comparison.
 - Formal claim boundary: a small xDevice module pass proves the runner and that
   module. It does not prove full suite certification.
 
+## Interface Rule
+
+Treat xDevice as a fragile backend, not the normal human/Agent interface.
+Routine records should be produced through these stable intents:
+
+- module probe: `run_xdevice_probe.py --suite-name ... --module ...`;
+- OHJSUnit class/case: `run_xdevice_probe.py --ohjsunit-class ...` or
+  `--ohjsunit-case ...`;
+- large OHJSUnit class windows:
+  `run_ohjsunit_class_batches.py --class-list-file ...`;
+- unusual native/xDevice drivers: raw arguments after `--`, with the reason
+  recorded beside the run evidence.
+
+Use `run_xdevice_probe.py --dry-run` to validate the intended command and write
+`planned_command.json` without touching the device. Direct `python -m xdevice`
+commands and raw `--extra=-ta/--extra=-tc` hand-written filters should appear
+only as transport evidence or as a documented exception. This prevents common
+mistakes such as treating OHJSUnit `Class#Case` as xDevice `-tc`, using the
+invalid `-class` option, or mixing stale suite roots and report directories.
+
 ## One-command Probe
 
 ```bash

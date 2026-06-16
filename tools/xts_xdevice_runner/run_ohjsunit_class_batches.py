@@ -68,10 +68,11 @@ def runner_argv(args: argparse.Namespace, batch: list[str], out_dir: Path, no_in
         argv.extend(["--baseline", str(args.baseline)])
     if args.stage_module_only:
         argv.append("--stage-module-only")
+    for class_name in batch:
+        argv.extend(["--ohjsunit-class", class_name])
     argv.append("--")
     if no_install:
         argv.append("--no-install")
-    argv.extend(["--extra=-ta", "--extra=class:" + ",".join(batch)])
     return argv
 
 
@@ -93,6 +94,31 @@ def run_one(args: argparse.Namespace, index: int, batch: list[str]) -> dict[str,
     name = f"batch_{index:03d}_{safe_name('_'.join(batch))}"
     out_dir = args.out_dir / name
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.dry_run:
+        argv = runner_argv(args, batch, out_dir, no_install=args.prefer_no_install)
+        (out_dir / "command.json").write_text(
+            json.dumps({"argv": argv, "classes": batch, "no_install": args.prefer_no_install, "dry_run": True}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return {
+            "classes": batch,
+            "status": "planned",
+            "attempts": [
+                {
+                    "out_dir": str(out_dir),
+                    "returncode": None,
+                    "no_install": args.prefer_no_install,
+                    "summary": {"status": "planned"},
+                }
+            ],
+            "selected": {
+                "out_dir": str(out_dir),
+                "returncode": None,
+                "no_install": args.prefer_no_install,
+                "summary": {"status": "planned"},
+            },
+        }
 
     attempts: list[dict[str, Any]] = []
     for attempt_index, no_install in enumerate([args.prefer_no_install, False], 1):
@@ -134,6 +160,7 @@ def aggregate(results: list[dict[str, Any]]) -> dict[str, Any]:
         "unavailable": 0,
     }
     failures: list[dict[str, Any]] = []
+    planned_count = 0
     for result in results:
         summary = result["selected"].get("summary", {})
         counts = summary_counts(summary)
@@ -141,15 +168,18 @@ def aggregate(results: list[dict[str, Any]]) -> dict[str, Any]:
             value = counts.get(key)
             if isinstance(value, int):
                 totals[key] += value
-        if result.get("status") != "passed":
+        if result.get("status") == "planned":
+            planned_count += 1
+        elif result.get("status") != "passed":
             failures.append({
                 "classes": result.get("classes", []),
                 "status": result.get("status"),
                 "out_dir": result["selected"].get("out_dir"),
                 "summary": summary,
             })
+    status = "planned" if planned_count == len(results) else "passed" if not failures else "failed"
     return {
-        "status": "passed" if not failures else "failed",
+        "status": status,
         "batch_count": len(results),
         "totals": totals,
         "failures": failures,
@@ -197,6 +227,7 @@ def main() -> int:
     parser.add_argument("--prefer-no-install", action="store_true")
     parser.add_argument("--stage-module-only", action="store_true")
     parser.add_argument("--runner", type=Path, default=DEFAULT_RUNNER)
+    parser.add_argument("--dry-run", action="store_true", help="Write batch command plans without invoking xDevice.")
     args = parser.parse_args()
 
     if not args.suite_dir and not args.windows_suite_dir:
@@ -217,7 +248,7 @@ def main() -> int:
     payload = aggregate(results)
     (args.out_dir / "batch_summary.json").write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     write_markdown(args.out_dir / "batch_summary.md", payload)
-    return 0 if payload["status"] == "passed" else 1
+    return 0 if payload["status"] in {"passed", "planned"} else 1
 
 
 if __name__ == "__main__":
