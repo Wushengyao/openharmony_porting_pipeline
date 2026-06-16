@@ -286,6 +286,12 @@ targets, or no useful payload.
   assertion failures; after adding `riscv64` to the HAP build profile and
   completing the RISC-V NDK SDK layout, the module passed 64/64 through
   xDevice.
+- ArkCompiler ACTS ESModule/dynamic/lazy/static load failures can also be
+  packaging gaps, not Ark runtime defects. On 2026-06-16, adding `riscv64` to
+  the affected `entry`/HAR/HSP build profiles, adding `externalNativeOptions`
+  for `esmodule_ohostest/entry/src/ohosTest/cpp`, and rebuilding after cleaning
+  stale Hvigor `compile_app` and `Acts*LibTest` outputs converted six modules
+  from import/native-load failures to 132/132 passing through xDevice.
 - OH6.1 RISC-V NDK HAP builds may require a complete SDK shape, not only a
   target-cpu GN branch: Hvigor ABI enum/schema support, CMake
   `OHOS_ARCH=riscv64`, sysroot startup files and architecture headers from

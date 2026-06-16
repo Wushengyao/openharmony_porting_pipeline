@@ -86,6 +86,14 @@ PATH="$PWD/prebuilts/python/linux-x86/3.11.4/bin:$PATH" \
   Hvigor ABI enum/schema entries, a CMake toolchain branch, RISC-V musl sysroot
   startup files and headers, compiler-rt crt/builtins, `libunwind.a`, and NDK
   libc++ libraries.
+- Treat `build-profile.json5` ABI changes as weakly tracked by the XTS GN/Ninja
+  app graph. On MusePaper2, after adding `riscv64` to ArkCompiler ACTS HAPs,
+  the XTS wrapper initially re-signed stale unsigned HAPs without re-running
+  Hvigor `compile_app.py`. Clean the affected module `*/build` outputs and both
+  `module_Acts*` and companion `Acts*LibTest` obj/stamp/unsigned-list outputs
+  before rebuilding through `test/xts/acts/build.sh`. If only the module target
+  is cleaned, LibTest signing can fail with `ERROR: 11017001 Read zip file
+  failed` because its unsigned list points at deleted or stale HAP/HSP files.
 - If the cleaned Hvigor RISC-V HAP build then fails with
   `libunwind.a(libunwind.cpp.o): unable to find library from dependent library
   specifier: dl`, inspect the SDK sysroot before changing test code. On
@@ -309,6 +317,13 @@ After the RISC-V native HAP SDK fixes on 2026-06-16, `ActsHilogNdkTest`
 rebuilt through `build.sh`, `ActsHilogNdkOtherTest.hap` contained
 `libs/riscv64/libhilogndk.so`, and the xDevice module-only retry reported
 `modules=1`, `total=64`, `passed=64`, `failed=0`.
+
+After the ArkCompiler ACTS RISC-V HAP ABI fixes on 2026-06-16,
+`ActsEsmoduleEntryTest`, `ActsEsmoduleOhostestLibTest`,
+`ActsEsmoduleOhostestTest`, `ActsArkTsDynamicLoadTest`,
+`ActsArkTsLazyLoadTest`, and `ActsArkTsStaticLoadTest` rebuilt with the needed
+`libs/riscv64` payloads and passed a module-only xDevice retry with
+`modules=6`, `total=132`, `passed=132`, and `failed=0`.
 
 When parsing xDevice XML, classify disabled and blocked cases before looking at
 `result=false`. ACTS reports can emit `status="disable" result="false"` with a
