@@ -80,6 +80,29 @@ files instead of scraping live xDevice output. If a source fix or flash is
 needed, pause/stop the queue first, preserve `state.json`, then resume after the
 new image is flashed and smoke-tested.
 
+Prefer batching source work during long queues. Keep a small ledger beside the
+queue, such as `xts_issue_pool.yaml`, `xts_fix_pool.yaml`, and
+`xts_retest_queue.yaml`. Move items through:
+
+- observed: failure packet exists, but no source conclusion yet;
+- triaged: likely component, owner path, and reproduction scope are recorded;
+- fix_ready: source changes are prepared locally but not yet flashed;
+- retest_ready: fixes have been built/flashed and need targeted xDevice reruns;
+- closed: rerun evidence passes or the item is explicitly classified out of
+  scope.
+
+Do not interrupt a healthy long queue for every isolated failure. Let the queue
+accumulate failure packets, group related issues, then pause only when a batch of
+fix-ready items justifies a build, flash, smoke, and targeted retest cycle. This
+keeps overnight ACTS/HATS/SSTS discovery productive while still preserving a
+clear path back to source fixes.
+
+HDC can support multiple instances, and sidecar log capture is useful for
+diagnostic runs or native/non-foreground modules. For formal OHJSUnit evidence,
+avoid concurrent HDC shell, hilog, screenshot, or manual UI unless the run is
+explicitly marked diagnostic or contaminated; foreground focus and lifecycle
+changes can alter the result.
+
 ## One-command Probe
 
 ```bash
