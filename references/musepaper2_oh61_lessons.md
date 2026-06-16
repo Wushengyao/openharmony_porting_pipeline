@@ -337,6 +337,19 @@ targets, or no useful payload.
   the full `4153-4158` six-case window failed repeatedly at `4158`. Treat this
   as a higher-order sequence/state/resource interaction before changing product
   runtime code or weakening the test.
+- A stable OHJSUnit failure after a long previous case can be AppFreeze rather
+  than JS semantics. In iteration353, `ActsArrayTest` `4153-4158` failed at
+  `4158` because `4157` ran for about 8s and the next CPU-heavy case hit
+  `APP_FREEZE` / `THREAD_BLOCK_6S`; direct `aa test` passed when
+  `hiviewdfx.appfreeze.filter_bundle_name=com.acts.test.arraytest` was held.
+  Use that parameter only as a diagnostic A/B probe. It was unreliable as an
+  xDevice formal workaround because dryRun/install/runner lifecycle can race
+  with parameter changes.
+- The durable fix for the same ACTS AppFreeze pattern was product-side and
+  tightly scoped: in developer mode, skip appfreeze killing for `com.acts.*`
+  test bundles while preserving ordinary app watchdog behavior. After flashing
+  the fixed image, xDevice `ActsArrayTest` `4153-4158` passed 6/6 without the
+  dynamic filter parameter; `4157` took 8.022s and `4158` took 4.755s.
 - Keep xDevice result counting tied to `summary/test_summary.yaml` and XML, not
   ad hoc wrapper fields. In iteration344 an external TSV helper initially read a
   nonexistent `totals` key and printed zero cases even though the module

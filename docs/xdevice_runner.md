@@ -67,6 +67,13 @@ of running the case. When `-tc/--testcase` is forwarded for drivers that really
 use it, the transport runner omits the module `-l` option because xDevice
 treats `-l` and `-tc` as mutually exclusive.
 
+For slow OHJSUnit ACTS windows, do not immediately treat a zero-time failed case
+or `THREAD_BLOCK_6S` kill as a language semantics failure. A temporary
+`hiviewdfx.appfreeze.filter_bundle_name=<bundle>` probe can prove whether
+AppFreeze is killing the test process, but it is diagnostic only. Formal xDevice
+evidence should come from a flashed image whose product behavior is fixed, plus
+XML/report pass counts collected after the dynamic parameter is absent.
+
 ## Step-by-step Commands
 
 Check environment:
@@ -244,7 +251,10 @@ MusePaper2 OH6.1 has proven xDevice transport and selected modules:
   tested five-case subsets pass, but the complete `4153-4158` six-case window
   fails again at `4158`. Treat it as a higher-order
   sequence/state/resource interaction across `ArrayCombinationTest4Js153-158`
-  before changing product runtime code or weakening the test.
+  before changing product runtime code or weakening the test. Iteration353
+  proved the fixed image passes the `4153-4158` window 6/6 without a dynamic
+  appfreeze filter, after a developer-mode scoped `com.acts.*` AppFreeze skip
+  was added to the product runtime.
 - ACTS pure JS/AppInstallKit-only expansion continued in iteration343:
   `ActsDateTest`, `ActsRegExpTest`, `ActsSymbol1Test`, `ActsSymbol2Test`,
   `ActsMapTest`, and `ActsProxyTest` passed. Do not rely on module names alone:
