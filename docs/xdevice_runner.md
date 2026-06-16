@@ -20,6 +20,8 @@ Treat xDevice as a fragile backend, not the normal human/Agent interface.
 Routine records should be produced through these stable intents:
 
 - module probe: `run_xdevice_probe.py --suite-name ... --module ...`;
+- long suite/module queue:
+  `run_module_queue.py --module-list-file ... --resume`;
 - OHJSUnit class/case: `run_xdevice_probe.py --ohjsunit-class ...` or
   `--ohjsunit-case ...`;
 - large OHJSUnit class windows:
@@ -33,6 +35,50 @@ commands and raw `--extra=-ta/--extra=-tc` hand-written filters should appear
 only as transport evidence or as a documented exception. This prevents common
 mistakes such as treating OHJSUnit `Class#Case` as xDevice `-tc`, using the
 invalid `-class` option, or mixing stale suite roots and report directories.
+
+## Long-Run Queue Mode
+
+For broad ACTS/HATS/SSTS/DCTS expansion, prefer a resumable module queue over a
+single monolithic full-suite invocation. The queue owns the device while it is
+running; other Agents may read its output files, but must not issue HDC, serial,
+screenshot, manual UI, flash, or other device operations until the queue is
+stopped.
+
+Start with a reviewed module list:
+
+```bash
+python3 tools/xts_xdevice_runner/run_module_queue.py \
+  --suite-dir /path/to/out/musepaper2/suites/acts/acts \
+  --suite-name acts \
+  --module-list-file /path/to/acts_modules.txt \
+  --stage-module-only \
+  --resume \
+  --out-dir /path/to/records/iterationNNN_xts_longrun \
+  --baseline /path/to/acceptance/acceptance_state.yaml
+```
+
+The queue writes `state.json` and `queue_summary.md` after every module. Each
+module still uses `run_xdevice_probe.py`, so the normal `prepare_env.json`,
+`runner/`, `reports/`, `parsed_xml.json`, `summary/test_summary.*`, and
+`regression_matrix.yaml` artifacts remain available per module. Use
+`--dry-run` to create the queue plan without touching the device, or
+`--probe-dry-run` to run each probe in its own dry-run mode.
+
+During a long run, periodically extract compact failure packets without touching
+the device:
+
+```bash
+python3 tools/xts_xdevice_runner/extract_failure_packets.py \
+  --run-root /path/to/records/iterationNNN_xts_longrun \
+  --out-dir /path/to/records/iterationNNN_xts_longrun/triage_packets
+```
+
+The packet index is `triage_packets/failure_packets.md`; individual packet JSON
+and Markdown files include module status, counts, first failed cases, and
+related report/log paths. Main-Agent source triage should consume these packet
+files instead of scraping live xDevice output. If a source fix or flash is
+needed, pause/stop the queue first, preserve `state.json`, then resume after the
+new image is flashed and smoke-tested.
 
 ## One-command Probe
 

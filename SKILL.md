@@ -96,6 +96,7 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/evidence_pack_builder.py --help
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/log_slice.py --help
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/xts_xdevice_runner/run_xdevice_probe.py --help
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/xts_xdevice_runner/run_module_queue.py --help
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/recovery_plan_builder.py --help
 ```
 
