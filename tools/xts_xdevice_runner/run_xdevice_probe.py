@@ -31,7 +31,6 @@ def oh_auto_shell_args(args: argparse.Namespace, command: str) -> list[str]:
         sys.executable,
         str(args.oh_autoctl),
         "shell",
-        command,
         "--wait",
         "--command-timeout-sec",
         str(args.appfreeze_filter_command_timeout_sec),
@@ -42,6 +41,7 @@ def oh_auto_shell_args(args: argparse.Namespace, command: str) -> list[str]:
         argv.extend(["--connect-target", args.appfreeze_filter_connect_target])
     if args.appfreeze_filter_connect_baudrate:
         argv.extend(["--connect-baudrate", str(args.appfreeze_filter_connect_baudrate)])
+    argv.append(command)
     return argv
 
 
