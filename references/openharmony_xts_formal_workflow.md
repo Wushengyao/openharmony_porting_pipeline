@@ -319,6 +319,13 @@ window failed repeatedly at `4158`. Record both passing subsets and failing
 windows before classifying an Ark/ETS builtin assertion as a product-runtime
 defect.
 
+Treat ACTS OHJSUnit/Hypium foreground tests as focus/lifecycle sensitive.
+During a formal or evidence-producing xDevice run, do not issue sidecar HDC,
+shell, hilog, screenshot, or manual UI operations unless the run is explicitly
+diagnostic and marked contaminated. System dialogs, including power popups, can
+steal focus or alter the test ability lifecycle; discard overlapping results
+and rerun after clearing the UI.
+
 Do not blindly batch tests that mutate boot metadata. On MusePaper2,
 `HatsStartupPartitionSlotTest` calls `SetActiveSlot` and `SetSlotUnbootable`
 for slots 0-3. Treat it as a safety-gated module that requires proven physical

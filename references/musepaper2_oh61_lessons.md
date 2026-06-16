@@ -374,6 +374,17 @@ targets, or no useful payload.
   cases passed. Classify this as suspected runner/app early termination or
   flake until rerun evidence stabilizes; only then spend source-debug effort on
   a fixed Ark/ETS semantics assertion.
+- Iteration355 narrowed `ActsObjectTest` further. `Object1Test052` passed as a
+  single filtered case, the `Object1Test049-052` window passed, and the whole
+  `Object1Test` class passed 92/92 through `-ta class:Object1Test`. This
+  weakens the earlier theory that the first full-module failure was a stable
+  Object1 semantic defect. Some `ActsObjectTest` describe names are not
+  directly runnable through `-ta class:` even though they are listed by the full
+  module: `Object33Test` dryRun collected zero tests and reported the module
+  unavailable. Treat zero-collection class filters as filter/runner limitations
+  until a clean full-module or source-level mapping proves a product failure.
+  If a manual power dialog or sidecar HDC probe overlapped the run, discard it
+  as contaminated evidence.
 - The first SSTS smoke reached OHYaraTest with `OpenHarmony-SA-2025-11` and
   produced `blocked=1`, not a runner failure. The block came from security patch
   `2026-02` being four months behind current month `2026-06`, exceeding the
