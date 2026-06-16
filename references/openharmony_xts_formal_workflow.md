@@ -151,14 +151,22 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
   suite through the transport runner, parses the runner summary, pulls small
   XML/HTML/INI/log text reports from the Windows report directory, parses local
   XML, and emits `summary/test_summary.yaml`.
-- For ACTS OHJSUnit/Hypium HAP-internal case triage, use xDevice testargs:
-  `--extra=-ta --extra='class:<Class#Case>'` after the
-  `run_xdevice_probe.py --` separator. Do not use
-  `--extra=-tc --extra='<Class#Case>'` for this purpose; in xDevice 5.0.6.100
-  `-tc/--testcase` selects a test source or JSON entry, so HAP-internal cases
-  become `unavailable` instead of running. If a driver genuinely needs
-  `-tc/--testcase`, remember xDevice treats it as mutually exclusive with
-  `-l/--testlist`.
+- For ACTS OHJSUnit/Hypium HAP-internal class/case triage, prefer the semantic
+  wrapper options `--ohjsunit-class <ClassName>` and
+  `--ohjsunit-case <ClassName#CaseName>`. They emit the validated xDevice
+  testargs form `-ta class:<...>` and avoid repeated hand-written CLI mistakes.
+  The raw fallback is `-- --extra=-ta --extra='class:<Class#Case>'`.
+  Do not use `--extra=-tc --extra='<Class#Case>'` for this purpose; in xDevice
+  5.0.6.100 `-tc/--testcase` selects a test source or JSON entry, so
+  HAP-internal cases become `unavailable` instead of running. If a driver
+  genuinely needs `-tc/--testcase`, remember xDevice treats it as mutually
+  exclusive with `-l/--testlist`.
+- For large OHJSUnit modules, use
+  `tools/xts_xdevice_runner/run_ohjsunit_class_batches.py` as a triage tool.
+  Class or exact-case pass evidence proves only that filtered scope. Do not
+  mark the whole module closed until a full-module run passes, or until every
+  residual failure is explicitly classified as a runner/framework limitation
+  with rerun evidence.
 - Use the Python interpreter reported by oh-auto capabilities/admin status, not
   the Windows Store `python` shim. Confirm `hdc` resolves to the workbench HDC:
 

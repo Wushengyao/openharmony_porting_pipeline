@@ -37,14 +37,33 @@ The output directory contains:
 - `summary/summary.md`
 - optional `regression_matrix.yaml`
 
-`run_xdevice_probe.py` accepts runner arguments after a literal `--`; the
-wrapper strips that separator before forwarding arguments to the transport
-runner.
+`run_xdevice_probe.py` accepts semantic OHJSUnit filters for common ACTS HAP
+work. Prefer these options over raw xDevice flags:
+
+```bash
+python3 tools/xts_xdevice_runner/run_xdevice_probe.py \
+  --suite-dir /path/to/out/musepaper2/suites/acts/acts \
+  --suite-name acts \
+  --module ActsObjectTest \
+  --stage-module-only \
+  --ohjsunit-class Object1Test \
+  --out-dir /path/to/records/acts_object_object1
+```
+
+Use `--ohjsunit-case ClassName#CaseName` for a single OHJSUnit/Hypium case, and
+repeat either option or pass comma-separated values for a small window. The
+wrapper emits the validated xDevice form `-ta class:<...>`, rejects the known
+wrong `-class` form, and refuses to mix OHJSUnit filters with raw
+`-tc/--testcase`.
+
+`run_xdevice_probe.py` still accepts raw runner arguments after a literal `--`;
+the wrapper strips that separator before forwarding arguments to the transport
+runner. Keep raw arguments for non-OHJSUnit drivers or unusual xDevice features
+only.
 
 When forwarding native xDevice flags that begin with `-`, use the equals form
 so the wrapper treats the value as data rather than as its own option. For
-OHJSUnit/Hypium cases inside an ACTS HAP, filter through xDevice testargs with
-`-ta class:<Class#Case>`:
+legacy/manual OHJSUnit/Hypium filters inside an ACTS HAP, the raw form is:
 
 ```bash
 python3 tools/xts_xdevice_runner/run_xdevice_probe.py \
@@ -56,9 +75,46 @@ python3 tools/xts_xdevice_runner/run_xdevice_probe.py \
   -- --extra=-ta --extra='class:ArrayCombinationTest4#ArrayCombinationTest4158'
 ```
 
-This can still use `--module` and `--stage-module-only` to keep the upload
-small. The resulting xDevice command keeps `-l <module>` and passes the class
-filter to the OHJSUnit driver, which then runs `aa test ... -s class ...`.
+Prefer the equivalent semantic form for routine work:
+
+```bash
+python3 tools/xts_xdevice_runner/run_xdevice_probe.py \
+  --suite-dir /path/to/out/musepaper2/suites/acts/acts \
+  --suite-name acts \
+  --module ActsArrayTest \
+  --stage-module-only \
+  --ohjsunit-case ArrayCombinationTest4#ArrayCombinationTest4158 \
+  --out-dir /path/to/records/acts_array_4158
+```
+
+Both forms can still use `--module` and `--stage-module-only` to keep the
+upload small. The resulting xDevice command keeps `-l <module>` and passes the
+class filter to the OHJSUnit driver, which then runs `aa test ... -s class ...`.
+
+Large OHJSUnit HAP modules can exit early when run as a full module or when too
+many classes are grouped together. Use the class batch runner to separate
+product failures from runner/app lifecycle effects:
+
+```bash
+python3 tools/xts_xdevice_runner/run_ohjsunit_class_batches.py \
+  --suite-dir /path/to/out/musepaper2/suites/acts/acts \
+  --suite-name acts \
+  --module ActsObjectTest \
+  --class-list-file /path/to/acts_object_classes.txt \
+  --batch-size 1 \
+  --out-dir /path/to/records/acts_object_class_batches
+```
+
+Use `--batch-size 1` when producing evidence for a suspicious class. Larger
+batches are useful for discovery only. Treat these outcomes conservatively:
+
+- a class or exact case pass proves that filtered scope, not the whole module;
+- a zero-time failed case followed by many blocked cases is often an early-exit
+  symptom and needs an exact case rerun before source changes;
+- `unavailable` from one filtered run can be transient, especially after many
+  installs or with exact `Class#Case` filters, so rerun neighboring cases before
+  classifying it as a test registration problem;
+- full-module pass is still required before marking the module formally closed.
 
 Do not use `-tc <Class#Case>` for OHJSUnit/Hypium HAP-internal case filters.
 In this xDevice version `-tc/--testcase` selects a test source or JSON entry,
@@ -175,6 +231,10 @@ The Windows transport runner uninstalls stale `xdevice*` packages, pins
 source-built suites contain both underscore and hyphen spellings of the same
 package, such as `xdevice_devicetest` and `xdevice-devicetest`; installing both
 causes pip `ResolutionImpossible`, so only one normalized package is selected.
+Before each run the transport runner clears the suite `reports/` directory on
+Windows. This prevents stale XML or `summary_report.xml` artifacts from a prior
+run being pulled into the current record when the same staged suite directory is
+reused.
 
 XML parsing treats `status=skip/skipped`, `status=ignored`, and unavailable
 cases as non-failures before looking at `result=false`; xDevice can emit

@@ -459,6 +459,13 @@ def main() -> int:
     if not args.no_install:
         admin_shell(args, build_install_command(args, suite_dir), "pip_install_xdevice", args.command_timeout_sec)
 
+    clear_reports_script = (
+        f"$reports = Join-Path {ps_quote(suite_dir)} 'reports'; "
+        "if (Test-Path $reports) { Remove-Item -Recurse -Force $reports }; "
+        "Write-Host ('cleared reports: ' + $reports)"
+    )
+    admin_shell(args, clear_reports_script, "clear_reports", 120)
+
     run_script = (
         f"$ErrorActionPreference='Continue'; Set-Location {ps_quote(suite_dir)}; "
         f"{build_run_command(args, suite_name, suite_dir)}"

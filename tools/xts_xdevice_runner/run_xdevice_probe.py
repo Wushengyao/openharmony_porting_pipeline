@@ -70,6 +70,32 @@ def clear_appfreeze_filter(args: argparse.Namespace) -> int:
     )
 
 
+def normalize_csv_values(values: list[str] | None) -> list[str]:
+    normalized: list[str] = []
+    for value in values or []:
+        for item in value.split(","):
+            item = item.strip()
+            if item:
+                normalized.append(item)
+    return normalized
+
+
+def build_semantic_runner_args(args: argparse.Namespace, runner_args: list[str]) -> list[str]:
+    if any(item in {"-class", "--class"} or item.startswith("--extra=-class") for item in runner_args):
+        raise SystemExit("Use --ohjsunit-class/--ohjsunit-case, or xDevice '-ta class:<...>'; '-class' is not a valid xDevice CLI filter here.")
+
+    ohjsunit_filters = normalize_csv_values(args.ohjsunit_class) + normalize_csv_values(args.ohjsunit_case)
+    if not ohjsunit_filters:
+        return runner_args
+
+    if any(item in {"-tc", "--testcase"} or item.startswith("--extra=-tc") or item.startswith("--extra=--testcase") for item in runner_args):
+        raise SystemExit("Do not combine OHJSUnit semantic filters with raw -tc/--testcase; use --ohjsunit-case instead.")
+    if any(item == "--extra=-ta" or item.startswith("--extra=-ta") for item in runner_args):
+        raise SystemExit("Do not combine --ohjsunit-class/--ohjsunit-case with raw --extra=-ta.")
+
+    return ["--extra=-ta", "--extra=class:" + ",".join(ohjsunit_filters), *runner_args]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--suite-dir", type=Path)
@@ -79,6 +105,16 @@ def main() -> int:
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--baseline")
     parser.add_argument("--stage-module-only", action="store_true")
+    parser.add_argument(
+        "--ohjsunit-class",
+        action="append",
+        help="OHJSUnit/Hypium class filter. May be repeated or comma-separated; emits xDevice '-ta class:<Class>'.",
+    )
+    parser.add_argument(
+        "--ohjsunit-case",
+        action="append",
+        help="OHJSUnit/Hypium case filter, usually ClassName#CaseName. May be repeated or comma-separated.",
+    )
     parser.add_argument(
         "--appfreeze-filter-bundle",
         help=(
@@ -97,6 +133,7 @@ def main() -> int:
     runner_args = args.runner_args
     if runner_args and runner_args[0] == "--":
         runner_args = runner_args[1:]
+    runner_args = build_semantic_runner_args(args, runner_args)
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     prepare = args.out_dir / "prepare_env.json"

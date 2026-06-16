@@ -385,6 +385,21 @@ targets, or no useful payload.
   until a clean full-module or source-level mapping proves a product failure.
   If a manual power dialog or sidecar HDC probe overlapped the run, discard it
   as contaminated evidence.
+- Iteration356 proved that OHJSUnit foreground state materially changes ACTS
+  evidence. After a reboot, `Object1Test` dryRun collected 92 tests but the
+  actual run missed the suite and blocked all cases while the screen was still
+  locked; after the known swipe unlock, `Object1Test` passed 92/92. A full
+  `ActsObjectTest` after unlock collected 5122 tests, passed 1301, then ended
+  early at `Object11Test` and marked 3820 downstream cases blocked. A following
+  `Object11Test` single-class rerun returned 0/unavailable, so treat this as a
+  runner/app lifecycle or foreground-state boundary until a fresh reboot,
+  unlock, and class-shard rerun reproduces a real failed assertion.
+- Do not hand-write OHJSUnit xDevice filters during evidence runs. `-class
+  Object11Test` is not a valid xDevice CLI filter here and caused a runner
+  parameter error; the correct xDevice form is `-ta class:Object11Test`. Use
+  `run_xdevice_probe.py --ohjsunit-class <Class>` or `--ohjsunit-case
+  <Class#Case>` so the tool emits the validated `-ta class:<...>` shape and
+  rejects common unsafe combinations such as raw `-tc` for HAP-internal cases.
 - The first SSTS smoke reached OHYaraTest with `OpenHarmony-SA-2025-11` and
   produced `blocked=1`, not a runner failure. The block came from security patch
   `2026-02` being four months behind current month `2026-06`, exceeding the
