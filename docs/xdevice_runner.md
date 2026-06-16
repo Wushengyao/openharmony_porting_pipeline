@@ -341,15 +341,13 @@ MusePaper2 OH6.1 has proven xDevice transport and selected modules:
   inspect each `testcases/<module>.json` before running; for example,
   `ActsJsonJSApiTest` is JS-related but includes `ShellKit` power-mode commands
   and was intentionally deferred from the low-risk batch.
-- ACTS `ActsObjectTest` is a real partial xDevice result, not a transport
-  failure. Iteration344 reported one failed case at `Object1Test036`, and
-  iteration345 reruns drifted to later cases after earlier cases passed.
-  Iteration355 then proved `Object1Test052`, the `Object1Test049-052` window,
-  and the whole `Object1Test` class all pass through `-ta class:` filters. The
-  remaining issue should be tracked as full-module early-end, runner/app
-  lifecycle, or filter-mapping debt before treating it as a fixed Ark/ETS
-  builtins semantic failure. If a power dialog, manual UI operation, or sidecar
-  HDC command overlaps an OHJSUnit run, mark that result contaminated and rerun.
+- ACTS `ActsObjectTest`: earlier partial failures were narrowed as lifecycle
+  and foreground-state sensitive rather than stable Object builtins semantics.
+  Iteration357 proved `Object11Test` 182/182 and the remaining 34 class shards
+  3640/3640 after a fresh reboot/unlock. Iteration358 then passed the clean
+  full module with 5122/5122, zero failed, zero blocked, and zero unavailable
+  cases. If a power dialog, manual UI operation, or sidecar HDC command overlaps
+  an OHJSUnit run, mark that result contaminated and rerun.
 - ACTS-Validator: dispatch reached xDevice, but generated validator resources
   were incomplete. A later probe showed `queryStandard` can be supplied by full
   suite staging and `--stdin-line Y` can remove the prompt EOF, but the module

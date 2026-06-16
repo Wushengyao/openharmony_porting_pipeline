@@ -394,6 +394,12 @@ targets, or no useful payload.
   `Object11Test` single-class rerun returned 0/unavailable, so treat this as a
   runner/app lifecycle or foreground-state boundary until a fresh reboot,
   unlock, and class-shard rerun reproduces a real failed assertion.
+- Iteration357 and iteration358 closed the same `ActsObjectTest` debt. After a
+  fresh reboot, smoke, and unlock, `Object11Test` passed 182/182, the 34
+  remaining classes passed as one-class shards with 3640/3640, and a later
+  clean full-module run passed 5122/5122 with zero failed, blocked, or
+  unavailable cases. Keep the foreground-state and contamination lessons, but
+  do not carry `ActsObjectTest` as an open product/runtime failure.
 - Do not hand-write OHJSUnit xDevice filters during evidence runs. `-class
   Object11Test` is not a valid xDevice CLI filter here and caused a runner
   parameter error; the correct xDevice form is `-ta class:Object11Test`. Use
