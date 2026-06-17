@@ -133,6 +133,27 @@ PATH="$PWD/prebuilts/python/linux-x86/3.11.4/bin:$PATH" \
 - Full ACTS can be large. MusePaper2 OH6.1 RISC-V produced about 9.5 GB under
   `out/musepaper2/suites/acts`; avoid whole-suite upload for first probes.
 
+## Closed-Loop Acceptance Boundary
+
+For a newly stabilized port, distinguish three evidence levels:
+
+- Tooling/transport closure: xDevice can install, run, collect, parse, and
+  summarize at least one low-risk module from each applicable suite root.
+- Engineering closure: failed modules are driven through
+  report -> failure packet -> source/tool/topology classification -> fix ->
+  build/package/flash/smoke -> non-filtered full-module rerun.
+- Acceptance closure: every applicable suite has a full-suite or reviewed
+  quasi-full report, with pass evidence or explicit exception records for
+  unavailable official resources, manual ACTS-Validator steps, DCTS topology,
+  SSTS security-patch policy, and safety-gated destructive tests.
+
+Once the target image is bootable, command-accessible, and recoverable without
+manual reset, prefer long-running module queues over only ad hoc probes. Use
+filtered class/case/window probes to minimize failures, but never promote them
+to suite pass evidence. After every XTS-related iteration, refresh the global
+suite progress snapshot and report deltas in module coverage, passed modules,
+and known report-derived testcase counts.
+
 ## MusePaper2 Windows Workbench Execution
 
 - The official workflow assumes a Windows workbench connected to the standard

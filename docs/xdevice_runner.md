@@ -103,6 +103,44 @@ avoid concurrent HDC shell, hilog, screenshot, or manual UI unless the run is
 explicitly marked diagnostic or contaminated; foreground focus and lifecycle
 changes can alter the result.
 
+## Closed-Loop Modes
+
+Do not confuse a porting-debug loop with final XTS acceptance.
+
+Use **triage mode** while boot, recovery, suite build, xDevice tooling, or a
+specific module failure is still unstable:
+
+- run small module probes and filtered OHJSUnit class/case/window probes;
+- classify whether the failure is product code, test topology, runner/tooling,
+  foreground/lifecycle contamination, or official-resource debt;
+- keep filtered probes as diagnostic evidence only;
+- return to a non-filtered full-module run before closing a module.
+
+Switch to **long-run discovery mode** once the image boots reliably, can recover
+to fastboot without manual intervention, source-built suite roots exist, and
+low-risk probes prove xDevice can stage/run/report. In this mode, run reviewed
+module queues for ACTS/HATS/SSTS/DCTS/ACTS-Validator, periodically extract
+failure packets, and update suite progress after each batch. The main Agent
+should read packets and maintain:
+
+- `xts_issue_pool.yaml`: observed failures and current classification;
+- `xts_fix_pool.yaml`: source/tooling/topology fixes prepared or in progress;
+- `xts_retest_queue.yaml`: full-module or suite reruns required after a new
+  image is built and flashed;
+- `suite_progress_latest.md/json`: whole-project coverage and deltas.
+
+Use **fix-and-retest mode** when a batch of related issues is ready. Pause the
+queue, preserve `state.json`, apply source or tool fixes, rebuild through the
+required OpenHarmony entry point, package/flash/smoke the new image, then rerun
+the targeted full modules. Resume the queue after the image is proven bootable.
+
+Use **acceptance mode** only near closure. It requires a formal full-suite or
+reviewed quasi-full report for each applicable suite, plus explicit records for
+resource gaps, unavailable official packages, DCTS multi-device requirements,
+manual ACTS-Validator steps, SSTS policy blocks, and safety-gated destructive
+modules. A filtered class/case pass, a single module pass, or a partial queue
+does not prove "all XTS pass".
+
 ## One-command Probe
 
 ```bash
