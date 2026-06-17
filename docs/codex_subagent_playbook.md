@@ -53,7 +53,7 @@ python3 tools/evidence_pack_builder.py \
   --out-dir evidence_packs/iterationNNN \
   --job-id iterationNNN \
   --iteration NNN \
-  --board musepaper2 \
+  --board <board-id> \
   --os-version OH6.1-Release \
   --arch riscv64 \
   --source-root /path/to/ohos \
@@ -130,7 +130,7 @@ When asked whether `OH_Agent_Subagent_TODO.md` is closed, run:
 
 ```bash
 python3 tools/todo_closure_audit.py \
-  --work-record /path/to/musepaper2_oh61_porting_work \
+  --work-record /path/to/project_work_record \
   --out /path/to/records/iterationNNN_todo_closure_audit/todo_closure_audit.yaml
 ```
 

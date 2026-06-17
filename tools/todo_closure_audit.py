@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -19,9 +20,6 @@ try:
     import yaml
 except Exception:  # pragma: no cover
     yaml = None
-
-
-DEFAULT_WORK_RECORD = Path("/data1/WSY/filetransfer/OHOS/PortingTest/musepaper2_oh61_porting_work")
 
 
 def dump_data(data: Any) -> str:
@@ -75,22 +73,36 @@ def status_from_required(root: Path, required: list[str], *, external_blockers: 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    default_work_record = os.getenv("OH_PORTING_WORK_RECORD")
+    default_baseline_id = os.getenv("OH_PORTING_BASELINE_ID", "oh6.1-rc0")
     parser.add_argument("--skill-root", type=Path, default=Path(__file__).resolve().parents[1])
-    parser.add_argument("--work-record", type=Path, default=DEFAULT_WORK_RECORD)
+    parser.add_argument(
+        "--work-record",
+        type=Path,
+        default=Path(default_work_record) if default_work_record else None,
+        required=default_work_record is None,
+        help="Project work-record root; may be provided by OH_PORTING_WORK_RECORD.",
+    )
+    parser.add_argument(
+        "--baseline-id",
+        default=default_baseline_id,
+        help="Baseline directory under work-record/baselines.",
+    )
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
 
     skill = args.skill_root.resolve()
     work = args.work_record.resolve()
+    baseline_root = f"baselines/{args.baseline_id}"
 
     checks: dict[str, dict[str, Any]] = {}
     checks["P0_rc0_baseline"] = status_from_required(
         work,
         [
-            "baselines/musepaper2-oh6.1-rc0/README.md",
-            "baselines/musepaper2-oh6.1-rc0/image_manifest.yaml",
-            "baselines/musepaper2-oh6.1-rc0/source_revisions.yaml",
-            "baselines/musepaper2-oh6.1-rc0/known_debts.yaml",
+            f"{baseline_root}/README.md",
+            f"{baseline_root}/image_manifest.yaml",
+            f"{baseline_root}/source_revisions.yaml",
+            f"{baseline_root}/known_debts.yaml",
             "acceptance/acceptance_state.yaml",
             "acceptance/rc_gate_report.md",
             "docs/baseline_rc0.md",
@@ -156,7 +168,7 @@ def main() -> int:
             "tools/recovery_plan_builder.py",
         ],
         external_blockers=[
-            "No physical rig-controller backend is proven for MusePaper2 in the current evidence.",
+            "No physical rig-controller backend is proven for the target device in the current evidence.",
             "Full unattended recovery from kernel panic/boot slot mutation still requires lab fixture validation.",
         ],
     )
@@ -228,6 +240,7 @@ def main() -> int:
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "skill_root": str(skill),
         "work_record": str(work),
+        "baseline_id": args.baseline_id,
         "summary_status": summary_status,
         "xdevice_summary_files_seen": xdevice_evidence_count,
         "interpretation": (

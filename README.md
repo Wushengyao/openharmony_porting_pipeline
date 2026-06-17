@@ -146,31 +146,33 @@ API key authentication. Start with:
 
 ```bash
 python3 tools/oh_autoctl.py capabilities
-python3 tools/oh_autoctl.py preflight --template-id musepaper2-titan
+python3 tools/oh_autoctl.py profile <profile-id>
+python3 tools/oh_autoctl.py preflight --template-id <template-id>
 python3 tools/oh_autoctl.py shell echo oh_auto_agent_probe --wait
 python3 tools/oh_autoctl.py serial "echo oh_auto_serial_probe" --wait
 ```
 
-For MusePaper2 Titan flashing, `preflight ok=true` means the flash job can be
-submitted. It does not directly prove Titan burn mode; confirm that from flash
-events such as `titan_fastboot_found`.
+For flash-template based flashing, `preflight ok=true` means the flash job can
+be submitted. It does not necessarily prove that the board is already in the
+expected burn mode; confirm that from flash events or the template's explicit
+wait operation.
 
-For MusePaper2 Titan flashing, upload the image and run the configured template:
+Upload the image and run the configured template:
 
 ```bash
-ARTIFACT_ID=$(python3 tools/oh_autoctl.py upload /path/to/openharmony-spacemit-k1-musepaper2.zip --id-only)
-python3 tools/oh_autoctl.py flash musepaper2-titan --image "$ARTIFACT_ID"
+ARTIFACT_ID=$(python3 tools/oh_autoctl.py upload /path/to/image.zip --id-only)
+python3 tools/oh_autoctl.py flash <template-id> --image "$ARTIFACT_ID"
 python3 tools/oh_autoctl.py wait "$JOB_ID" --events --timeout-sec 1800
-python3 tools/oh_autoctl.py wait-connected --connect-channel usb --connect-target 0123456789ABCDEF --timeout-sec 240
-python3 tools/oh_autoctl.py smoke --wait-connected --connect-channel usb --connect-target 0123456789ABCDEF
+python3 tools/oh_autoctl.py wait-connected --connect-channel <channel> --connect-target <target> --timeout-sec 240
+python3 tools/oh_autoctl.py smoke --wait-connected --connect-channel <channel> --connect-target <target>
 ```
 
 When HDC reports multiple targets, select the USB connect key before shell or
 smoke checks:
 
 ```bash
-python3 tools/oh_autoctl.py connect --connect-channel usb --connect-target 0123456789ABCDEF
-python3 tools/oh_autoctl.py smoke --wait-connected --connect-channel usb --connect-target 0123456789ABCDEF --set-boot-escape-ack
+python3 tools/oh_autoctl.py connect --connect-channel usb --connect-target <target>
+python3 tools/oh_autoctl.py smoke --wait-connected --connect-channel usb --connect-target <target> --set-boot-escape-ack
 ```
 
 Inspect command stdout for `[Fail]`, `ExecuteCommand need connect-key`,
@@ -179,6 +181,10 @@ is not enough.
 Treat template `wait_hdc` events with `[Empty]` as not connected; rerun
 `wait-connected` and strict smoke after flashing.
 
+Keep concrete device values in oh-auto profiles and device-specific references.
+MusePaper2 OH6.1 details live in `docs/musepaper2_local_device_automation.md`
+and `references/musepaper2_oh61_lessons.md`.
+
 When oh-auto reports `admin.enabled=true`, the 184-side Agent may maintain the
 Windows service through `tools/oh_autoctl.py admin-*` commands. Use
 `admin-shell` for trusted PowerShell work in the service repo, edit primarily
@@ -186,28 +192,13 @@ under `src/oh_auto/`, `scripts/oh_autoctl.py`, `config/flash-templates/`, and
 `config/oh-auto.yaml`, then run `admin-run-check py_compile` or `pytest` and
 `admin-restart` before returning to device operations.
 
-For the MusePaper2 OH6.1 porting loop, stage freshly built Windows-side test
-packages under `F:\images\PortingTest\6.1\`. The known-good OH6.0 control image
-is `F:\images\PortingTest\6.0\openharmony-spacemit-k1-musepaper2.zip`. Direct
-Windows-path flashing requires `/capabilities` to list `F:\images` or the exact
-staging directory inside `allowed_local_roots`; otherwise upload the Linux-side
-zip with `oh_autoctl.py upload` and flash the returned artifact id. Prefer a
-direct `F:\images` path when the zip is already on Windows to avoid duplicate
-artifact copies. Current oh-auto runtime data lives under `F:\oh-auto-data`, and
-successful `musepaper2-titan` jobs clean extracted image directories through the
-template `cleanup_path` step. With oh-auto service `0.2.0+`, use
-`oh_autoctl.py promote-artifact ARTIFACT_ID --dest "F:\images\PortingTest\6.1\openharmony-spacemit-k1-musepaper2.zip"`
-to atomically stage an uploaded Linux artifact at the canonical Windows path,
-and use `oh_autoctl.py download-artifact ARTIFACT_ID --out /linux/path` to copy
-pulled screenshots, bugreports, and logs back to the Linux record directory.
-
-MusePaper2 can enter Titan flashing mode with `reboot fastboot` from HDC or the
-serial console:
+For unattended loops, confirm that the target can reach its flashing/recovery
+mode through HDC, serial, or a configured rig controller before long runs:
 
 ```bash
-python3 tools/oh_autoctl.py shell "reboot fastboot" --wait
-python3 tools/oh_autoctl.py serial "reboot fastboot" --wait
-python3 tools/oh_autoctl.py wait-titan-fastboot --template-id musepaper2-titan --timeout-sec 30
+python3 tools/oh_autoctl.py shell "<recovery-command>" --wait
+python3 tools/oh_autoctl.py serial "<recovery-command>" --wait
+python3 tools/oh_autoctl.py wait-titan-fastboot --template-id <template-id> --timeout-sec 30
 ```
 
 Run the plan-only OpenHarmony porting execution assistant after a single

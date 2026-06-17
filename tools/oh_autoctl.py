@@ -1115,6 +1115,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.getenv("OH_AUTO_DEVICE_ID", "default"),
         help="Logical device id",
     )
+    default_profile_id = os.getenv("OH_AUTO_PROFILE_ID")
+    default_template_id = os.getenv("OH_AUTO_FLASH_TEMPLATE_ID")
+    default_wifi_diag_path = os.getenv("OH_AUTO_WIFI_DIAG_PATH")
 
     subparsers = parser.add_subparsers(dest="command_name", required=True)
     add_simple_command(subparsers, "health", command_health)
@@ -1122,7 +1125,10 @@ def build_parser() -> argparse.ArgumentParser:
     add_simple_command(subparsers, "capabilities", command_capabilities)
     add_simple_command(subparsers, "profiles", command_profiles)
     profile = add_simple_command(subparsers, "profile", command_profile)
-    profile.add_argument("profile_id", nargs="?", default="musepaper2")
+    if default_profile_id:
+        profile.add_argument("profile_id", nargs="?", default=default_profile_id)
+    else:
+        profile.add_argument("profile_id")
     add_simple_command(subparsers, "status", command_status)
 
     add_simple_command(subparsers, "admin-status", command_admin_status)
@@ -1168,7 +1174,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     preflight = add_simple_command(subparsers, "preflight", command_preflight)
-    preflight.add_argument("--template-id", default="musepaper2-titan")
+    preflight.add_argument(
+        "--template-id",
+        default=default_template_id,
+        required=default_template_id is None,
+        help="Flash template id; may be provided by OH_AUTO_FLASH_TEMPLATE_ID.",
+    )
 
     diagnose_jobs = add_simple_command(subparsers, "diagnose-jobs", command_diagnose_jobs)
     diagnose_jobs.add_argument(
@@ -1233,11 +1244,11 @@ def build_parser() -> argparse.ArgumentParser:
     wifi_smoke.add_argument("--psk", required=True)
     wifi_smoke.add_argument(
         "--diag-path",
-        default="/system/bin/muse_wifi_diag",
+        default=default_wifi_diag_path,
+        required=default_wifi_diag_path is None,
         help=(
-            "Device-side diagnostic helper path. Defaults to the MusePaper2 "
-            "OH6.1 system-installed helper; use /data/local/tmp/muse_wifi_diag "
-            "for older images where the helper was pushed manually."
+            "Device-side WiFi diagnostic helper path. Pass the board-specific "
+            "path or set OH_AUTO_WIFI_DIAG_PATH."
         ),
     )
     wifi_smoke.add_argument("--connect-timeout-sec", type=int, default=45)
@@ -1295,7 +1306,12 @@ def build_parser() -> argparse.ArgumentParser:
     wait_titan = add_simple_command(
         subparsers, "wait-titan-fastboot", command_wait_titan_fastboot
     )
-    wait_titan.add_argument("--template-id", default="musepaper2-titan")
+    wait_titan.add_argument(
+        "--template-id",
+        default=default_template_id,
+        required=default_template_id is None,
+        help="Flash template id; may be provided by OH_AUTO_FLASH_TEMPLATE_ID.",
+    )
     wait_titan.add_argument("--timeout-sec", type=float, default=30)
     wait_titan.add_argument("--interval-sec", type=float, default=None)
     wait_titan.add_argument("--list-timeout-sec", type=float, default=None)
@@ -1340,7 +1356,7 @@ def build_parser() -> argparse.ArgumentParser:
     smoke.add_argument(
         "--set-boot-escape-ack",
         action="store_true",
-        help="Set the musepaper2 boot escape acknowledgement as soon as smoke starts.",
+        help="Set the configured boot escape acknowledgement as soon as smoke starts.",
     )
     smoke.add_argument(
         "--boot-escape-ack-param",
@@ -1395,6 +1411,7 @@ def add_job_command(subparsers, name: str, handler):
 
 
 def add_connect_arguments(command, required_channel: bool = False) -> None:
+    default_target = os.getenv("OH_AUTO_CONNECT_TARGET") or os.getenv("OH_AUTO_HDC_TARGET")
     command.add_argument(
         "--connect-channel",
         choices=["usb", "tcp", "uart"],
@@ -1403,7 +1420,8 @@ def add_connect_arguments(command, required_channel: bool = False) -> None:
     )
     command.add_argument(
         "--connect-target",
-        help="Select a concrete HDC connect key, for example 0123456789ABCDEF.",
+        default=default_target,
+        help="Select a concrete HDC connect key; may be provided by OH_AUTO_CONNECT_TARGET or OH_AUTO_HDC_TARGET.",
     )
     command.add_argument(
         "--connect-baudrate",

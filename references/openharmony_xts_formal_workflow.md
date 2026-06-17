@@ -53,7 +53,7 @@ cd test/xts/hats
 
 ```bash
 PATH="$PWD/prebuilts/python/linux-x86/3.11.4/bin:$PATH" \
-  ./test/xts/acts/build.sh product_name=musepaper2 system_size=standard \
+  ./test/xts/acts/build.sh product_name=<product> system_size=standard \
   target_arch=riscv64 xts_suitetype=bin,hap_dynamic
 ```
 
@@ -63,11 +63,11 @@ Python 3.8 and fail before it updates `PATH` internally:
 
 ```bash
 PATH="$PWD/prebuilts/python/linux-x86/3.11.4/bin:$PATH" \
-  ./test/xts/dcts/build.sh product_name=musepaper2 system_size=standard \
+  ./test/xts/dcts/build.sh product_name=<product> system_size=standard \
   target_arch=riscv64 xts_suitetype=bin,hap_dynamic
 ```
 
-- For MusePaper2 OH6.1 RISC-V ACTS, if GN fails at
+- For OH6.1 RISC-V ACTS, if GN fails at
   `test/xts/acts/commonlibrary/toolchain/BUILD.gn` with `rebase_path("")`,
   compare the already-ported OH6.0 RISC-V tree. The expected fix is to add a
   `target_cpu == "riscv64"` branch to `tar_dllib`, mirroring arm64/x86_64 and
@@ -82,22 +82,22 @@ PATH="$PWD/prebuilts/python/linux-x86/3.11.4/bin:$PATH" \
   `usr/lib`.
 - If a source-built ACTS HAP lacks `libs/riscv64`, first add `riscv64` to the
   HAP `abiFilters`, then make the SDK/Hvigor chain accept and link
-  `riscv64-linux-ohos`. The minimum shape observed on MusePaper2 included
+  `riscv64-linux-ohos`. The minimum shape observed on one OH6.1 RISC-V port
+  included
   Hvigor ABI enum/schema entries, a CMake toolchain branch, RISC-V musl sysroot
   startup files and headers, compiler-rt crt/builtins, `libunwind.a`, and NDK
   libc++ libraries.
 - Treat `build-profile.json5` ABI changes as weakly tracked by the XTS GN/Ninja
-  app graph. On MusePaper2, after adding `riscv64` to ArkCompiler ACTS HAPs,
-  the XTS wrapper initially re-signed stale unsigned HAPs without re-running
-  Hvigor `compile_app.py`. Clean the affected module `*/build` outputs and both
-  `module_Acts*` and companion `Acts*LibTest` obj/stamp/unsigned-list outputs
-  before rebuilding through `test/xts/acts/build.sh`. If only the module target
-  is cleaned, LibTest signing can fail with `ERROR: 11017001 Read zip file
-  failed` because its unsigned list points at deleted or stale HAP/HSP files.
+  app graph. If the XTS wrapper re-signs stale unsigned HAPs without re-running
+  Hvigor `compile_app.py`, clean the affected module `*/build` outputs and both
+  the module and companion LibTest obj/stamp/unsigned-list outputs before
+  rebuilding through `test/xts/acts/build.sh`. If only the module target is
+  cleaned, LibTest signing can fail because its unsigned list points at deleted
+  or stale HAP/HSP files.
 - If the cleaned Hvigor RISC-V HAP build then fails with
   `libunwind.a(libunwind.cpp.o): unable to find library from dependent library
-  specifier: dl`, inspect the SDK sysroot before changing test code. On
-  MusePaper2, `libunwind.a` carried `.deplibs = dl` while
+  specifier: dl`, inspect the SDK sysroot before changing test code. In one
+  OH6.1 RISC-V port, `libunwind.a` carried `.deplibs = dl` while
   `prebuilts/ohos-sdk/linux/<api>/native/sysroot/usr/lib/riscv64-linux-ohos/`
   had `libm.a` but lacked `libdl.a` and `libpthread.a`. Copying the same-release
   musl empty archives from
@@ -106,11 +106,11 @@ PATH="$PWD/prebuilts/python/linux-x86/3.11.4/bin:$PATH" \
   `ActsPreferencesNdkTest` from 0/67 to 67/67 through xDevice. Record this as an
   SDK/sysroot completeness fix, not a product feature reduction.
   The skill helper can perform this reproducibly:
-  `python3 tools/sync_riscv_sdk_sysroot_libs.py --workspace /path/to/ohos --product musepaper2 --api 23 --apply`.
-- For RISC-V libc++, verify the ABI namespace with `llvm-nm -C`. In the
-  MusePaper2 OH6.1 workspace, the LLVM `libc++.so` exported `std::__h`, while
-  the HAP object and device `libc++_shared.so` used `std::__n1`; using the
-  NDK `libc++_shared.so/libc++_static.a` for SDK RISC-V resolved
+  `python3 tools/sync_riscv_sdk_sysroot_libs.py --workspace /path/to/ohos --product <product> --api <api> --apply`.
+- For RISC-V libc++, verify the ABI namespace with `llvm-nm -C`. If one libc++
+  exports a different namespace than the HAP object and device
+  `libc++_shared.so`, use the same NDK libc++ family for the SDK RISC-V libs.
+  This has resolved
   `std::__n1::basic_string` link failures.
 - If `third_party/vk-gl-cts` fails for RISC-V with missing or wrong dEQP target
   defines, add the riscv64 target branch in `vk_gl_cts.gni`: `DE_PTR_SIZE=8`
@@ -123,15 +123,15 @@ PATH="$PWD/prebuilts/python/linux-x86/3.11.4/bin:$PATH" \
 - Generated suite roots are typically under `out/<product>/suites/<suite>` and
   contain `run.bat`, `run.sh`, `config/user_config.xml`, `testcases/`, and
   `tools/xdevice*.tar.gz`.
-- Some XTS build wrappers create a nested suite layout. For MusePaper2 OH6.1
-  RISC-V ACTS, the outer directory is `out/musepaper2/suites/acts`, while the
-  actual xDevice roots are `out/musepaper2/suites/acts/acts` and
-  `out/musepaper2/suites/acts/acts-validator`.
-- MusePaper2 OH6.1 RISC-V DCTS generated a direct xDevice root at
-  `out/musepaper2/suites/dcts`. It contains the standard
+- Some XTS build wrappers create a nested suite layout. For ACTS, the outer
+  directory may be `out/<product>/suites/acts`, while the actual xDevice roots
+  are `out/<product>/suites/acts/acts` and
+  `out/<product>/suites/acts/acts-validator`.
+- DCTS may generate a direct xDevice root at `out/<product>/suites/dcts` with
+  the standard
   `run.bat/run.sh/config/testcases/tools` layout.
-- Full ACTS can be large. MusePaper2 OH6.1 RISC-V produced about 9.5 GB under
-  `out/musepaper2/suites/acts`; avoid whole-suite upload for first probes.
+- Full ACTS can be large; avoid whole-suite upload for first probes unless the
+  device and Windows workbench storage path have been preflighted.
 
 ## Closed-Loop Acceptance Boundary
 
@@ -154,11 +154,11 @@ to suite pass evidence. After every XTS-related iteration, refresh the global
 suite progress snapshot and report deltas in module coverage, passed modules,
 and known report-derived testcase counts.
 
-## MusePaper2 Windows Workbench Execution
+## Windows Workbench Execution
 
 - The official workflow assumes a Windows workbench connected to the standard
-  system device by USB. For the MusePaper2 rig, Windows oh-auto sees HDC target
-  `0123456789ABCDEF`; Linux-local `hdc` may not see the target.
+  system device by USB. For remote build servers, the target may be visible only
+  through Windows oh-auto; Linux-local `hdc` may not see it.
 - Keep one xDevice tool bundle active per run. Different suites may ship
   different `xdevice-0.0.0` contents under the same package name, so stale
   installs can mix a new plugin with an old base package.
@@ -171,10 +171,10 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
 ```
 
 - If oh-auto has admin support, stage the suite zip to a Windows allowed root
-  such as `F:\images\PortingTest\6.1`, expand it, and run xDevice from the
-  Windows side. Prefer `tools/oh_xts_xdevice_runner.py` for repeatable staging,
-  xDevice install, execution, report listing, and summary parsing; use raw
-  `admin-shell` only for trusted lab maintenance.
+  from the active profile or `/capabilities`, expand it, and run xDevice from
+  the Windows side. Prefer `tools/oh_xts_xdevice_runner.py` for repeatable
+  staging, xDevice install, execution, report listing, and summary parsing; use
+  raw `admin-shell` only for trusted lab maintenance.
 - For closed-loop evidence, prefer the modular
   `tools/xts_xdevice_runner/run_xdevice_probe.py` wrapper. It stages/runs the
   suite through the transport runner, parses the runner summary, pulls small
@@ -201,12 +201,8 @@ python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py 
 
 ```powershell
 Get-Command hdc
-& 'D:\ohos_toolchains\hdc.exe' list targets
+& '<hdc.exe>' list targets
 ```
-
-The MusePaper2 workbench was validated with oh-auto `0.3.0`, Windows Python
-`C:\Users\sheng\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe`,
-HDC `D:\ohos_toolchains\hdc.exe`, and target `0123456789ABCDEF`.
 
 ## Minimal Formal Probe
 
@@ -214,7 +210,7 @@ Start with one harmless module before a broad suite:
 
 ```bash
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_xts_xdevice_runner.py \
-  --suite-dir /path/to/ohos/out/musepaper2/suites/hats \
+  --suite-dir /path/to/ohos/out/<product>/suites/hats \
   --out /path/to/work/records/iterationNNN/runner_hats_getcwd \
   --run-id iterationNNN_hats_getcwd \
   --module HatsGetcwdTest \
@@ -237,7 +233,7 @@ referenced by the selected module JSON:
 
 ```bash
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_xts_xdevice_runner.py \
-  --suite-dir /path/to/ohos/out/musepaper2/suites/acts/acts \
+  --suite-dir /path/to/ohos/out/<product>/suites/acts/acts \
   --out /path/to/work/records/iterationNNN/runner_acts_deviceinfo \
   --run-id iterationNNN_acts_deviceinfo \
   --module ActsStartupSysDeviceInfoTest \
@@ -259,11 +255,11 @@ bundle by overriding `tools/`:
 ```bash
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_xts_xdevice_runner.py \
   --suite-dir /path/to/unpacked/ssts \
-  --tools-dir /path/to/ohos/out/musepaper2/suites/acts/acts/tools \
+  --tools-dir /path/to/ohos/out/<product>/suites/acts/acts/tools \
   --out /path/to/work/records/iterationNNN/runner_ssts_probe \
   --run-id iterationNNN_ssts_probe \
   --module OpenHarmony-SA-2025-11 \
-  --resource-dir 'F:\images\PortingTest\6.1\xts_runs\iterationNNN_ssts_probe\ssts\resource'
+  --resource-dir '<windows-xts-run-root>\iterationNNN_ssts_probe\ssts\resource'
 ```
 
 The runner uninstalls stale `xdevice*` packages before each install, pins
@@ -275,17 +271,17 @@ suite ships both `xdevice_devicetest` and `xdevice-devicetest`.
 Manual equivalent:
 
 ```powershell
-Set-Location 'F:\images\PortingTest\6.1\hats_suite_probe\hats'
-& 'C:\Users\sheng\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' `
+Set-Location '<windows-suite-root>'
+& '<python.exe>' `
   -m pip uninstall -y xdevice xdevice-extension xdevice-ohos xdevice-devicetest
-& 'C:\Users\sheng\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' `
+& '<python.exe>' `
   -m pip install --user --force-reinstall 'setuptools<81'
-& 'C:\Users\sheng\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' `
+& '<python.exe>' `
   -m pip install --user .\tools\xdevice-0.0.0.tar.gz `
   .\tools\xdevice_devicetest-0.0.0.tar.gz `
   .\tools\xdevice_ohos-0.0.0.tar.gz
-& 'C:\Users\sheng\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' `
-  -m xdevice run -l HatsGetcwdTest -sn 0123456789ABCDEF `
+& '<python.exe>' `
+  -m xdevice run -l HatsGetcwdTest -sn <target-sn> `
   -c .\config\user_config.xml -tcpath .\testcases -rp .\reports_probe_getcwd
 ```
 
@@ -323,45 +319,19 @@ For each formal XTS/xDevice run, keep:
 - device version and architecture evidence such as `uname -m` and
   `param get const.product.software.version`.
 
-The MusePaper2 first formal probe on 2026-06-15 used OH
-`OpenHarmony 6.1.0.31`, architecture `riscv64`, and passed
-`HatsGetcwdTest` with `tests=1`, `passed=1`, `failed=0`.
-
-The first source-built ACTS probe on 2026-06-15 used the nested ACTS suite root
-`out/musepaper2/suites/acts/acts` and module-only staging. It passed
-`ActsStartupSysDeviceInfoTest` with `modules=1`, `total=85`, `passed=85`, and
-`failed=0`; an earlier `ActsHilogNdkTest` run completed the xDevice flow but
-reported 53 passed and 11 failed, so it should be treated as follow-up feature
-evidence rather than a runner failure.
-
-After the RISC-V native HAP SDK fixes on 2026-06-16, `ActsHilogNdkTest`
-rebuilt through `build.sh`, `ActsHilogNdkOtherTest.hap` contained
-`libs/riscv64/libhilogndk.so`, and the xDevice module-only retry reported
-`modules=1`, `total=64`, `passed=64`, `failed=0`.
-
-After the ArkCompiler ACTS RISC-V HAP ABI fixes on 2026-06-16,
-`ActsEsmoduleEntryTest`, `ActsEsmoduleOhostestLibTest`,
-`ActsEsmoduleOhostestTest`, `ActsArkTsDynamicLoadTest`,
-`ActsArkTsLazyLoadTest`, and `ActsArkTsStaticLoadTest` rebuilt with the needed
-`libs/riscv64` payloads and passed a module-only xDevice retry with
-`modules=6`, `total=132`, `passed=132`, and `failed=0`.
-
 When parsing xDevice XML, classify disabled and blocked cases before looking at
 `result=false`. ACTS reports can emit `status="disable" result="false"` with a
 `mark blocked` message for cases that were skipped after the first real
-failure. These cases are blocked debt, not individual testcase failures.
-Iteration342 showed this on `ActsArrayTest`: both the first run and rerun had
-one real failed case, `ArrayCombinationTest4158`, plus 3357 blocked cases.
-Also classify `status="skip"` or `status="ignored"` before `result=false`.
-HATS can emit `status="skip" result="false"` for an intentional gtest skip;
-this is non-failure coverage, not a failed testcase.
+failure. These cases are blocked debt, not individual testcase failures. Also
+classify `status="skip"` or `status="ignored"` before `result=false`; HATS can
+emit `status="skip" result="false"` for an intentional gtest skip.
 
 When narrowing ACTS OHJSUnit/Hypium failures, do not stop after a single-case
-probe. On MusePaper2, `ArrayCombinationTest4158` passed alone and paired with
-`4153`, and all tested five-case subsets passed, but the full `4153-4158`
-window failed repeatedly at `4158`. Record both passing subsets and failing
-windows before classifying an Ark/ETS builtin assertion as a product-runtime
-defect.
+probe. Record both passing subsets and failing windows before classifying an
+Ark/ETS builtin assertion as a product-runtime defect. A case that passes alone
+but fails in a sequence may indicate AppFreeze, foreground state, lifecycle
+cleanup, resource pressure, or runner behavior rather than pure language
+semantics.
 
 Treat ACTS OHJSUnit/Hypium foreground tests as focus/lifecycle sensitive.
 During a formal or evidence-producing xDevice run, do not issue sidecar HDC,
@@ -370,49 +340,31 @@ diagnostic and marked contaminated. System dialogs, including power popups, can
 steal focus or alter the test ability lifecycle; discard overlapping results
 and rerun after clearing the UI.
 
-Do not blindly batch tests that mutate boot metadata. On MusePaper2,
-`HatsStartupPartitionSlotTest` calls `SetActiveSlot` and `SetSlotUnbootable`
-for slots 0-3. Treat it as a safety-gated module that requires proven physical
-recovery, a dedicated fixture, or a clearly labeled read-only/filter probe
-before unattended execution.
+Do not blindly batch tests that mutate boot metadata, suspend state, USB role,
+network topology, filesystem mounts, or distributed topology. Treat such
+modules as safety-gated until automatic recovery, a dedicated fixture, or a
+clearly labeled read-only/filter probe is available.
 
 For CppTest modules whose generated `Test.json` timeout is too short, use the
 runner's staged-only timeout patch instead of editing OpenHarmony source:
 
 ```bash
 python3 tools/xts_xdevice_runner/run_xdevice_probe.py \
-  --suite-dir out/musepaper2/suites/hats \
+  --suite-dir out/<product>/suites/hats \
   --suite-name hats \
-  --module HatsHdfAudioIdlCaptureAdditionalTest \
+  --module <module> \
   --stage-module-only \
   --out-dir /path/to/out \
   -- --native-test-timeout-ms 600000
 ```
 
-Iteration347 needed this for `HatsHdfAudioIdlCaptureAdditionalTest`; the
-default 120000 ms run timed out with `ShellCommandUnresponsiveException`, while
-the staged 600000 ms run completed 123/123.
+Record DCTS launch evidence separately from DCTS pass/fail until a required
+distributed or multi-device topology is prepared. Record ACTS-Validator
+interactive prompts, generated-resource gaps, and manual steps separately from
+product regressions. For SSTS, record package version, resource hashes, tool
+bundle version, security patch label, and policy blocks separately from runner
+failures.
 
-The first source-built DCTS probe on 2026-06-15 generated
-`out/musepaper2/suites/dcts` successfully for MusePaper2 RISC-V64 in about
-5.5 minutes. The first execution smoke used `DctsFileioClientTest`; xDevice
-ran the module and reported `total=121`, `failed=121`. Record this as DCTS
-launch evidence only until a distributed multi-device execution fixture is
-available.
-
-The first ACTS-Validator smoke on 2026-06-15 staged
-`out/musepaper2/suites/acts/acts-validator` and ran module `validator`.
-xDevice produced a report with `modules=1`, `run_modules=0`,
-`unavailable=1`; logs showed missing `testcases/queryStandard` and an
-`EOF when reading a line` driver error. Treat this as an incomplete generated
-validator package/resource issue, not an HDC or runner failure.
-
-The first SSTS smoke on 2026-06-15 used the user-provided SSTS zip
-`68a8d025-8787-4222-ba58-447c1ef7a957.zip`, SHA256
-`58692752699ed40fc3dd0b3e7b20b4e551b5f79362546d50bd14192852be74c4`.
-The package's own xDevice tool pair installed `VERSION 2.30.0.1104` and failed
-under Windows Python 3.12 with missing `pkg_resources`, then a `CaseEnd`
-import mismatch. Re-running the same SSTS content with the source-built ACTS
-xDevice 5.0.6.100 tool bundle reached OHYaraTest and produced `modules=1`,
-`run_modules=1`, `total=1`, `blocked=1`; the block reason was security patch
-`2026-02` versus current month `2026-06`.
+Keep device-specific evidence boundaries, pass lists, image paths, target ids,
+and historical module outcomes in a device reference, not in this common formal
+workflow. For MusePaper2 OH6.1, use `references/musepaper2_oh61_lessons.md`.

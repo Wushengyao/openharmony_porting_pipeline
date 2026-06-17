@@ -68,7 +68,8 @@ For the detailed operating rulebook, read
 | Apply reviewed base patches or dependency inventories | `references/porting_operating_rules.md`, `references/pipeline_command_reference.md` | `tools/apply_porting_base_patch.py` |
 | Triage RISC-V build failures | `references/porting_operating_rules.md`; search `README.md` and `tools/apply_porting_base_patch.py` for exact error text | `rg`, `build.sh`, `apply_porting_base_patch.py` |
 | Run local flash/HDC/serial/smoke loops | `docs/local_device_automation.md`, `docs/rig_controller.md` when physical recovery is needed | `tools/oh_autoctl.py`, `tools/device_job_ledger.py`, `tools/recovery_plan_builder.py`, `tools/rig_controller.py` |
-| Continue MusePaper2 OH6.1 work | `references/musepaper2_oh61_lessons.md`, `docs/oh6_riscv_version_upgrade_rc0.md`, then query `oh_autoctl.py profile musepaper2` | build/package scripts, `oh_autoctl.py`, records under the project work dir |
+| Continue MusePaper2 OH6.1 work | `references/musepaper2_oh61_lessons.md`, `docs/musepaper2_local_device_automation.md`, `docs/oh6_riscv_version_upgrade_rc0.md`, then query `oh_autoctl.py profile musepaper2` | build/package scripts, `oh_autoctl.py`, records under the project work dir |
+| Repair XTS failures on a new device | `references/openharmony_xts_formal_workflow.md`, `docs/xdevice_runner.md`, `docs/local_device_automation.md`, then query or create the device oh-auto profile | `run_module_queue.py`, `run_xdevice_probe.py`, suite progress tools, `oh_autoctl.py` |
 | Run formal XTS/HATS/ACTS/DCTS/SSTS | `references/openharmony_xts_formal_workflow.md`, `docs/xdevice_runner.md` | `tools/xts_xdevice_runner/run_xdevice_probe.py`, `tools/oh_xts_xdevice_runner.py`, `tools/oh_hats_native_runner.py` |
 | Aggregate cross-scenario knowledge | `references/pipeline_command_reference.md`, `docs/CROSS_SCENARIO_USAGE.md` | `tools/run_cross_scenario_aggregator.sh`, `tools/validate_meta_output.py` |
 | Update this skill | system `skill-creator`, then this file and the directly relevant references | `quick_validate.py`, forward-test if practical |
@@ -76,7 +77,8 @@ For the detailed operating rulebook, read
 Do not keep concrete device IDs, COM ports, Windows paths, WiFi credentials, or
 temporary lab values in this entry file. Put reusable project lessons in
 `references/musepaper2_oh61_lessons.md`, automation details in
-`docs/local_device_automation.md`, and live rig values in the oh-auto profile.
+device-specific docs such as `docs/musepaper2_local_device_automation.md`, and
+live rig values in the oh-auto profile.
 
 ## Minimal Commands
 
@@ -92,7 +94,7 @@ bash /home/ve/.codex/skills/openharmony_porting_pipeline/tools/run_version_upgra
   --new-original /path/to/new_clean_ohos \
   --new-workspace /path/to/new_unported_ohos
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py capabilities
-python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py profile musepaper2
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py profile <profile-id>
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/evidence_pack_builder.py --help
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/log_slice.py --help
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/xts_xdevice_runner/run_xdevice_probe.py --help
@@ -105,7 +107,7 @@ For device work, always run discovery before action:
 ```bash
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py capabilities
 python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py status
-python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py profile musepaper2
+python3 /home/ve/.codex/skills/openharmony_porting_pipeline/tools/oh_autoctl.py profile <profile-id>
 ```
 
 Use profile data rather than hard-coded target IDs, serial ports, baudrates,
@@ -142,7 +144,7 @@ Before device operations:
 
 1. Read `docs/local_device_automation.md`.
 2. Run `oh_autoctl.py capabilities`.
-3. Query the relevant profile, for example `oh_autoctl.py profile musepaper2`.
+3. Query the relevant profile, for example `oh_autoctl.py profile <profile-id>`.
 4. Run preflight before flashing.
 5. Persist every `job_id`, log/event stream, image hash, and smoke result in the
    active iteration record.

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -362,13 +363,19 @@ def summarize_xdevice(args: argparse.Namespace, parsed: Any | None) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--suite-dir", type=Path, help="Linux-side generated suite root, e.g. out/musepaper2/suites/hats")
+    default_sn = os.getenv("OH_XDEVICE_SN") or os.getenv("OH_AUTO_HDC_TARGET") or os.getenv("OH_AUTO_CONNECT_TARGET")
+    parser.add_argument("--suite-dir", type=Path, help="Linux-side generated suite root, e.g. out/<product>/suites/hats")
     parser.add_argument("--windows-suite-dir", help="Already-staged Windows suite root; skips zip upload/extract")
     parser.add_argument("--suite-name", help="Suite command name; defaults to suite directory name")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--run-id", default=time.strftime("xts_%Y%m%d_%H%M%S"))
     parser.add_argument("--stage-root", default=r"F:\images\PortingTest\6.1\xts_runs")
-    parser.add_argument("--sn", default="0123456789ABCDEF")
+    parser.add_argument(
+        "--sn",
+        default=default_sn,
+        required=default_sn is None,
+        help="HDC/xDevice target SN; may be provided by OH_XDEVICE_SN, OH_AUTO_HDC_TARGET, or OH_AUTO_CONNECT_TARGET.",
+    )
     parser.add_argument("--module", help="Single module for a first probe, e.g. HatsGetcwdTest")
     parser.add_argument("--report-name", default=None)
     parser.add_argument("--resource-dir", help="Windows resource directory passed to xDevice -respath")

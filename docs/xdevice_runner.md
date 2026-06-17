@@ -48,7 +48,7 @@ Start with a reviewed module list:
 
 ```bash
 python3 tools/xts_xdevice_runner/run_module_queue.py \
-  --suite-dir /path/to/out/musepaper2/suites/acts/acts \
+  --suite-dir /path/to/out/<product>/suites/acts/acts \
   --suite-name acts \
   --module-list-file /path/to/acts_modules.txt \
   --stage-module-only \
@@ -145,7 +145,7 @@ does not prove "all XTS pass".
 
 ```bash
 python3 tools/xts_xdevice_runner/run_xdevice_probe.py \
-  --suite-dir /path/to/out/musepaper2/suites/hats \
+  --suite-dir /path/to/out/<product>/suites/hats \
   --suite-name hats \
   --module HatsGetcwdTest \
   --stage-module-only \
@@ -169,7 +169,7 @@ work. Prefer these options over raw xDevice flags:
 
 ```bash
 python3 tools/xts_xdevice_runner/run_xdevice_probe.py \
-  --suite-dir /path/to/out/musepaper2/suites/acts/acts \
+  --suite-dir /path/to/out/<product>/suites/acts/acts \
   --suite-name acts \
   --module ActsObjectTest \
   --stage-module-only \
@@ -194,7 +194,7 @@ legacy/manual OHJSUnit/Hypium filters inside an ACTS HAP, the raw form is:
 
 ```bash
 python3 tools/xts_xdevice_runner/run_xdevice_probe.py \
-  --suite-dir /path/to/out/musepaper2/suites/acts/acts \
+  --suite-dir /path/to/out/<product>/suites/acts/acts \
   --suite-name acts \
   --module ActsArrayTest \
   --stage-module-only \
@@ -206,7 +206,7 @@ Prefer the equivalent semantic form for routine work:
 
 ```bash
 python3 tools/xts_xdevice_runner/run_xdevice_probe.py \
-  --suite-dir /path/to/out/musepaper2/suites/acts/acts \
+  --suite-dir /path/to/out/<product>/suites/acts/acts \
   --suite-name acts \
   --module ActsArrayTest \
   --stage-module-only \
@@ -224,7 +224,7 @@ product failures from runner/app lifecycle effects:
 
 ```bash
 python3 tools/xts_xdevice_runner/run_ohjsunit_class_batches.py \
-  --suite-dir /path/to/out/musepaper2/suites/acts/acts \
+  --suite-dir /path/to/out/<product>/suites/acts/acts \
   --suite-name acts \
   --module ActsObjectTest \
   --class-list-file /path/to/acts_object_classes.txt \
@@ -281,7 +281,7 @@ Generate or refresh user config:
 
 ```bash
 python3 tools/xts_xdevice_runner/generate_user_config.py \
-  --sn 0123456789ABCDEF \
+  --sn <target-sn> \
   --out /path/to/suite/config/user_config.xml
 ```
 
@@ -389,92 +389,9 @@ For long-running CppTest probes, pass `--native-test-timeout-ms <ms>` after the
 module `Test.json`, records the patch in `module_staging_manifest.json`, and
 does not modify the OpenHarmony source tree.
 
-## Current MusePaper2 Evidence Boundary
+## Device-Specific Evidence
 
-MusePaper2 OH6.1 has proven xDevice transport and selected modules:
-
-- HATS `HatsGetcwdTest`: 1/1 passed.
-- HATS syscall expansion through xDevice: `HatsClockGetresTest`,
-  `HatsNanoSleepTest`, `HatsChdirTest`, `HatsDupTest`, `HatsDup3Test`,
-  `HatsEventfd2Test`, `HatsEpollCreateTest`, and `HatsFaccessatTest` passed in
-  iteration342.
-- HATS syscall/FS/FD expansion through xDevice continued in iteration343:
-  `HatsFchmodTest`, `HatsFtruncateTest`, `HatsGetcwdTest`,
-  `HatsGetdents64Test`, `HatsLseekTest`, `HatsPipe2Test`, `HatsReadvTest`,
-  `HatsWritevTest`, `HatsFcntlTest`, `HatsFdatasyncTest`, `HatsFsyncTest`,
-  `HatsFstatfsTest`, `HatsFlockTest`, `HatsLinkatTest`, `HatsMkdiratTest`,
-  and `HatsReadlinkatTest` passed.
-- HATS syscall/FS/process expansion continued in iteration344:
-  `HatsPread64Test`, `HatsPwrite64Test`, `HatsPselectTest`, `HatsPpollTest`,
-  `HatsRenameatTest`, `HatsSymlinkatTest`, `HatsUnlinkatTest`,
-  `HatsPreadvTest`, `HatsPwritevTest`, `HatsCapGetTest`,
-  `HatsClockNanoSleepTest`, `HatsCopyFileRangeTest`, `HatsEpollCtlTest`,
-  `HatsEpollPwaitTest`, `HatsFchmodatTest`, `HatsGetrlimitTest`,
-  `HatsGetrusageTest`, `HatsSysinfoTest`, and `HatsTimesTest` passed with
-  60/60 cases through Windows-side xDevice.
-- HATS xDevice expansion continued in iteration346. Memory/scheduler/file
-  syscall modules plus Light/Vibrator/Sensor/Input HDF modules passed in
-  batches 7-11: 28 additional modules, 454/454 cases. The HATS xDevice coverage
-  stood at 88/99 modules and 15574 passed cases after that iteration. Remaining
-  modules were concentrated in DMA/Display/USB/Startup partition slot, Audio
-  HDF, and Power/Battery/Thermal.
-- HATS Audio HDF expansion continued in iteration347. The nine remaining Audio
-  HDF modules gained xDevice pass evidence: 861 total cases, 860 passed, one
-  intentional ignored/skipped case, zero failed. Manager, ManagerAdditional,
-  and EffectAdditional passed as plain xDevice modules. Adapter, Render, and
-  Capture direct-HDI modules require stopping `audio_server`, restarting
-  `audio_host`, running the module, then restoring `audio_server`.
-  `HatsHdfAudioIdlCaptureAdditionalTest` additionally needs staged
-  `native-test-timeout=600000`; the default 120000 ms causes
-  `ShellCommandUnresponsiveException` and downstream blocked cases.
-- HATS remaining-module expansion continued in iteration348. Ten non-Audio
-  modules passed through formal xDevice: DMA buffer, Display buffer UT, USB auto
-  function, Power, Battery, and Thermal groups. Best result: 232 total cases,
-  230 passed, 2 ignored/skipped, zero failed. Do not run
-  `HatsStartupPartitionSlotTest` unattended: it mutates active and unbootable
-  boot slot state, and requires a proven physical recovery backend or dedicated
-  fixture before full-module execution.
-- ACTS `ActsStartupSysDeviceInfoTest`: 85/85 passed.
-- ACTS `ActsHilogNdkTest`: 64/64 passed after the RISC-V native assistant HAP
-  and SDK libc++ ABI fixes. The rerun also pulled back XML/HTML/log evidence
-  from the Windows xDevice report directory.
-- ACTS pure JS expansion through xDevice: `ActsPromiseTest`, `ActsDataViewTest`,
-  and `ActsBaseSpecTest` passed in iteration342. `ActsArrayTest` is a stable
-  partial full-module failure at `ArrayCombinationTest4158` with downstream
-  blocked cases, but iteration349 narrowed it using `-ta class:` filters:
-  `ArrayCombinationTest4158` alone passes, `4154-4158`/`4155-4158`/`4156-4158`
-  /`4157-4158` pass, while `4153-4158` and `4148-4158` fail at `4158`.
-  Iteration350 confirmed that `4153,4158`, several 3-5 case subsets, and all
-  tested five-case subsets pass, but the complete `4153-4158` six-case window
-  fails again at `4158`. Treat it as a higher-order
-  sequence/state/resource interaction across `ArrayCombinationTest4Js153-158`
-  before changing product runtime code or weakening the test. Iteration353
-  proved the fixed image passes the `4153-4158` window 6/6 without a dynamic
-  appfreeze filter, after a developer-mode scoped `com.acts.*` AppFreeze skip
-  was added to the product runtime.
-- ACTS pure JS/AppInstallKit-only expansion continued in iteration343:
-  `ActsDateTest`, `ActsRegExpTest`, `ActsSymbol1Test`, `ActsSymbol2Test`,
-  `ActsMapTest`, and `ActsProxyTest` passed. Do not rely on module names alone:
-  inspect each `testcases/<module>.json` before running; for example,
-  `ActsJsonJSApiTest` is JS-related but includes `ShellKit` power-mode commands
-  and was intentionally deferred from the low-risk batch.
-- ACTS `ActsObjectTest`: earlier partial failures were narrowed as lifecycle
-  and foreground-state sensitive rather than stable Object builtins semantics.
-  Iteration357 proved `Object11Test` 182/182 and the remaining 34 class shards
-  3640/3640 after a fresh reboot/unlock. Iteration358 then passed the clean
-  full module with 5122/5122, zero failed, zero blocked, and zero unavailable
-  cases. If a power dialog, manual UI operation, or sidecar HDC command overlaps
-  an OHJSUnit run, mark that result contaminated and rerun.
-- ACTS-Validator: dispatch reached xDevice, but generated validator resources
-  were incomplete. A later probe showed `queryStandard` can be supplied by full
-  suite staging and `--stdin-line Y` can remove the prompt EOF, but the module
-  still reports `unavailable` with zero tests when the validator app does not
-  generate `Test.xml`.
-- DCTS: module executed on one device, but meaningful pass/fail likely requires
-  distributed or dual-device topology.
-- SSTS: OHYaraTest executed, but the sample was blocked by security patch label
-  policy.
-
-Keep these as engineering evidence. Do not promote them to full formal suite
-acceptance without complete reports and matching official resource/version
-requirements.
+Keep device-specific pass lists, module histories, targets, ports, image paths,
+and workaround ledgers out of this common runner guide. Load the relevant
+device reference only when working on that device. For example, MusePaper2
+OH6.1 evidence lives in `references/musepaper2_oh61_lessons.md`.

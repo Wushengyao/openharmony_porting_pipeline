@@ -3,7 +3,7 @@
 
 The runner intentionally wraps the existing oh_autoctl.py CLI instead of
 talking to the service directly. This keeps one device-operation path and
-produces the same evidence files used during manual MusePaper2 validation:
+produces the same evidence files used during manual device validation:
 artifact ids, push/chmod/run/pull JSON, run status TSV, and result summaries.
 """
 
@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -358,6 +359,7 @@ def write_summary(out_dir: Path, rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    default_connect_target = os.getenv("OH_AUTO_CONNECT_TARGET") or os.getenv("OH_AUTO_HDC_TARGET") or ""
     parser.add_argument("--binary-dir", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--iteration-tag", required=True)
@@ -365,7 +367,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--base-url")
     parser.add_argument("--device-id", default="default")
     parser.add_argument("--connect-channel", default="usb", choices=["usb", "tcp", "uart"])
-    parser.add_argument("--connect-target", default="0123456789ABCDEF")
+    parser.add_argument(
+        "--connect-target",
+        default=default_connect_target,
+        help="HDC connect target; may be provided by OH_AUTO_CONNECT_TARGET or OH_AUTO_HDC_TARGET.",
+    )
     parser.add_argument("--connect-baudrate", type=int)
     parser.add_argument("--remote-dir", default="/data/local/tmp")
     parser.add_argument("--push-timeout-sec", type=float, default=120)

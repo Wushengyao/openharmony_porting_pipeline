@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -31,8 +32,14 @@ def sha256(path: Path) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    default_product = os.getenv("OHOS_PRODUCT") or os.getenv("OH_PRODUCT")
     parser.add_argument("--workspace", default=".", help="OpenHarmony workspace root")
-    parser.add_argument("--product", default="musepaper2", help="out/<product> name")
+    parser.add_argument(
+        "--product",
+        default=default_product,
+        required=default_product is None,
+        help="out/<product> name; may be provided by OHOS_PRODUCT or OH_PRODUCT.",
+    )
     parser.add_argument("--api", default="23", help="prebuilts/ohos-sdk/linux/<api> level")
     parser.add_argument("--arch-triple", default="riscv64-linux-ohos")
     parser.add_argument("--lib", action="append", dest="libs", help="archive name to sync")

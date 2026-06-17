@@ -16,7 +16,7 @@ forbidden:
   - delete_files
 path_permissions:
   read_roots:
-    - /path/to/read_only_ohos/out/musepaper2/suites
+    - /path/to/read_only_ohos/out/<product>/suites
     - /path/to/evidence_packs/iteration327
   write_roots:
     - outputs

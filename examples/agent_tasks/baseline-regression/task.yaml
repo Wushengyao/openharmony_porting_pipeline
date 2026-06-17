@@ -16,7 +16,7 @@ forbidden:
   - read_full_raw_logs_without_need
 path_permissions:
   read_roots:
-    - /path/to/baselines/musepaper2-oh6.1-rc0
+    - /path/to/baselines/<baseline-id>
     - /path/to/evidence_packs/iteration327
   write_roots:
     - outputs

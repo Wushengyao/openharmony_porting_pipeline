@@ -15,10 +15,11 @@ from common import run_command, write_json  # noqa: E402
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    default_sn = os.getenv("OH_XDEVICE_SN") or os.getenv("OH_AUTO_HDC_TARGET") or os.getenv("OH_AUTO_CONNECT_TARGET") or ""
     parser.add_argument("--suite-dir", type=Path)
     parser.add_argument("--windows-suite-dir")
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--sn", default="0123456789ABCDEF")
+    parser.add_argument("--sn", default=default_sn)
     parser.add_argument("--oh-autoctl", type=Path, default=SCRIPT_DIR.parent / "oh_autoctl.py")
     parser.add_argument("--base-url")
     parser.add_argument("--device-id")
