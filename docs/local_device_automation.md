@@ -136,6 +136,8 @@ Load a device-specific reference only when the task is about that device.
 - MusePaper2 OH6.1 RISC-V:
   `docs/musepaper2_local_device_automation.md` and
   `references/musepaper2_oh61_lessons.md`.
+- SBC77:
+  `docs/sbc77_local_device_automation.md`.
 
 For a new device, create a concise per-device note only after its profile,
 flash template, recovery path, and recurring test quirks are known.
