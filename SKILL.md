@@ -161,6 +161,14 @@ version and system type. Read `references/openharmony_xts_formal_workflow.md`
 before downloading packages or running ACTS, ACTS-Validator, HATS, DCTS, or
 SSTS.
 
+For any XTS/HATS fix closure, rerun the original failing suite artifacts first:
+same suite root or downloaded archive, module list, resource set, tool bundle,
+hashes, and reportable case counts. Do not edit, rebuild, filter, delete,
+disable, or patch testcase artifacts to make a result pass. If a source-built
+or modified suite is necessary for RISC-V engineering validation, label that
+result explicitly as engineering evidence and keep the original-suite rerun as
+the acceptance boundary until it passes or is formally waived.
+
 Use `tools/oh_xts_xdevice_runner.py` for Windows-side xDevice staging and
 `tools/oh_hats_native_runner.py` for native HATS binary probes. Start with a
 small harmless module before widening a suite.

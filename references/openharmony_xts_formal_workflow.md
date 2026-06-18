@@ -21,6 +21,24 @@ when a Windows workbench is the only host that can see the target through HDC.
 - Match image version, suite version, resource package, and system type. Do not
   use an older official suite or resource as formal evidence for a newer target
   release unless the official page explicitly says it is shared.
+- Preserve the original failing suite as immutable evidence. For fix closure,
+  rerun the same downloaded archive or generated suite root, testcase binaries,
+  JSON/moduleInfo files, resource package, xDevice tool bundle, module list,
+  and case-count surface that produced the baseline failure whenever those
+  artifacts are runnable on the target.
+- Do not modify testcase artifacts to make a result pass. This includes editing
+  testcase binaries, JSON/moduleInfo, expected values, resource files, disabled
+  markers, test lists, filters, or runner staging copies. Changes to transport
+  configuration such as target SN, report path, and user config are allowed only
+  when they do not change selected tests or expected results.
+- If the original suite cannot run because no matching architecture, system
+  type, resource, or toolchain exists, record that as official-resource or
+  tooling debt. A same-release source-built suite may support engineering
+  validation, but it must not be reported as the original suite passing.
+- If a source-built or otherwise regenerated suite changes testcase counts,
+  module membership, tool bundles, or expected behavior, compare it with the
+  original baseline and state the difference explicitly before claiming any
+  closure.
 - Official standard-system executable suites may be published only for a common
   architecture such as arm32. For RISC-V64, arm64, x86, small-system, or
   otherwise missing targets, build the suites from the matching OpenHarmony
@@ -141,7 +159,8 @@ For a newly stabilized port, distinguish three evidence levels:
   summarize at least one low-risk module from each applicable suite root.
 - Engineering closure: failed modules are driven through
   report -> failure packet -> source/tool/topology classification -> fix ->
-  build/package/flash/smoke -> non-filtered full-module rerun.
+  build/package/flash/smoke -> non-filtered full-module rerun using the
+  original failing suite artifacts when runnable.
 - Acceptance closure: every applicable suite has a full-suite or reviewed
   quasi-full report, with pass evidence or explicit exception records for
   unavailable official resources, manual ACTS-Validator steps, DCTS topology,
@@ -150,9 +169,11 @@ For a newly stabilized port, distinguish three evidence levels:
 Once the target image is bootable, command-accessible, and recoverable without
 manual reset, prefer long-running module queues over only ad hoc probes. Use
 filtered class/case/window probes to minimize failures, but never promote them
-to suite pass evidence. After every XTS-related iteration, refresh the global
-suite progress snapshot and report deltas in module coverage, passed modules,
-and known report-derived testcase counts.
+to suite pass evidence. A pass from a rebuilt, filtered, timeout-patched, or
+otherwise changed suite is diagnostic or engineering evidence only unless the
+same original-suite module also passes. After every XTS-related iteration,
+refresh the global suite progress snapshot and report deltas in module
+coverage, passed modules, and known report-derived testcase counts.
 
 ## Windows Workbench Execution
 
@@ -357,6 +378,9 @@ python3 tools/xts_xdevice_runner/run_xdevice_probe.py \
   --out-dir /path/to/out \
   -- --native-test-timeout-ms 600000
 ```
+
+Treat any staged timeout patch as diagnostic unless the unmodified original
+suite artifacts also pass under the required formal timeout policy.
 
 Record DCTS launch evidence separately from DCTS pass/fail until a required
 distributed or multi-device topology is prepared. Record ACTS-Validator
